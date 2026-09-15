@@ -4,56 +4,70 @@ const catalogItems = require('./catalog');
 const connectionString = 'postgresql://postgres.qozrohmqnmbghemlgohb:roupgrade1509!@aws-1-eu-west-1.pooler.supabase.com:5432/postgres';
 
 const pool = new Pool({
-  connectionString,
-  ssl: { rejectUnauthorized: false }
+  connectionString: process.env.DATABASE_URL || connectionString,
+  ssl: { rejectUnauthorized: false },
+  max: 10,
+  idleTimeoutMillis: 10000,
+  connectionTimeoutMillis: 5000,
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 10000
+});
+
+pool.on('error', (err) => {
+  console.error('Непредвиденный сброс сокета PostgreSQL pooler:', err.message);
 });
 
 async function initDb() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS users (
-      telegram_id BIGINT PRIMARY KEY,
-      username TEXT,
-      first_name TEXT,
-      balance INTEGER DEFAULT 0,
-      upgrades_count INTEGER DEFAULT 0,
-      is_vip INTEGER DEFAULT 0,
-      subscribed_reward_claimed INTEGER DEFAULT 0,
-      invited_by BIGINT DEFAULT NULL,
-      referrals_count INTEGER DEFAULT 0,
-      accepted_tos INTEGER DEFAULT 0,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS items (
-      id SERIAL PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE,
-      category TEXT NOT NULL,
-      price_stars INTEGER NOT NULL,
-      image_url TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS user_inventory (
-      id SERIAL PRIMARY KEY,
-      user_id BIGINT NOT NULL REFERENCES users(telegram_id),
-      item_id INTEGER NOT NULL REFERENCES items(id),
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
-
-  for (const item of catalogItems) {
+  try {
     await pool.query(`
-      INSERT INTO items (name, category, price_stars, image_url)
-      VALUES ($1, $2, $3, $4)
-      ON CONFLICT (name) DO UPDATE SET
-        category = EXCLUDED.category,
-        price_stars = EXCLUDED.price_stars,
-        image_url = EXCLUDED.image_url
-    `, [item.name, item.category, item.price_stars, item.image_url]);
+      CREATE TABLE IF NOT EXISTS users (
+        telegram_id BIGINT PRIMARY KEY,
+        username TEXT,
+        first_name TEXT,
+        balance INTEGER DEFAULT 0,
+        upgrades_count INTEGER DEFAULT 0,
+        is_vip INTEGER DEFAULT 0,
+        subscribed_reward_claimed INTEGER DEFAULT 0,
+        invited_by BIGINT DEFAULT NULL,
+        referrals_count INTEGER DEFAULT 0,
+        accepted_tos INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS items (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        category TEXT NOT NULL,
+        price_stars INTEGER NOT NULL,
+        image_url TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS user_inventory (
+        id SERIAL PRIMARY KEY,
+        user_id BIGINT NOT NULL REFERENCES users(telegram_id),
+        item_id INTEGER NOT NULL REFERENCES items(id),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Загружаем предметы одним запросом, чтобы не спамить в пул базы
+    for (const item of catalogItems) {
+      await pool.query(`
+        INSERT INTO items (name, category, price_stars, image_url)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (name) DO UPDATE SET
+          category = EXCLUDED.category,
+          price_stars = EXCLUDED.price_stars,
+          image_url = EXCLUDED.image_url
+      `, [item.name, item.category, item.price_stars, item.image_url]);
+    }
+    console.log('✅ База данных Supabase подключена и синхронизирована!');
+  } catch (err) {
+    console.error('Ошибка инициализации таблиц Supabase:', err.message);
   }
-  console.log('✅ База данных Supabase подключена и готова к работе!');
 }
 
-initDb().catch(err => console.error('Ошибка инициализации Supabase:', err));
+initDb();
 
 async function registerUser(tgUser, referrerId = null) {
   let res = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [tgUser.id]);
@@ -69,7 +83,8 @@ async function registerUser(tgUser, referrerId = null) {
     await pool.query(`
       INSERT INTO users (telegram_id, username, first_name, invited_by, accepted_tos)
       VALUES ($1, $2, $3, $4, 1)
-    `, [tgUser.id, tgUser.username || null, tgUser.first_name, successfulReferrer]);
+      ON CONFLICT (telegram_id) DO NOTHING
+    `, [tgUser.id, tgUser.username || null, tgUser.first_name || '', successfulReferrer]);
 
     if (successfulReferrer) {
       await pool.query('UPDATE users SET referrals_count = referrals_count + 1 WHERE telegram_id = $1', [successfulReferrer]);
@@ -83,20 +98,20 @@ async function registerUser(tgUser, referrerId = null) {
   return { user, rewardedReferrerId: successfulReferrer };
 }
 
-// Используется API веб-приложения: если пользователь открыл Mini App,
-// минуя /start (например, по прямой ссылке), всё равно создаём запись.
 async function ensureUserExists(tgUser) {
-  const res = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [tgUser.id]);
+  let res = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [tgUser.id]);
   if (res.rows[0]) return res.rows[0];
 
   await pool.query(`
     INSERT INTO users (telegram_id, username, first_name, accepted_tos)
     VALUES ($1, $2, $3, 1)
-    ON CONFLICT (telegram_id) DO NOTHING
+    ON CONFLICT (telegram_id) DO UPDATE SET
+      username = EXCLUDED.username,
+      first_name = EXCLUDED.first_name
   `, [tgUser.id, tgUser.username || null, tgUser.first_name || null]);
 
-  const res2 = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [tgUser.id]);
-  return res2.rows[0];
+  res = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [tgUser.id]);
+  return res.rows[0];
 }
 
 async function giveRandomStarterItem(userId) {
@@ -135,12 +150,11 @@ async function getUser(telegramId) {
 }
 
 function calculateTier(user) {
+  if (!user) return '🥉 Базовый';
   if (user.is_vip) return '👑 VIP';
   if (user.upgrades_count >= 10000) return '🔥 Pro';
   return '🥉 Базовый';
 }
-
-// ---------- Функции для API веб-приложения ----------
 
 async function getCatalogItems() {
   const res = await pool.query(
@@ -170,9 +184,6 @@ async function addInventoryItem(userId, itemId) {
   await pool.query('INSERT INTO user_inventory (user_id, item_id) VALUES ($1, $2)', [userId, itemId]);
 }
 
-// Апгрейд: сейчас без формулы шанса — всегда успешен.
-// В одной транзакции убираем предмет-донор из инвентаря пользователя
-// (с проверкой, что он и правда ему принадлежит) и добавляем целевой предмет.
 async function upgradeItem(userId, inventoryItemId, targetItemId) {
   const client = await pool.connect();
   try {
