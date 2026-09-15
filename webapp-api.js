@@ -7,7 +7,8 @@ const {
   calculateTier,
   getUserInventoryCount,
   getItemById,
-  ensureUserExists
+  ensureUserExists,
+  upgradeItem
 } = require('./db');
 
 // Проверка подписи initData от Telegram WebApp.
@@ -132,6 +133,29 @@ function createWebappRouter(bot, botToken) {
       res.json({ invoiceLink });
     } catch (err) {
       console.error('Ошибка /api/create-invoice:', err.message);
+      res.status(500).json({ error: 'server_error' });
+    }
+  });
+
+  // Апгрейд предмета: пока без формулы шанса — всегда успешен.
+  // Списывает предмет-донор из инвентаря, начисляет целевой предмет.
+  router.post('/upgrade', async (req, res) => {
+    try {
+      const inventoryItemId = Number(req.body.inventoryItemId);
+      const targetItemId = Number(req.body.targetItemId);
+
+      if (!inventoryItemId || !targetItemId) {
+        return res.status(400).json({ error: 'missing_fields' });
+      }
+
+      const result = await upgradeItem(req.tgUser.id, inventoryItemId, targetItemId);
+      if (result.error) {
+        return res.status(400).json({ error: result.error });
+      }
+
+      res.json({ item: result.item });
+    } catch (err) {
+      console.error('Ошибка /api/upgrade:', err.message);
       res.status(500).json({ error: 'server_error' });
     }
   });

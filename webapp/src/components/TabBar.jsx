@@ -1,5 +1,6 @@
 const TABS = [
   { id: 'catalog', label: 'Каталог', icon: '🛒' },
+  { id: 'upgrade', label: 'Апгрейд', icon: '⚡' },
   { id: 'inventory', label: 'Инвентарь', icon: '🎒' },
   { id: 'profile', label: 'Профиль', icon: '👤' }
 ];

@@ -1,7 +1,7 @@
 const { Pool } = require('pg');
 const catalogItems = require('./catalog');
 
-const connectionString = 'postgresql://postgres.qozrohmqnmbghemlgohb:roupgrade1509!@aws-1-eu-west-1.pooler.supabase.com:5432/postgres';
+const connectionString = 'postgresql://postgres.qozrohmqnmbghemlgohb:[PASSWORD]@aws-1-eu-west-1.pooler.supabase.com:5432/postgres';
 
 const pool = new Pool({
   connectionString,
@@ -170,6 +170,44 @@ async function addInventoryItem(userId, itemId) {
   await pool.query('INSERT INTO user_inventory (user_id, item_id) VALUES ($1, $2)', [userId, itemId]);
 }
 
+// Апгрейд: сейчас без формулы шанса — всегда успешен.
+// В одной транзакции убираем предмет-донор из инвентаря пользователя
+// (с проверкой, что он и правда ему принадлежит) и добавляем целевой предмет.
+async function upgradeItem(userId, inventoryItemId, targetItemId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const ownedRes = await client.query(
+      'SELECT id FROM user_inventory WHERE id = $1 AND user_id = $2 FOR UPDATE',
+      [inventoryItemId, userId]
+    );
+    if (ownedRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return { error: 'item_not_owned' };
+    }
+
+    const targetRes = await client.query('SELECT * FROM items WHERE id = $1', [targetItemId]);
+    const targetItem = targetRes.rows[0];
+    if (!targetItem) {
+      await client.query('ROLLBACK');
+      return { error: 'target_not_found' };
+    }
+
+    await client.query('DELETE FROM user_inventory WHERE id = $1', [inventoryItemId]);
+    await client.query('INSERT INTO user_inventory (user_id, item_id) VALUES ($1, $2)', [userId, targetItemId]);
+    await client.query('UPDATE users SET upgrades_count = upgrades_count + 1 WHERE telegram_id = $1', [userId]);
+
+    await client.query('COMMIT');
+    return { item: targetItem };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   registerUser,
   getUser,
@@ -180,5 +218,6 @@ module.exports = {
   getCatalogItems,
   getItemById,
   getUserInventory,
-  addInventoryItem
+  addInventoryItem,
+  upgradeItem
 };

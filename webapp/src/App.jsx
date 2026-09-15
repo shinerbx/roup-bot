@@ -3,10 +3,18 @@ import { api } from './api.js';
 import { initTelegram, openInvoice, haptic, hapticNotify } from './telegram.js';
 import TabBar from './components/TabBar.jsx';
 import CatalogTab from './components/CatalogTab.jsx';
+import UpgradeTab from './components/UpgradeTab.jsx';
 import InventoryTab from './components/InventoryTab.jsx';
 import ProfileTab from './components/ProfileTab.jsx';
 import PurchaseSheet from './components/PurchaseSheet.jsx';
 import Toast from './components/Toast.jsx';
+
+const SCREEN_META = {
+  catalog: { title: 'Каталог', subtitle: 'Предметы за Telegram Stars' },
+  upgrade: { title: 'Апгрейд', subtitle: 'Улучшай предметы из инвентаря' },
+  inventory: { title: 'Инвентарь', subtitle: 'Твои предметы' },
+  profile: { title: 'Профиль', subtitle: null }
+};
 
 export default function App() {
   const [tab, setTab] = useState('catalog');
@@ -40,6 +48,12 @@ export default function App() {
     }
   }, []);
 
+  const refreshInventoryAndProfile = useCallback(async () => {
+    const [inventoryRes, profileRes] = await Promise.all([api.getInventory(), api.getProfile()]);
+    setInventory(inventoryRes.items);
+    setProfile(profileRes);
+  }, []);
+
   useEffect(() => {
     loadAll();
   }, [loadAll]);
@@ -69,14 +83,7 @@ export default function App() {
         if (status === 'paid') {
           hapticNotify('success');
           setToast(`Куплено: ${sheetItem.name}`);
-          // Сервер уже начислил предмет в successful_payment,
-          // подтягиваем актуальный инвентарь/баланс.
-          const [inventoryRes, profileRes] = await Promise.all([
-            api.getInventory(),
-            api.getProfile()
-          ]);
-          setInventory(inventoryRes.items);
-          setProfile(profileRes);
+          await refreshInventoryAndProfile();
         } else if (status === 'cancelled') {
           // ничего не делаем
         } else {
@@ -92,22 +99,25 @@ export default function App() {
     }
   };
 
+  const meta = SCREEN_META[tab];
+
   return (
     <div className="app">
-      <header className="hero">
-        <h1 className="hero__logo">RoUP</h1>
-        <p className="hero__subtitle">Roblox-предметы за Telegram Stars</p>
+      <header className="top-nav">
+        <div className="top-nav__brand">
+          <img className="top-nav__logo" src="/logo.png" alt="RoUP" />
+        </div>
+        <div className="balance-pill">
+          <span className="balance-pill__icon">★</span>
+          <span className="balance-pill__value">{profile?.balance ?? 0}</span>
+          {profile?.tier && <span className="balance-pill__tier">{profile.tier}</span>}
+        </div>
       </header>
 
-      {tab !== 'profile' && (
-        <div className="balance-card">
-          <div>
-            <p className="balance-card__label">Баланс</p>
-            <p className="balance-card__value">★ {profile?.balance ?? 0}</p>
-          </div>
-          <span className="balance-card__tier">{profile?.tier ?? '—'}</span>
-        </div>
-      )}
+      <div>
+        <h2 className="screen-title">{meta.title}</h2>
+        {meta.subtitle && <p className="screen-subtitle">{meta.subtitle}</p>}
+      </div>
 
       {tab === 'catalog' && (
         <CatalogTab
@@ -115,6 +125,15 @@ export default function App() {
           ownedItemIds={ownedItemIds}
           loading={loading}
           onBuy={handleBuy}
+        />
+      )}
+      {tab === 'upgrade' && (
+        <UpgradeTab
+          inventory={inventory}
+          catalog={catalog}
+          loading={loading}
+          onUpgraded={refreshInventoryAndProfile}
+          onError={setToast}
         />
       )}
       {tab === 'inventory' && <InventoryTab items={inventory} loading={loading} />}

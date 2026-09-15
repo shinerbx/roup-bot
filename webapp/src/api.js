@@ -27,5 +27,10 @@ export const api = {
     request('/create-invoice', {
       method: 'POST',
       body: JSON.stringify({ itemId })
+    }),
+  upgrade: (inventoryItemId, targetItemId) =>
+    request('/upgrade', {
+      method: 'POST',
+      body: JSON.stringify({ inventoryItemId, targetItemId })
     })
 };
