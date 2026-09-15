@@ -14,10 +14,8 @@ const CHANNEL_USERNAME = '@ro_upgrade';
 
 const bot = new Telegraf(BOT_TOKEN);
 
-// Временное хранилище сессий для капчи и рефералов
 const pendingUsers = new Map();
 
-// Набор эмодзи для капчи
 const EMOJIS = [
   { name: 'пиццу 🍕', icon: '🍕' },
   { name: 'ракету 🚀', icon: '🚀' },
@@ -34,46 +32,48 @@ const getMainMenu = () => {
   ]).resize();
 };
 
-// 1. /start -> Проверка на бота (Капча)
-bot.start((ctx) => {
-  const existingUser = getUser(ctx.from.id);
-  
-  if (existingUser && existingUser.accepted_tos) {
-    return ctx.reply(`С возвращением в <b>RoUP</b>! ⚡️`, {
-      parse_mode: 'HTML',
-      ...getMainMenu()
-    });
-  }
-
-  let referrerId = null;
-  if (ctx.startPayload && ctx.startPayload.startsWith('ref_')) {
-    referrerId = ctx.startPayload.replace('ref_', '');
-  }
-
-  const target = EMOJIS[Math.floor(Math.random() * EMOJIS.length)];
-  const shuffled = [...EMOJIS].sort(() => 0.5 - Math.random()).slice(0, 4);
-  if (!shuffled.some(e => e.icon === target.icon)) {
-    shuffled[0] = target;
-    shuffled.sort(() => 0.5 - Math.random());
-  }
-
-  pendingUsers.set(ctx.from.id, {
-    targetIcon: target.icon,
-    referrerId: referrerId
-  });
-
-  const buttons = shuffled.map(e => Markup.button.callback(e.icon, `captcha_${e.icon}`));
-
-  ctx.reply(
-    `🛡 <b>Проверка безопасности</b>\n\nПожалуйста, подтверди, что ты не бот.\nНажми на: <b>${target.name}</b>`,
-    {
-      parse_mode: 'HTML',
-      ...Markup.inlineKeyboard([buttons])
+bot.start(async (ctx) => {
+  try {
+    const existingUser = await getUser(ctx.from.id);
+    
+    if (existingUser && existingUser.accepted_tos) {
+      return ctx.reply(`С возвращением в <b>RoUP</b>! ⚡️`, {
+        parse_mode: 'HTML',
+        ...getMainMenu()
+      });
     }
-  );
+
+    let referrerId = null;
+    if (ctx.startPayload && ctx.startPayload.startsWith('ref_')) {
+      referrerId = ctx.startPayload.replace('ref_', '');
+    }
+
+    const target = EMOJIS[Math.floor(Math.random() * EMOJIS.length)];
+    const shuffled = [...EMOJIS].sort(() => 0.5 - Math.random()).slice(0, 4);
+    if (!shuffled.some(e => e.icon === target.icon)) {
+      shuffled[0] = target;
+      shuffled.sort(() => 0.5 - Math.random());
+    }
+
+    pendingUsers.set(ctx.from.id, {
+      targetIcon: target.icon,
+      referrerId: referrerId
+    });
+
+    const buttons = shuffled.map(e => Markup.button.callback(e.icon, `captcha_${e.icon}`));
+
+    ctx.reply(
+      `🛡 <b>Проверка безопасности</b>\n\nПожалуйста, подтверди, что ты не бот.\nНажми на: <b>${target.name}</b>`,
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([buttons])
+      }
+    );
+  } catch (err) {
+    console.error('Ошибка в /start:', err);
+  }
 });
 
-// Обработка клика по капче
 bot.action(/captcha_(.+)/, async (ctx) => {
   const selectedIcon = ctx.match[1];
   const pending = pendingUsers.get(ctx.from.id);
@@ -89,7 +89,6 @@ bot.action(/captcha_(.+)/, async (ctx) => {
 
   await ctx.answerCbQuery('✅ Верно!');
 
-  // 2. Шаг: Пользовательское соглашение
   const tosText = 
     `📜 <b>Пользовательское соглашение</b>\n\n` +
     `Добро пожаловать в <b>RoUP</b> ⚡️\n\n` +
@@ -107,87 +106,96 @@ bot.action(/captcha_(.+)/, async (ctx) => {
   });
 });
 
-// 3. Шаг: Принятие соглашения и выдача меню
 bot.action('accept_tos', async (ctx) => {
-  const pending = pendingUsers.get(ctx.from.id) || {};
-  const { rewardedReferrerId } = registerUser(ctx.from, pending.referrerId);
-  pendingUsers.delete(ctx.from.id);
+  try {
+    const pending = pendingUsers.get(ctx.from.id) || {};
+    const { rewardedReferrerId } = await registerUser(ctx.from, pending.referrerId);
+    pendingUsers.delete(ctx.from.id);
 
-  await ctx.answerCbQuery('🎉 Условия приняты!');
+    await ctx.answerCbQuery('🎉 Условия приняты!');
 
-  if (rewardedReferrerId) {
-    try {
-      await bot.telegram.sendMessage(
-        rewardedReferrerId,
-        `🎉 Твой друг <b>${ctx.from.first_name}</b> завершил регистрацию!\n` +
-        `🎁 В твой инвентарь добавлен <b>предмет за 5-10 ⭐ (Звёзд)</b>!`,
-        { parse_mode: 'HTML' }
-      );
-    } catch (e) {
-      console.log('Ошибка отправки сообщения рефереру:', e.message);
+    if (rewardedReferrerId) {
+      try {
+        await bot.telegram.sendMessage(
+          rewardedReferrerId,
+          `🎉 Твой друг <b>${ctx.from.first_name}</b> завершил регистрацию!\n` +
+          `🎁 В твой инвентарь добавлен <b>предмет за 5-10 ⭐ (Звёзд)</b>!`,
+          { parse_mode: 'HTML' }
+        );
+      } catch (e) {
+        console.log('Ошибка отправки рефереру:', e.message);
+      }
     }
+
+    const welcomeText = 
+      `Привет 👋\n` +
+      `Это <b>RoUP</b> — тот самый роблокс апгрейдер ⚡️\n\n` +
+      `👇 Выбери кнопку в меню 👇`;
+
+    await ctx.deleteMessage();
+    ctx.reply(welcomeText, {
+      parse_mode: 'HTML',
+      ...getMainMenu()
+    });
+  } catch (err) {
+    console.error('Ошибка в accept_tos:', err);
   }
-
-  const welcomeText = 
-    `Привет 👋\n` +
-    `Это <b>RoUP</b> — тот самый роблокс апгрейдер ⚡️\n\n` +
-    `👇 Выбери кнопку в меню 👇`;
-
-  await ctx.deleteMessage();
-  ctx.reply(welcomeText, {
-    parse_mode: 'HTML',
-    ...getMainMenu()
-  });
 });
 
-// Раздел: Профиль
-bot.hears('👤 Профиль', (ctx) => {
-  const user = getUser(ctx.from.id);
-  if (!user) return ctx.reply('Сначала нажми /start');
+bot.hears('👤 Профиль', async (ctx) => {
+  try {
+    const user = await getUser(ctx.from.id);
+    if (!user) return ctx.reply('Сначала нажми /start');
 
-  const tier = calculateTier(user);
-  const itemsCount = getUserInventoryCount(ctx.from.id);
+    const tier = calculateTier(user);
+    const itemsCount = await getUserInventoryCount(ctx.from.id);
 
-  const profileText = 
-    `📊 <b>Статистика аккаунта:</b>\n\n` +
-    `🆔 <b>ID:</b> <code>${user.telegram_id}</code>\n` +
-    `🏅 <b>Уровень:</b> ${tier}\n` +
-    `🎲 <b>Апгрейдов:</b> ${user.upgrades_count}\n` +
-    `🎒 <b>Предметов в инвентаре:</b> ${itemsCount} шт.\n` +
-    `👥 <b>Приглашено друзей:</b> ${user.referrals_count}\n` +
-    `⭐ <b>Баланс:</b> ${user.balance} ⭐\n` +
-    `📅 <b>Дата регистрации:</b> ${user.created_at.split(' ')[0]}`;
+    const profileText = 
+      `📊 <b>Статистика аккаунта:</b>\n\n` +
+      `🆔 <b>ID:</b> <code>${user.telegram_id}</code>\n` +
+      `🏅 <b>Уровень:</b> ${tier}\n` +
+      `🎲 <b>Апгрейдов:</b> ${user.upgrades_count}\n` +
+      `🎒 <b>Предметов в инвентаре:</b> ${itemsCount} шт.\n` +
+      `👥 <b>Приглашено друзей:</b> ${user.referrals_count}\n` +
+      `⭐ <b>Баланс:</b> ${user.balance} ⭐\n` +
+      `📅 <b>Дата регистрации:</b> ${String(user.created_at).split(' ')[0]}`;
 
-  ctx.reply(profileText, {
-    parse_mode: 'HTML',
-    ...Markup.inlineKeyboard([
-      [Markup.button.callback('💳 Пополнить баланс (Скоро)', 'deposit_placeholder')],
-      [Markup.button.webApp('🚀 Открыть инвентарь и игру', WEB_APP_URL)]
-    ])
-  });
+    ctx.reply(profileText, {
+      parse_mode: 'HTML',
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('💳 Пополнить баланс (Скоро)', 'deposit_placeholder')],
+        [Markup.button.webApp('🚀 Открыть инвентарь и игру', WEB_APP_URL)]
+      ])
+    });
+  } catch (err) {
+    console.error('Ошибка в Профиль:', err);
+  }
 });
 
-// Раздел: Подарок (за подписку на ТГК)
-bot.hears('🎁 Подарок', (ctx) => {
-  const user = getUser(ctx.from.id);
-  if (!user) return ctx.reply('Сначала нажми /start');
+bot.hears('🎁 Подарок', async (ctx) => {
+  try {
+    const user = await getUser(ctx.from.id);
+    if (!user) return ctx.reply('Сначала нажми /start');
 
-  if (user.subscribed_reward_claimed) {
-    return ctx.reply('✅ Ты уже получил свой стартовый предмет за подписку!');
+    if (user.subscribed_reward_claimed) {
+      return ctx.reply('✅ Ты уже получил свой стартовый предмет за подписку!');
+    }
+
+    const giftText = 
+      `🎁 <b>Бесплатный предмет за подписку!</b>\n\n` +
+      `Подпишись на наш канал ${CHANNEL_USERNAME}, чтобы мгновенно получить случайный Roblox-предмет стоимостью <b>от 5 до 10 ⭐</b>!\n\n` +
+      `Ты сможешь сразу использовать его для апгрейда! ⚡️`;
+
+    ctx.reply(giftText, {
+      parse_mode: 'HTML',
+      ...Markup.inlineKeyboard([
+        [Markup.button.url('📢 Подписаться на канал', `https://t.me/${CHANNEL_USERNAME.replace('@', '')}`)],
+        [Markup.button.callback('✅ Проверить подписку', 'check_subscription')]
+      ])
+    });
+  } catch (err) {
+    console.error('Ошибка в Подарок:', err);
   }
-
-  const giftText = 
-    `🎁 <b>Бесплатный предмет за подписку!</b>\n\n` +
-    `Подпишись на наш канал ${CHANNEL_USERNAME}, чтобы мгновенно получить случайный Roblox-предмет стоимостью <b>от 5 до 10 ⭐</b>!\n\n` +
-    `Ты сможешь сразу использовать его для апгрейда! ⚡️`;
-
-  ctx.reply(giftText, {
-    parse_mode: 'HTML',
-    ...Markup.inlineKeyboard([
-      [Markup.button.url('📢 Подписаться на канал', `https://t.me/${CHANNEL_USERNAME.replace('@', '')}`)],
-      [Markup.button.callback('✅ Проверить подписку', 'check_subscription')]
-    ])
-  });
 });
 
 bot.action('check_subscription', async (ctx) => {
@@ -196,7 +204,7 @@ bot.action('check_subscription', async (ctx) => {
     const valid = ['member', 'administrator', 'creator'].includes(member.status);
 
     if (valid) {
-      const rewardedItem = claimSubscriptionItem(ctx.from.id);
+      const rewardedItem = await claimSubscriptionItem(ctx.from.id);
       if (rewardedItem) {
         await ctx.answerCbQuery('🎉 Награда получена!', { show_alert: true });
         ctx.editMessageText(
@@ -221,29 +229,31 @@ bot.action('check_subscription', async (ctx) => {
   }
 });
 
-// Раздел: Друзья (Рефералка)
-bot.hears('👥 Друзья', (ctx) => {
-  const user = getUser(ctx.from.id);
-  if (!user) return ctx.reply('Сначала нажми /start');
+bot.hears('👥 Друзья', async (ctx) => {
+  try {
+    const user = await getUser(ctx.from.id);
+    if (!user) return ctx.reply('Сначала нажми /start');
 
-  const refLink = `https://t.me/${BOT_USERNAME}?start=ref_${ctx.from.id}`;
-  const shareText = encodeURIComponent('Заходи в RoUP, забирай бесплатный Roblox скин и апгрейди его до редких вещей! ⚡️');
+    const refLink = `https://t.me/${BOT_USERNAME}?start=ref_${ctx.from.id}`;
+    const shareText = encodeURIComponent('Заходи в RoUP, забирай бесплатный Roblox скин и апгрейди его до редких вещей! ⚡️');
 
-  const text = 
-    `👥 <b>Реферальная программа</b>\n\n` +
-    `Зови друзей и получай за каждого предмет стоимостью <b>5-10 ⭐ (Звёзд)</b> в инвентарь!\n\n` +
-    `📊 Приглашено: <b>${user.referrals_count}</b> чел.\n\n` +
-    `🔗 Твоя ссылка:\n<code>${refLink}</code>`;
+    const text = 
+      `👥 <b>Реферальная программа</b>\n\n` +
+      `Зови друзей и получай за каждого предмет стоимостью <b>5-10 ⭐ (Звёзд)</b> в инвентарь!\n\n` +
+      `📊 Приглашено: <b>${user.referrals_count}</b> чел.\n\n` +
+      `🔗 Твоя ссылка:\n<code>${refLink}</code>`;
 
-  ctx.reply(text, {
-    parse_mode: 'HTML',
-    ...Markup.inlineKeyboard([
-      [Markup.button.url('📲 Поделиться ссылкой', `https://t.me/share/url?url=${refLink}&text=${shareText}`)]
-    ])
-  });
+    ctx.reply(text, {
+      parse_mode: 'HTML',
+      ...Markup.inlineKeyboard([
+        [Markup.button.url('📲 Поделиться ссылкой', `https://t.me/share/url?url=${refLink}&text=${shareText}`)]
+      ])
+    });
+  } catch (err) {
+    console.error('Ошибка в Друзья:', err);
+  }
 });
 
-// Раздел: Помощь
 bot.hears('🆘 Помощь', (ctx) => {
   ctx.reply(
     `❓ <b>Техническая поддержка</b>\n\n` +
@@ -255,6 +265,9 @@ bot.hears('🆘 Помощь', (ctx) => {
 bot.action('deposit_placeholder', (ctx) => {
   ctx.answerCbQuery('Пополнение через Telegram Stars будет доступно скоро!', { show_alert: true });
 });
+
+process.on('uncaughtException', (err) => console.error('Uncaught Exception:', err));
+process.on('unhandledRejection', (reason) => console.error('Unhandled Rejection:', reason));
 
 bot.launch();
 console.log('RoUP бот с капчей, ToS и предметами запущен!');
