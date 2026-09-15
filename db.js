@@ -1,132 +1,124 @@
-const Database = require('better-sqlite3');
-const db = new Database('database.db');
+const { Pool } = require('pg');
 const catalogItems = require('./catalog');
 
-// Инициализация таблиц
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    telegram_id INTEGER PRIMARY KEY,
-    username TEXT,
-    first_name TEXT,
-    balance INTEGER DEFAULT 0,
-    upgrades_count INTEGER DEFAULT 0,
-    is_vip INTEGER DEFAULT 0,
-    subscribed_reward_claimed INTEGER DEFAULT 0,
-    invited_by INTEGER DEFAULT NULL,
-    referrals_count INTEGER DEFAULT 0,
-    accepted_tos INTEGER DEFAULT 0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
+// ВСТАВЬ СЮДА СВОЙ ПАРОЛЬ ВМЕСТО ТВОЙ_ПАРОЛЬ:
+const connectionString = 'postgresql://postgres.qozrohmqnmbghemlgohb:roupgrade1509!@aws-0-eu-west-1.pooler.supabase.com:6543/postgres';
 
-  CREATE TABLE IF NOT EXISTS items (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE,
-    category TEXT NOT NULL,
-    price_stars INTEGER NOT NULL,
-    image_url TEXT
-  );
+const pool = new Pool({
+  connectionString,
+  ssl: { rejectUnauthorized: false }
+});
 
-  CREATE TABLE IF NOT EXISTS user_inventory (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    item_id INTEGER NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(user_id) REFERENCES users(telegram_id),
-    FOREIGN KEY(item_id) REFERENCES items(id)
-  );
-`);
+// Создание таблиц в Supabase при старте
+async function initDb() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      telegram_id BIGINT PRIMARY KEY,
+      username TEXT,
+      first_name TEXT,
+      balance INTEGER DEFAULT 0,
+      upgrades_count INTEGER DEFAULT 0,
+      is_vip INTEGER DEFAULT 0,
+      subscribed_reward_claimed INTEGER DEFAULT 0,
+      invited_by BIGINT DEFAULT NULL,
+      referrals_count INTEGER DEFAULT 0,
+      accepted_tos INTEGER DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
 
-// Синхронизация каталога: добавляет новые или обновляет цены/категории существующих
-function syncCatalog() {
-  const upsertStmt = db.prepare(`
-    INSERT INTO items (name, category, price_stars, image_url)
-    VALUES (@name, @category, @price_stars, @image_url)
-    ON CONFLICT(name) DO UPDATE SET
-      category = excluded.category,
-      price_stars = excluded.price_stars,
-      image_url = excluded.image_url
+    CREATE TABLE IF NOT EXISTS items (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      category TEXT NOT NULL,
+      price_stars INTEGER NOT NULL,
+      image_url TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS user_inventory (
+      id SERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(telegram_id),
+      item_id INTEGER NOT NULL REFERENCES items(id),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
-  const syncTx = db.transaction((items) => {
-    for (const item of items) {
-      upsertStmt.run(item);
-    }
-  });
-
-  syncTx(catalogItems);
+  // Синхронизация каталога предметов
+  for (const item of catalogItems) {
+    await pool.query(`
+      INSERT INTO items (name, category, price_stars, image_url)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT (name) DO UPDATE SET
+        category = EXCLUDED.category,
+        price_stars = EXCLUDED.price_stars,
+        image_url = EXCLUDED.image_url
+    `, [item.name, item.category, item.price_stars, item.image_url]);
+  }
+  console.log('✅ База данных Supabase подключена и готова к работе!');
 }
 
-// Запускаем синхронизацию при старте
-syncCatalog();
+initDb().catch(err => console.error('Ошибка инициализации Supabase:', err));
 
-// Регистрация пользователя после капчи и ToS
-function registerUser(tgUser, referrerId = null) {
-  let user = db.prepare('SELECT * FROM users WHERE telegram_id = ?').get(tgUser.id);
+async function registerUser(tgUser, referrerId = null) {
+  let res = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [tgUser.id]);
+  let user = res.rows[0];
   let successfulReferrer = null;
 
   if (!user) {
     if (referrerId && Number(referrerId) !== tgUser.id) {
-      const refCheck = db.prepare('SELECT telegram_id FROM users WHERE telegram_id = ?').get(referrerId);
-      if (refCheck) successfulReferrer = referrerId;
+      const refCheck = await pool.query('SELECT telegram_id FROM users WHERE telegram_id = $1', [referrerId]);
+      if (refCheck.rows.length > 0) successfulReferrer = referrerId;
     }
 
-    db.prepare(`
+    await pool.query(`
       INSERT INTO users (telegram_id, username, first_name, invited_by, accepted_tos)
-      VALUES (?, ?, ?, ?, 1)
-    `).run(tgUser.id, tgUser.username || null, tgUser.first_name, successfulReferrer);
+      VALUES ($1, $2, $3, $4, 1)
+    `, [tgUser.id, tgUser.username || null, tgUser.first_name, successfulReferrer]);
 
     if (successfulReferrer) {
-      db.prepare('UPDATE users SET referrals_count = referrals_count + 1 WHERE telegram_id = ?').run(successfulReferrer);
-      giveRandomStarterItem(successfulReferrer);
+      await pool.query('UPDATE users SET referrals_count = referrals_count + 1 WHERE telegram_id = $1', [successfulReferrer]);
+      await giveRandomStarterItem(successfulReferrer);
     }
 
-    user = db.prepare('SELECT * FROM users WHERE telegram_id = ?').get(tgUser.id);
+    res = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [tgUser.id]);
+    user = res.rows[0];
   }
 
   return { user, rewardedReferrerId: successfulReferrer };
 }
 
-// Выдать случайный предмет диапазона 5-10 звезд (выберет из твоих аксессуаров по 5 звёзд)
-function giveRandomStarterItem(userId) {
-  const item = db.prepare(`
+async function giveRandomStarterItem(userId) {
+  const itemRes = await pool.query(`
     SELECT * FROM items 
     WHERE price_stars BETWEEN 5 AND 10 
     ORDER BY RANDOM() 
     LIMIT 1
-  `).get();
+  `);
+  const item = itemRes.rows[0];
 
   if (item) {
-    db.prepare('INSERT INTO user_inventory (user_id, item_id) VALUES (?, ?)').run(userId, item.id);
+    await pool.query('INSERT INTO user_inventory (user_id, item_id) VALUES ($1, $2)', [userId, item.id]);
   }
   return item;
 }
 
-// Получить награду за подписку
-function claimSubscriptionItem(userId) {
-  const user = db.prepare('SELECT * FROM users WHERE telegram_id = ?').get(userId);
+async function claimSubscriptionItem(userId) {
+  const userRes = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
+  const user = userRes.rows[0];
   if (!user || user.subscribed_reward_claimed) return null;
 
-  const item = giveRandomStarterItem(userId);
-  db.prepare('UPDATE users SET subscribed_reward_claimed = 1 WHERE telegram_id = ?').run(userId);
+  const item = await giveRandomStarterItem(userId);
+  await pool.query('UPDATE users SET subscribed_reward_claimed = 1 WHERE telegram_id = $1', [userId]);
   return item;
 }
 
-// Получить предметы по категории (пригодится для Web App)
-function getItemsByCategory(category) {
-  return db.prepare('SELECT * FROM items WHERE category = ? ORDER BY price_stars ASC').all(category);
+async function getUserInventoryCount(userId) {
+  const res = await pool.query('SELECT count(*) as count FROM user_inventory WHERE user_id = $1', [userId]);
+  return parseInt(res.rows[0]?.count || 0, 10);
 }
 
-// Получить весь каталог
-function getAllItems() {
-  return db.prepare('SELECT * FROM items ORDER BY price_stars ASC').all();
-}
-
-function getUserInventoryCount(userId) {
-  return db.prepare('SELECT count(*) as count FROM user_inventory WHERE user_id = ?').get(userId).count;
-}
-
-function getUser(telegramId) {
-  return db.prepare('SELECT * FROM users WHERE telegram_id = ?').get(telegramId);
+async function getUser(telegramId) {
+  const res = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [telegramId]);
+  return res.rows[0];
 }
 
 function calculateTier(user) {
@@ -140,8 +132,5 @@ module.exports = {
   getUser,
   calculateTier,
   claimSubscriptionItem,
-  giveRandomStarterItem,
-  getUserInventoryCount,
-  getItemsByCategory,
-  getAllItems
+  getUserInventoryCount
 };
