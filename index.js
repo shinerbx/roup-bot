@@ -302,7 +302,7 @@ bot.hears('🆘 Помощь', (ctx) => {
   ).catch(() => {});
 });
 
-// ---------- Оплата Telegram Stars (прямая покупка предмета, без рандома) ----------
+// ---------- Оплата Telegram Stars ----------
 
 bot.on('pre_checkout_query', async (ctx) => {
   try {
@@ -317,7 +317,7 @@ bot.on('message', async (ctx) => {
   if (!payment) return;
 
   try {
-    const parts = payment.invoice_payload.split('_'); // buy_<userId>_<itemId>_<ts>
+    const parts = payment.invoice_payload.split('_');
     if (parts[0] !== 'buy') return;
 
     const payloadUserId = Number(parts[1]);
@@ -351,39 +351,55 @@ process.on('unhandledRejection', (reason) => {
   console.error('Необработанный промис (UnhandledRejection):', reason);
 });
 
-// ---------- HTTP-сервер: Webhook, API и статика Mini App ----------
+// ---------- Настройка HTTP-сервера Express ----------
 
 const app = express();
+
+// Разрешаем CORS (чтобы запросы с веб-аппа не блокировались)
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Telegram-Init-Data, x-telegram-init-data');
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  next();
+});
+
+// Парсер JSON
 app.use(express.json());
 
-// 1. Путь для вебхука Telegram
+// 1. Вебхук Telegraf
 const WEBHOOK_PATH = `/telegraf/${BOT_TOKEN}`;
 app.use(bot.webhookCallback(WEBHOOK_PATH));
 
-// 2. API веб-приложения
+// 2. Роутер API Mini App (СТРОГО перед статикой)
 app.use('/api', createWebappRouter(bot, BOT_TOKEN));
 
-// 3. Эндпоинт для пинга (чтобы предотвращать засыпание сервера)
+// 3. Пинг-эндпоинт для UptimeRobot
 app.get('/ping', (req, res) => {
   res.status(200).send('pong');
 });
 
-// 4. Раздача собранного React-билда
+// 4. Раздача собранного React-билда (только статические файлы)
 const webappDist = path.join(__dirname, 'webapp', 'dist');
 app.use(express.static(webappDist));
-app.get('*', (req, res) => {
+
+// 5. Любой неизвестный маршрут отдаем на SPA (Исключая /api и /telegraf)
+app.use((req, res) => {
+  if (req.path.startsWith('/api') || req.path.startsWith('/telegraf')) {
+    return res.status(404).json({ error: 'Маршрут API не найден' });
+  }
   res.sendFile(path.join(webappDist, 'index.html'));
 });
 
-// 5. Запуск сервера и авторегистрация вебхука
+// 6. Запуск сервера и регистрация вебхука в Telegram
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
-  console.log(`Render HTTP-сервер запущен на порту ${PORT}`);
+  console.log(`Render HTTP-сервер активен на порту ${PORT}`);
 
   try {
     const fullWebhookUrl = `${WEB_APP_URL}${WEBHOOK_PATH}`;
     await bot.telegram.setWebhook(fullWebhookUrl);
-    console.log(`Вебхук успешно зарегистрирован в Telegram: ${fullWebhookUrl}`);
+    console.log(`Вебхук Telegram зарегистрирован: ${fullWebhookUrl}`);
   } catch (err) {
     console.error('Ошибка регистрации вебхука:', err.message);
   }
