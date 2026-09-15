@@ -26,6 +26,6 @@ module.exports = [
     name: 'SSHF Face',
     category: 'faces', // лица
     price_stars: 1000,
-    image_url: '<a href="https://ibb.co/0y0Z2qpr"><img src="https://i.ibb.co/RTXPb2Gc/Chat-GPT-Image-15-2026-23-52-48-Photoroom.png" alt="Chat-GPT-Image-15-2026-23-52-48-Photoroom" border="0"></a>'
+    image_url: '<a href="https://ibb.co/0y0Z2qpr'
   }
 ];
