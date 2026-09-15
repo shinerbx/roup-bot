@@ -2,7 +2,7 @@ const { Pool } = require('pg');
 const catalogItems = require('./catalog');
 
 // ВСТАВЬ СЮДА СВОЙ ПАРОЛЬ ВМЕСТО ТВОЙ_ПАРОЛЬ:
-const connectionString = 'postgresql://postgres.qozrohmqnmbghemlgohb:roupgrade1509!@aws-0-eu-west-1.pooler.supabase.com:6543/postgres';
+const connectionString = 'postgresql://postgres.qozrohmqnmbghemlgohb:roupgrade1509!@aws-0-eu-west-1.pooler.supabase.com:5432/postgres';
 const pool = new Pool({
   connectionString,
   ssl: { rejectUnauthorized: false }
