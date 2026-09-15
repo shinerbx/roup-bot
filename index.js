@@ -16,6 +16,9 @@ const BOT_USERNAME = 'roupgrade_bot';
 const WEB_APP_URL = 'https://roup-bot.onrender.com';
 const CHANNEL_USERNAME = '@ro_upgrade';
 
+// Прямая ссылка на баннер для отправки приглашения другу
+const SHARE_BANNER_URL = 'https://i.ibb.co/Fq6L8G16/7007-D8-FC-C59-A-4-F72-B1-AB-C63-DFAA2-F87-A.png';
+
 const bot = new Telegraf(BOT_TOKEN);
 
 const pendingUsers = new Map();
@@ -269,13 +272,16 @@ bot.action('check_subscription', async (ctx) => {
   }
 });
 
+// ---------- Реферальная система (с отправкой фото и инлайн-режимом) ----------
+
 bot.hears('👥 Друзья', async (ctx) => {
   try {
     const user = await getUser(ctx.from.id);
     if (!user) return ctx.reply('Сначала нажми /start');
 
     const refLink = `https://t.me/${BOT_USERNAME}?start=ref_${ctx.from.id}`;
-    const shareText = encodeURIComponent('Заходи в RoUP, забирай бесплатный Roblox скин! ⚡️');
+    const shareText = 'Заходи в RoUP, забирай бесплатный Roblox скин! ⚡️';
+    const fallbackShareUrl = `https://t.me/share/url?url=${encodeURIComponent(refLink)}&text=${encodeURIComponent(shareText)}`;
 
     const text =
       `👥 <b>Реферальная программа</b>\n\n` +
@@ -286,12 +292,48 @@ bot.hears('👥 Друзья', async (ctx) => {
     ctx.reply(text, {
       parse_mode: 'HTML',
       ...Markup.inlineKeyboard([
-        [Markup.button.url('📲 Поделиться ссылкой', `https://t.me/share/url?url=${refLink}&text=${shareText}`)]
+        // Открывает выбор чата и вставляет полноценную фото-карточку
+        [Markup.button.switchToChat('📲 Отправить приглашение с картинкой', '')],
+        // Запасная кнопка обычной отправки ссылки
+        [Markup.button.url('🔗 Поделиться ссылкой', fallbackShareUrl)]
       ])
     }).catch(() => {});
   } catch (err) {
     console.error('Ошибка в Друзья:', err.message);
   }
+});
+
+// Генерация карточки с картинкой при выборе друга
+bot.on('inline_query', async (ctx) => {
+  const userId = ctx.from.id;
+  const refLink = `https://t.me/${BOT_USERNAME}?start=ref_${userId}`;
+
+  const caption =
+    `⚡️ <b>Заходи в RoUP и забирай бесплатный Roblox скин!</b>\n\n` +
+    `🎁 Переходи по ссылке и получай стартовый предмет стоимостью от 5 до 10 ⭐:`;
+
+  const results = [
+    {
+      type: 'photo',
+      id: 'invite_card',
+      photo_url: SHARE_BANNER_URL,
+      thumb_url: SHARE_BANNER_URL,
+      caption: caption,
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: '🚀 Забрать скин',
+              url: refLink
+            }
+          ]
+        ]
+      }
+    }
+  ];
+
+  return ctx.answerInlineQuery(results, { cache_time: 0 });
 });
 
 bot.hears('🆘 Помощь', (ctx) => {
@@ -355,7 +397,6 @@ process.on('unhandledRejection', (reason) => {
 
 const app = express();
 
-// Разрешаем CORS (чтобы запросы с веб-аппа не блокировались)
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -364,7 +405,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// Парсер JSON
 app.use(express.json());
 
 // 1. Вебхук Telegraf
@@ -374,16 +414,16 @@ app.use(bot.webhookCallback(WEBHOOK_PATH));
 // 2. Роутер API Mini App (СТРОГО перед статикой)
 app.use('/api', createWebappRouter(bot, BOT_TOKEN));
 
-// 3. Пинг-эндпоинт для UptimeRobot
+// 3. Пинг-эндпоинт для предотвращения засыпания сервера
 app.get('/ping', (req, res) => {
   res.status(200).send('pong');
 });
 
-// 4. Раздача собранного React-билда (только статические файлы)
+// 4. Раздача собранного React-билда
 const webappDist = path.join(__dirname, 'webapp', 'dist');
 app.use(express.static(webappDist));
 
-// 5. Любой неизвестный маршрут отдаем на SPA (Исключая /api и /telegraf)
+// 5. Маршрутизация SPA (исключая системные префиксы)
 app.use((req, res) => {
   if (req.path.startsWith('/api') || req.path.startsWith('/telegraf')) {
     return res.status(404).json({ error: 'Маршрут API не найден' });
@@ -391,7 +431,7 @@ app.use((req, res) => {
   res.sendFile(path.join(webappDist, 'index.html'));
 });
 
-// 6. Запуск сервера и регистрация вебхука в Telegram
+// 6. Запуск сервера и регистрация вебхука
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
   console.log(`Render HTTP-сервер активен на порту ${PORT}`);
