@@ -1,7 +1,7 @@
 const { Pool } = require('pg');
 const catalogItems = require('./catalog');
 
-const connectionString = 'postgresql://postgres.qozrohmqnmbghemlgohb:[PASSWORD]@aws-1-eu-west-1.pooler.supabase.com:5432/postgres';
+const connectionString = 'postgresql://postgres.qozrohmqnmbghemlgohb:roupgrade1509!@aws-1-eu-west-1.pooler.supabase.com:5432/postgres';
 
 const pool = new Pool({
   connectionString,
