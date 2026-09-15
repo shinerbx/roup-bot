@@ -1,14 +1,19 @@
 {
-  "name": "roup-bot",
+  "name": "roup-webapp",
+  "private": true,
   "version": "1.0.0",
-  "main": "index.js",
+  "type": "module",
   "scripts": {
-    "start": "node index.js",
-    "build:webapp": "cd webapp && npm install && npm run build"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "pg": "^8.11.3",
-    "telegraf": "^4.16.3"
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.0"
   }
 }
