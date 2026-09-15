@@ -13,8 +13,6 @@ const { createWebappRouter } = require('./webapp-api');
 
 const BOT_TOKEN = '8800513849:AAEaDLYPqGgNfKVZZTrhUUTQ7pirs3gr35c';
 const BOT_USERNAME = 'roupgrade_bot';
-// Веб-приложение и API теперь живут на одном Render-домене,
-// поэтому сюда нужно подставить именно URL этого сервиса на Render.
 const WEB_APP_URL = 'https://roup-bot.onrender.com';
 const CHANNEL_USERNAME = '@ro_upgrade';
 
@@ -353,27 +351,42 @@ process.on('unhandledRejection', (reason) => {
   console.error('Необработанный промис (UnhandledRejection):', reason);
 });
 
-bot.launch().then(() => {
-  console.log('RoUP бот с капчей, ToS, защитой от спама и оплатой Stars запущен!');
-}).catch((err) => {
-  console.error('Ошибка запуска bot.launch():', err.message);
-});
-
-// ---------- HTTP-сервер: отдаёт API веб-приложения и собранный React-билд ----------
+// ---------- HTTP-сервер: Webhook, API и статика Mini App ----------
 
 const app = express();
 app.use(express.json());
+
+// 1. Путь для вебхука Telegram
+const WEBHOOK_PATH = `/telegraf/${BOT_TOKEN}`;
+app.use(bot.webhookCallback(WEBHOOK_PATH));
+
+// 2. API веб-приложения
 app.use('/api', createWebappRouter(bot, BOT_TOKEN));
 
+// 3. Эндпоинт для пинга (чтобы предотвращать засыпание сервера)
+app.get('/ping', (req, res) => {
+  res.status(200).send('pong');
+});
+
+// 4. Раздача собранного React-билда
 const webappDist = path.join(__dirname, 'webapp', 'dist');
 app.use(express.static(webappDist));
 app.get('*', (req, res) => {
   res.sendFile(path.join(webappDist, 'index.html'));
 });
 
+// 5. Запуск сервера и авторегистрация вебхука
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Render HTTP-сервер (API + веб-приложение) активен на порту ${PORT}`);
+app.listen(PORT, async () => {
+  console.log(`Render HTTP-сервер запущен на порту ${PORT}`);
+
+  try {
+    const fullWebhookUrl = `${WEB_APP_URL}${WEBHOOK_PATH}`;
+    await bot.telegram.setWebhook(fullWebhookUrl);
+    console.log(`Вебхук успешно зарегистрирован в Telegram: ${fullWebhookUrl}`);
+  } catch (err) {
+    console.error('Ошибка регистрации вебхука:', err.message);
+  }
 });
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
