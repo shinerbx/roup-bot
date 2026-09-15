@@ -15,7 +15,7 @@ const BOT_TOKEN = '8800513849:AAEaDLYPqGgNfKVZZTrhUUTQ7pirs3gr35c';
 const BOT_USERNAME = 'roupgrade_bot';
 // Веб-приложение и API теперь живут на одном Render-домене,
 // поэтому сюда нужно подставить именно URL этого сервиса на Render.
-const WEB_APP_URL = 'https://твой-домен.com';
+const WEB_APP_URL = 'https://qozrohmqnmbghemlgohb.supabase.co';
 const CHANNEL_USERNAME = '@ro_upgrade';
 
 const bot = new Telegraf(BOT_TOKEN);
