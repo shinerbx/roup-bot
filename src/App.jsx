@@ -23,18 +23,27 @@ export default function App() {
   }, []);
 
   const loadAll = useCallback(async () => {
+    setLoading(true);
     try {
-      const [catalogRes, inventoryRes, profileRes] = await Promise.all([
+      // Запрашиваем независимо: если один запрос задержится, остальные не упадут
+      const [catRes, invRes, profRes] = await Promise.allSettled([
         api.getCatalog(),
         api.getInventory(),
         api.getProfile()
       ]);
-      setCatalog(catalogRes.items);
-      setInventory(inventoryRes.items);
-      setProfile(profileRes);
+
+      if (catRes.status === 'fulfilled' && catRes.value?.items) {
+        setCatalog(catRes.value.items);
+      }
+      if (invRes.status === 'fulfilled' && invRes.value?.items) {
+        setInventory(invRes.value.items);
+      }
+      if (profRes.status === 'fulfilled' && profRes.value) {
+        setProfile(profRes.value);
+      }
     } catch (err) {
-      console.error(err);
-      setToast('Не удалось загрузить данные. Потяни вниз, чтобы обновить.');
+      console.error('Ошибка загрузки данных:', err);
+      setToast('Сервер просыпается... Потяни вниз через пару секунд');
     } finally {
       setLoading(false);
     }
@@ -50,7 +59,7 @@ export default function App() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  const ownedItemIds = useMemo(() => new Set(inventory.map((i) => i.id)), [inventory]);
+  const ownedItemIds = useMemo(() => new Set((inventory || []).map((i) => i.id)), [inventory]);
 
   const handleBuy = (item) => {
     haptic('light');
@@ -69,19 +78,17 @@ export default function App() {
         if (status === 'paid') {
           hapticNotify('success');
           setToast(`Куплено: ${sheetItem.name}`);
-          // Сервер уже начислил предмет в successful_payment,
-          // подтягиваем актуальный инвентарь/баланс.
-          const [inventoryRes, profileRes] = await Promise.all([
+          const [inv, prof] = await Promise.allSettled([
             api.getInventory(),
             api.getProfile()
           ]);
-          setInventory(inventoryRes.items);
-          setProfile(profileRes);
+          if (inv.status === 'fulfilled') setInventory(inv.value.items);
+          if (prof.status === 'fulfilled') setProfile(prof.value);
         } else if (status === 'cancelled') {
-          // ничего не делаем
+          // Отмена пользователем
         } else {
           hapticNotify('error');
-          setToast('Оплата не прошла. Попробуй ещё раз.');
+          setToast('Оплата не прошла.');
         }
       });
     } catch (err) {
