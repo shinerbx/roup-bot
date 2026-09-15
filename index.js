@@ -1,3 +1,4 @@
+const http = require('http');
 const { Telegraf, Markup } = require('telegraf');
 const { 
   registerUser, 
@@ -14,8 +15,12 @@ const CHANNEL_USERNAME = '@ro_upgrade';
 
 const bot = new Telegraf(BOT_TOKEN);
 
+// Временные хранилища
 const pendingUsers = new Map();
+const userCooldowns = new Map(); // Антиспам кулдаун
+const actionLocks = new Set();    // Блокировка от параллельных кликов
 
+// Набор эмодзи для капчи
 const EMOJIS = [
   { name: 'пиццу 🍕', icon: '🍕' },
   { name: 'ракету 🚀', icon: '🚀' },
@@ -32,6 +37,37 @@ const getMainMenu = () => {
   ]).resize();
 };
 
+// ==========================================
+// 🛡 МИДДЛВЕЙР ЗАЩИТЫ ОТ СПАМА (RATE LIMITER)
+// ==========================================
+bot.use(async (ctx, next) => {
+  const userId = ctx.from?.id;
+  if (!userId) return next();
+
+  const now = Date.now();
+  const lastRequest = userCooldowns.get(userId) || 0;
+
+  // Ограничение: не чаще 1 запроса в 500 миллисекунд
+  if (now - lastRequest < 500) {
+    if (ctx.callbackQuery) {
+      return ctx.answerCbQuery('⏳ Не спамь так быстро!', { show_alert: false }).catch(() => {});
+    }
+    return; // Просто игнорируем спам текстом
+  }
+
+  userCooldowns.set(userId, now);
+
+  // Очистка старых записей из памяти каждые 1000 пользователей
+  if (userCooldowns.size > 2000) {
+    for (const [id, time] of userCooldowns.entries()) {
+      if (now - time > 10000) userCooldowns.delete(id);
+    }
+  }
+
+  return next();
+});
+
+// 1. /start -> Проверка на бота (Капча)
 bot.start(async (ctx) => {
   try {
     const existingUser = await getUser(ctx.from.id);
@@ -70,61 +106,66 @@ bot.start(async (ctx) => {
       }
     );
   } catch (err) {
-    console.error('Ошибка в /start:', err);
+    console.error('Ошибка в /start:', err.message);
   }
 });
 
+// Обработка клика по капче
 bot.action(/captcha_(.+)/, async (ctx) => {
-  const selectedIcon = ctx.match[1];
-  const pending = pendingUsers.get(ctx.from.id);
+  try {
+    const selectedIcon = ctx.match[1];
+    const pending = pendingUsers.get(ctx.from.id);
 
-  if (!pending) {
-    return ctx.answerCbQuery('Сессия устарела. Нажми /start снова.');
+    if (!pending) {
+      return ctx.answerCbQuery('Сессия устарела. Нажми /start снова.').catch(() => {});
+    }
+
+    if (selectedIcon !== pending.targetIcon) {
+      return ctx.answerCbQuery('❌ Неверно! Попробуй снова.', { show_alert: true }).catch(() => {});
+    }
+
+    await ctx.answerCbQuery('✅ Верно!').catch(() => {});
+
+    const tosText = 
+      `📜 <b>Пользовательское соглашение</b>\n\n` +
+      `Добро пожаловать в <b>RoUP</b> ⚡️\n\n` +
+      `Перед началом использования ознакомься с правилами сервиса:\n` +
+      `• Сервис предназначен для развлекательных целей.\n` +
+      `• Апгрейды предметов основываются на математической вероятности.\n` +
+      `• Запрещено использовать баги и уязвимости бота.\n\n` +
+      `Нажимая «Принимаю условия», вы соглашаетесь с правилами.`;
+
+    ctx.editMessageText(tosText, {
+      parse_mode: 'HTML',
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('✅ Принимаю условия', 'accept_tos')]
+      ])
+    }).catch(() => {});
+  } catch (err) {
+    console.error('Ошибка в captcha:', err.message);
   }
-
-  if (selectedIcon !== pending.targetIcon) {
-    await ctx.answerCbQuery('❌ Неверно! Попробуй снова.', { show_alert: true });
-    return;
-  }
-
-  await ctx.answerCbQuery('✅ Верно!');
-
-  const tosText = 
-    `📜 <b>Пользовательское соглашение</b>\n\n` +
-    `Добро пожаловать в <b>RoUP</b> ⚡️\n\n` +
-    `Перед началом использования ознакомься с правилами сервиса:\n` +
-    `• Сервис предназначен для развлекательных целей.\n` +
-    `• Апгрейды предметов основываются на математической вероятности.\n` +
-    `• Запрещено использовать баги и уязвимости бота.\n\n` +
-    `Нажимая «Принимаю условия», вы соглашаетесь с правилами.`;
-
-  ctx.editMessageText(tosText, {
-    parse_mode: 'HTML',
-    ...Markup.inlineKeyboard([
-      [Markup.button.callback('✅ Принимаю условия', 'accept_tos')]
-    ])
-  });
 });
 
+// Принятие соглашения
 bot.action('accept_tos', async (ctx) => {
+  const lockKey = `tos_${ctx.from.id}`;
+  if (actionLocks.has(lockKey)) return;
+  actionLocks.add(lockKey);
+
   try {
     const pending = pendingUsers.get(ctx.from.id) || {};
     const { rewardedReferrerId } = await registerUser(ctx.from, pending.referrerId);
     pendingUsers.delete(ctx.from.id);
 
-    await ctx.answerCbQuery('🎉 Условия приняты!');
+    await ctx.answerCbQuery('🎉 Условия приняты!').catch(() => {});
 
     if (rewardedReferrerId) {
-      try {
-        await bot.telegram.sendMessage(
-          rewardedReferrerId,
-          `🎉 Твой друг <b>${ctx.from.first_name}</b> завершил регистрацию!\n` +
-          `🎁 В твой инвентарь добавлен <b>предмет за 5-10 ⭐ (Звёзд)</b>!`,
-          { parse_mode: 'HTML' }
-        );
-      } catch (e) {
-        console.log('Ошибка отправки рефереру:', e.message);
-      }
+      bot.telegram.sendMessage(
+        rewardedReferrerId,
+        `🎉 Твой друг <b>${ctx.from.first_name}</b> завершил регистрацию!\n` +
+        `🎁 В твой инвентарь добавлен <b>предмет за 5-10 ⭐ (Звёзд)</b>!`,
+        { parse_mode: 'HTML' }
+      ).catch(() => {});
     }
 
     const welcomeText = 
@@ -132,16 +173,19 @@ bot.action('accept_tos', async (ctx) => {
       `Это <b>RoUP</b> — тот самый роблокс апгрейдер ⚡️\n\n` +
       `👇 Выбери кнопку в меню 👇`;
 
-    await ctx.deleteMessage();
+    await ctx.deleteMessage().catch(() => {});
     ctx.reply(welcomeText, {
       parse_mode: 'HTML',
       ...getMainMenu()
-    });
+    }).catch(() => {});
   } catch (err) {
-    console.error('Ошибка в accept_tos:', err);
+    console.error('Ошибка в accept_tos:', err.message);
+  } finally {
+    actionLocks.delete(lockKey);
   }
 });
 
+// Профиль
 bot.hears('👤 Профиль', async (ctx) => {
   try {
     const user = await getUser(ctx.from.id);
@@ -166,12 +210,13 @@ bot.hears('👤 Профиль', async (ctx) => {
         [Markup.button.callback('💳 Пополнить баланс (Скоро)', 'deposit_placeholder')],
         [Markup.button.webApp('🚀 Открыть инвентарь и игру', WEB_APP_URL)]
       ])
-    });
+    }).catch(() => {});
   } catch (err) {
-    console.error('Ошибка в Профиль:', err);
+    console.error('Ошибка в Профиль:', err.message);
   }
 });
 
+// Подарок
 bot.hears('🎁 Подарок', async (ctx) => {
   try {
     const user = await getUser(ctx.from.id);
@@ -192,13 +237,20 @@ bot.hears('🎁 Подарок', async (ctx) => {
         [Markup.button.url('📢 Подписаться на канал', `https://t.me/${CHANNEL_USERNAME.replace('@', '')}`)],
         [Markup.button.callback('✅ Проверить подписку', 'check_subscription')]
       ])
-    });
+    }).catch(() => {});
   } catch (err) {
-    console.error('Ошибка в Подарок:', err);
+    console.error('Ошибка в Подарок:', err.message);
   }
 });
 
+// Проверка подписки с защитой от двойного нажатия (Mutex lock)
 bot.action('check_subscription', async (ctx) => {
+  const lockKey = `sub_${ctx.from.id}`;
+  if (actionLocks.has(lockKey)) {
+    return ctx.answerCbQuery('Проверка уже идет...').catch(() => {});
+  }
+  actionLocks.add(lockKey);
+
   try {
     const member = await ctx.telegram.getChatMember(CHANNEL_USERNAME, ctx.from.id);
     const valid = ['member', 'administrator', 'creator'].includes(member.status);
@@ -206,7 +258,7 @@ bot.action('check_subscription', async (ctx) => {
     if (valid) {
       const rewardedItem = await claimSubscriptionItem(ctx.from.id);
       if (rewardedItem) {
-        await ctx.answerCbQuery('🎉 Награда получена!', { show_alert: true });
+        await ctx.answerCbQuery('🎉 Награда получена!', { show_alert: true }).catch(() => {});
         ctx.editMessageText(
           `🎉 <b>Поздравляем!</b>\n\n` +
           `Ты получил предмет: <b>${rewardedItem.name}</b>\n` +
@@ -216,19 +268,22 @@ bot.action('check_subscription', async (ctx) => {
             parse_mode: 'HTML',
             ...Markup.inlineKeyboard([[Markup.button.webApp('🎮 Перейти в игру', WEB_APP_URL)]])
           }
-        );
+        ).catch(() => {});
       } else {
-        await ctx.answerCbQuery('Вы уже забирали этот предмет.', { show_alert: true });
+        await ctx.answerCbQuery('Вы уже забирали этот предмет.', { show_alert: true }).catch(() => {});
       }
     } else {
-      await ctx.answerCbQuery('❌ Сначала подпишись на канал!', { show_alert: true });
+      await ctx.answerCbQuery('❌ Сначала подпишись на канал!', { show_alert: true }).catch(() => {});
     }
   } catch (err) {
-    console.error('Ошибка проверки подписки:', err);
-    await ctx.answerCbQuery('Ошибка. Убедись, что бот назначен админом в канале.', { show_alert: true });
+    console.error('Ошибка проверки подписки:', err.message);
+    await ctx.answerCbQuery('Ошибка проверки. Попробуй через пару секунд.', { show_alert: true }).catch(() => {});
+  } finally {
+    actionLocks.delete(lockKey);
   }
 });
 
+// Рефералка
 bot.hears('👥 Друзья', async (ctx) => {
   try {
     const user = await getUser(ctx.from.id);
@@ -248,9 +303,9 @@ bot.hears('👥 Друзья', async (ctx) => {
       ...Markup.inlineKeyboard([
         [Markup.button.url('📲 Поделиться ссылкой', `https://t.me/share/url?url=${refLink}&text=${shareText}`)]
       ])
-    });
+    }).catch(() => {});
   } catch (err) {
-    console.error('Ошибка в Друзья:', err);
+    console.error('Ошибка в Друзья:', err.message);
   }
 });
 
@@ -259,15 +314,40 @@ bot.hears('🆘 Помощь', (ctx) => {
     `❓ <b>Техническая поддержка</b>\n\n` +
     `По всем вопросам и проблемам с предметами:\n👉 @roup_support`,
     { parse_mode: 'HTML' }
-  );
+  ).catch(() => {});
 });
 
 bot.action('deposit_placeholder', (ctx) => {
-  ctx.answerCbQuery('Пополнение через Telegram Stars будет доступно скоро!', { show_alert: true });
+  ctx.answerCbQuery('Пополнение через Telegram Stars будет доступно скоро!', { show_alert: true }).catch(() => {});
 });
 
-process.on('uncaughtException', (err) => console.error('Uncaught Exception:', err));
-process.on('unhandledRejection', (reason) => console.error('Unhandled Rejection:', reason));
+// ==========================================
+// 🛡 ЗАЩИТА ПРОЦЕССА ОТ КРАШЕЙ И ПАДЕНИЙ
+// ==========================================
+bot.catch((err, ctx) => {
+  console.error(`Ошибка у пользователя ${ctx.from?.id}:`, err.message);
+});
 
-bot.launch();
-console.log('RoUP бот с капчей, ToS и предметами запущен!');
+process.on('uncaughtException', (err) => {
+  console.error('Критическая ошибка (UncaughtException):', err.message);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('Необработанный промис (UnhandledRejection):', reason);
+});
+
+// Запуск бота
+bot.launch().then(() => {
+  console.log('RoUP бот с капчей, ToS, защитой от спама и предметами запущен!');
+}).catch((err) => {
+  console.error('Ошибка запуска bot.launch():', err.message);
+});
+
+// HTTP-сервер для Render
+const PORT = process.env.PORT || 3000;
+http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('RoUP bot is running 24/7');
+}).listen(PORT, () => {
+  console.log(`Render HTTP-сервер активен на порту ${PORT}`);
+});
