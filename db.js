@@ -1,14 +1,13 @@
 const { Pool } = require('pg');
 const catalogItems = require('./catalog');
 
-// ВСТАВЬ СЮДА СВОЙ ПАРОЛЬ ВМЕСТО ТВОЙ_ПАРОЛЬ:
-const connectionString = 'postgresql://postgres.qozrohmqnmbghemlgohb:roupgrade1509!@aws-1-eu-west-1.pooler.supabase.com:5432/postgres';
+const connectionString = 'postgresql://postgres.qozrohmqnmbghemlgohb:[PASSWORD]@aws-1-eu-west-1.pooler.supabase.com:5432/postgres';
+
 const pool = new Pool({
   connectionString,
   ssl: { rejectUnauthorized: false }
 });
 
-// Создание таблиц в Supabase при старте
 async function initDb() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
@@ -41,7 +40,6 @@ async function initDb() {
     );
   `);
 
-  // Синхронизация каталога предметов
   for (const item of catalogItems) {
     await pool.query(`
       INSERT INTO items (name, category, price_stars, image_url)
@@ -85,6 +83,22 @@ async function registerUser(tgUser, referrerId = null) {
   return { user, rewardedReferrerId: successfulReferrer };
 }
 
+// Используется API веб-приложения: если пользователь открыл Mini App,
+// минуя /start (например, по прямой ссылке), всё равно создаём запись.
+async function ensureUserExists(tgUser) {
+  const res = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [tgUser.id]);
+  if (res.rows[0]) return res.rows[0];
+
+  await pool.query(`
+    INSERT INTO users (telegram_id, username, first_name, accepted_tos)
+    VALUES ($1, $2, $3, 1)
+    ON CONFLICT (telegram_id) DO NOTHING
+  `, [tgUser.id, tgUser.username || null, tgUser.first_name || null]);
+
+  const res2 = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [tgUser.id]);
+  return res2.rows[0];
+}
+
 async function giveRandomStarterItem(userId) {
   const itemRes = await pool.query(`
     SELECT * FROM items 
@@ -126,10 +140,45 @@ function calculateTier(user) {
   return '🥉 Базовый';
 }
 
+// ---------- Функции для API веб-приложения ----------
+
+async function getCatalogItems() {
+  const res = await pool.query(
+    'SELECT id, name, category, price_stars, image_url FROM items ORDER BY category, price_stars'
+  );
+  return res.rows;
+}
+
+async function getItemById(itemId) {
+  const res = await pool.query('SELECT * FROM items WHERE id = $1', [itemId]);
+  return res.rows[0];
+}
+
+async function getUserInventory(userId) {
+  const res = await pool.query(`
+    SELECT ui.id AS inventory_id, ui.created_at,
+           i.id, i.name, i.category, i.price_stars, i.image_url
+    FROM user_inventory ui
+    JOIN items i ON i.id = ui.item_id
+    WHERE ui.user_id = $1
+    ORDER BY ui.created_at DESC
+  `, [userId]);
+  return res.rows;
+}
+
+async function addInventoryItem(userId, itemId) {
+  await pool.query('INSERT INTO user_inventory (user_id, item_id) VALUES ($1, $2)', [userId, itemId]);
+}
+
 module.exports = {
   registerUser,
   getUser,
   calculateTier,
   claimSubscriptionItem,
-  getUserInventoryCount
+  getUserInventoryCount,
+  ensureUserExists,
+  getCatalogItems,
+  getItemById,
+  getUserInventory,
+  addInventoryItem
 };

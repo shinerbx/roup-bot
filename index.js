@@ -1,26 +1,29 @@
-const http = require('http');
+const express = require('express');
+const path = require('path');
 const { Telegraf, Markup } = require('telegraf');
-const { 
-  registerUser, 
-  getUser, 
-  calculateTier, 
-  claimSubscriptionItem, 
-  getUserInventoryCount 
+const {
+  registerUser,
+  getUser,
+  calculateTier,
+  claimSubscriptionItem,
+  getUserInventoryCount,
+  addInventoryItem
 } = require('./db');
+const { createWebappRouter } = require('./webapp-api');
 
 const BOT_TOKEN = '8800513849:AAEaDLYPqGgNfKVZZTrhUUTQ7pirs3gr35c';
 const BOT_USERNAME = 'roupgrade_bot';
-const WEB_APP_URL = 'https://твой-домен.com'; 
-const CHANNEL_USERNAME = '@ro_upgrade'; 
+// Веб-приложение и API теперь живут на одном Render-домене,
+// поэтому сюда нужно подставить именно URL этого сервиса на Render.
+const WEB_APP_URL = 'https://твой-домен.com';
+const CHANNEL_USERNAME = '@ro_upgrade';
 
 const bot = new Telegraf(BOT_TOKEN);
 
-// Временные хранилища
 const pendingUsers = new Map();
-const userCooldowns = new Map(); // Антиспам кулдаун
-const actionLocks = new Set();    // Блокировка от параллельных кликов
+const userCooldowns = new Map();
+const actionLocks = new Set();
 
-// Набор эмодзи для капчи
 const EMOJIS = [
   { name: 'пиццу 🍕', icon: '🍕' },
   { name: 'ракету 🚀', icon: '🚀' },
@@ -37,9 +40,6 @@ const getMainMenu = () => {
   ]).resize();
 };
 
-// ==========================================
-// 🛡 МИДДЛВЕЙР ЗАЩИТЫ ОТ СПАМА (RATE LIMITER)
-// ==========================================
 bot.use(async (ctx, next) => {
   const userId = ctx.from?.id;
   if (!userId) return next();
@@ -47,17 +47,15 @@ bot.use(async (ctx, next) => {
   const now = Date.now();
   const lastRequest = userCooldowns.get(userId) || 0;
 
-  // Ограничение: не чаще 1 запроса в 500 миллисекунд
   if (now - lastRequest < 500) {
     if (ctx.callbackQuery) {
       return ctx.answerCbQuery('⏳ Не спамь так быстро!', { show_alert: false }).catch(() => {});
     }
-    return; // Просто игнорируем спам текстом
+    return;
   }
 
   userCooldowns.set(userId, now);
 
-  // Очистка старых записей из памяти каждые 1000 пользователей
   if (userCooldowns.size > 2000) {
     for (const [id, time] of userCooldowns.entries()) {
       if (now - time > 10000) userCooldowns.delete(id);
@@ -67,11 +65,10 @@ bot.use(async (ctx, next) => {
   return next();
 });
 
-// 1. /start -> Проверка на бота (Капча)
 bot.start(async (ctx) => {
   try {
     const existingUser = await getUser(ctx.from.id);
-    
+
     if (existingUser && existingUser.accepted_tos) {
       return ctx.reply(`С возвращением в <b>RoUP</b>! ⚡️`, {
         parse_mode: 'HTML',
@@ -110,7 +107,6 @@ bot.start(async (ctx) => {
   }
 });
 
-// Обработка клика по капче
 bot.action(/captcha_(.+)/, async (ctx) => {
   try {
     const selectedIcon = ctx.match[1];
@@ -126,12 +122,11 @@ bot.action(/captcha_(.+)/, async (ctx) => {
 
     await ctx.answerCbQuery('✅ Верно!').catch(() => {});
 
-    const tosText = 
+    const tosText =
       `📜 <b>Пользовательское соглашение</b>\n\n` +
       `Добро пожаловать в <b>RoUP</b> ⚡️\n\n` +
       `Перед началом использования ознакомься с правилами сервиса:\n` +
       `• Сервис предназначен для развлекательных целей.\n` +
-      `• Апгрейды предметов основываются на математической вероятности.\n` +
       `• Запрещено использовать баги и уязвимости бота.\n\n` +
       `Нажимая «Принимаю условия», вы соглашаетесь с правилами.`;
 
@@ -146,7 +141,6 @@ bot.action(/captcha_(.+)/, async (ctx) => {
   }
 });
 
-// Принятие соглашения
 bot.action('accept_tos', async (ctx) => {
   const lockKey = `tos_${ctx.from.id}`;
   if (actionLocks.has(lockKey)) return;
@@ -168,7 +162,7 @@ bot.action('accept_tos', async (ctx) => {
       ).catch(() => {});
     }
 
-    const welcomeText = 
+    const welcomeText =
       `Привет 👋\n` +
       `Это <b>RoUP</b> — тот самый роблокс апгрейдер ⚡️\n\n` +
       `👇 Выбери кнопку в меню 👇`;
@@ -185,7 +179,6 @@ bot.action('accept_tos', async (ctx) => {
   }
 });
 
-// Профиль
 bot.hears('👤 Профиль', async (ctx) => {
   try {
     const user = await getUser(ctx.from.id);
@@ -194,11 +187,10 @@ bot.hears('👤 Профиль', async (ctx) => {
     const tier = calculateTier(user);
     const itemsCount = await getUserInventoryCount(ctx.from.id);
 
-    const profileText = 
+    const profileText =
       `📊 <b>Статистика аккаунта:</b>\n\n` +
       `🆔 <b>ID:</b> <code>${user.telegram_id}</code>\n` +
       `🏅 <b>Уровень:</b> ${tier}\n` +
-      `🎲 <b>Апгрейдов:</b> ${user.upgrades_count}\n` +
       `🎒 <b>Предметов в инвентаре:</b> ${itemsCount} шт.\n` +
       `👥 <b>Приглашено друзей:</b> ${user.referrals_count}\n` +
       `⭐ <b>Баланс:</b> ${user.balance} ⭐\n` +
@@ -207,8 +199,7 @@ bot.hears('👤 Профиль', async (ctx) => {
     ctx.reply(profileText, {
       parse_mode: 'HTML',
       ...Markup.inlineKeyboard([
-        [Markup.button.callback('💳 Пополнить баланс (Скоро)', 'deposit_placeholder')],
-        [Markup.button.webApp('🚀 Открыть инвентарь и игру', WEB_APP_URL)]
+        [Markup.button.webApp('🚀 Открыть инвентарь и каталог', WEB_APP_URL)]
       ])
     }).catch(() => {});
   } catch (err) {
@@ -216,7 +207,6 @@ bot.hears('👤 Профиль', async (ctx) => {
   }
 });
 
-// Подарок
 bot.hears('🎁 Подарок', async (ctx) => {
   try {
     const user = await getUser(ctx.from.id);
@@ -226,10 +216,9 @@ bot.hears('🎁 Подарок', async (ctx) => {
       return ctx.reply('✅ Ты уже получил свой стартовый предмет за подписку!');
     }
 
-    const giftText = 
+    const giftText =
       `🎁 <b>Бесплатный предмет за подписку!</b>\n\n` +
-      `Подпишись на наш канал ${CHANNEL_USERNAME}, чтобы мгновенно получить случайный Roblox-предмет стоимостью <b>от 5 до 10 ⭐</b>!\n\n` +
-      `Ты сможешь сразу использовать его для апгрейда! ⚡️`;
+      `Подпишись на наш канал ${CHANNEL_USERNAME}, чтобы мгновенно получить случайный Roblox-предмет стоимостью <b>от 5 до 10 ⭐</b>!`;
 
     ctx.reply(giftText, {
       parse_mode: 'HTML',
@@ -243,7 +232,6 @@ bot.hears('🎁 Подарок', async (ctx) => {
   }
 });
 
-// Проверка подписки с защитой от двойного нажатия (Mutex lock)
 bot.action('check_subscription', async (ctx) => {
   const lockKey = `sub_${ctx.from.id}`;
   if (actionLocks.has(lockKey)) {
@@ -263,10 +251,10 @@ bot.action('check_subscription', async (ctx) => {
           `🎉 <b>Поздравляем!</b>\n\n` +
           `Ты получил предмет: <b>${rewardedItem.name}</b>\n` +
           `Стоимость: <b>${rewardedItem.price_stars} ⭐</b>\n\n` +
-          `Он уже добавлен в твой инвентарь. Заходи и делай апгрейд! 🚀`,
+          `Он уже добавлен в твой инвентарь. Заходи и посмотри! 🚀`,
           {
             parse_mode: 'HTML',
-            ...Markup.inlineKeyboard([[Markup.button.webApp('🎮 Перейти в игру', WEB_APP_URL)]])
+            ...Markup.inlineKeyboard([[Markup.button.webApp('🎒 Открыть инвентарь', WEB_APP_URL)]])
           }
         ).catch(() => {});
       } else {
@@ -283,16 +271,15 @@ bot.action('check_subscription', async (ctx) => {
   }
 });
 
-// Рефералка
 bot.hears('👥 Друзья', async (ctx) => {
   try {
     const user = await getUser(ctx.from.id);
     if (!user) return ctx.reply('Сначала нажми /start');
 
     const refLink = `https://t.me/${BOT_USERNAME}?start=ref_${ctx.from.id}`;
-    const shareText = encodeURIComponent('Заходи в RoUP, забирай бесплатный Roblox скин и апгрейди его до редких вещей! ⚡️');
+    const shareText = encodeURIComponent('Заходи в RoUP, забирай бесплатный Roblox скин! ⚡️');
 
-    const text = 
+    const text =
       `👥 <b>Реферальная программа</b>\n\n` +
       `Зови друзей и получай за каждого предмет стоимостью <b>5-10 ⭐ (Звёзд)</b> в инвентарь!\n\n` +
       `📊 Приглашено: <b>${user.referrals_count}</b> чел.\n\n` +
@@ -317,13 +304,43 @@ bot.hears('🆘 Помощь', (ctx) => {
   ).catch(() => {});
 });
 
-bot.action('deposit_placeholder', (ctx) => {
-  ctx.answerCbQuery('Пополнение через Telegram Stars будет доступно скоро!', { show_alert: true }).catch(() => {});
+// ---------- Оплата Telegram Stars (прямая покупка предмета, без рандома) ----------
+
+bot.on('pre_checkout_query', async (ctx) => {
+  try {
+    await ctx.answerPreCheckoutQuery(true);
+  } catch (err) {
+    console.error('Ошибка pre_checkout_query:', err.message);
+  }
 });
 
-// ==========================================
-// 🛡 ЗАЩИТА ПРОЦЕССА ОТ КРАШЕЙ И ПАДЕНИЙ
-// ==========================================
+bot.on('message', async (ctx) => {
+  const payment = ctx.message?.successful_payment;
+  if (!payment) return;
+
+  try {
+    const parts = payment.invoice_payload.split('_'); // buy_<userId>_<itemId>_<ts>
+    if (parts[0] !== 'buy') return;
+
+    const payloadUserId = Number(parts[1]);
+    const itemId = Number(parts[2]);
+
+    if (payloadUserId !== ctx.from.id) {
+      console.error('Несовпадение user_id в payload оплаты:', payment.invoice_payload, ctx.from.id);
+      return;
+    }
+
+    await addInventoryItem(ctx.from.id, itemId);
+
+    ctx.reply('✅ Оплата прошла успешно! Предмет добавлен в твой инвентарь.', {
+      parse_mode: 'HTML',
+      ...Markup.inlineKeyboard([[Markup.button.webApp('🎒 Открыть инвентарь', WEB_APP_URL)]])
+    }).catch(() => {});
+  } catch (err) {
+    console.error('Ошибка обработки successful_payment:', err.message);
+  }
+});
+
 bot.catch((err, ctx) => {
   console.error(`Ошибка у пользователя ${ctx.from?.id}:`, err.message);
 });
@@ -336,18 +353,28 @@ process.on('unhandledRejection', (reason) => {
   console.error('Необработанный промис (UnhandledRejection):', reason);
 });
 
-// Запуск бота
 bot.launch().then(() => {
-  console.log('RoUP бот с капчей, ToS, защитой от спама и предметами запущен!');
+  console.log('RoUP бот с капчей, ToS, защитой от спама и оплатой Stars запущен!');
 }).catch((err) => {
   console.error('Ошибка запуска bot.launch():', err.message);
 });
 
-// HTTP-сервер для Render
-const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('RoUP bot is running 24/7');
-}).listen(PORT, () => {
-  console.log(`Render HTTP-сервер активен на порту ${PORT}`);
+// ---------- HTTP-сервер: отдаёт API веб-приложения и собранный React-билд ----------
+
+const app = express();
+app.use(express.json());
+app.use('/api', createWebappRouter(bot, BOT_TOKEN));
+
+const webappDist = path.join(__dirname, 'webapp', 'dist');
+app.use(express.static(webappDist));
+app.get('*', (req, res) => {
+  res.sendFile(path.join(webappDist, 'index.html'));
 });
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Render HTTP-сервер (API + веб-приложение) активен на порту ${PORT}`);
+});
+
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
