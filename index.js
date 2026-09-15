@@ -272,7 +272,7 @@ bot.action('check_subscription', async (ctx) => {
   }
 });
 
-// ---------- Реферальная система (с отправкой фото и инлайн-режимом) ----------
+// ---------- Реферальная система (одна кнопка с отправкой карточки и картинки) ----------
 
 bot.hears('👥 Друзья', async (ctx) => {
   try {
@@ -280,8 +280,6 @@ bot.hears('👥 Друзья', async (ctx) => {
     if (!user) return ctx.reply('Сначала нажми /start');
 
     const refLink = `https://t.me/${BOT_USERNAME}?start=ref_${ctx.from.id}`;
-    const shareText = 'Заходи в RoUP, забирай бесплатный Roblox скин! ⚡️';
-    const fallbackShareUrl = `https://t.me/share/url?url=${encodeURIComponent(refLink)}&text=${encodeURIComponent(shareText)}`;
 
     const text =
       `👥 <b>Реферальная программа</b>\n\n` +
@@ -292,10 +290,7 @@ bot.hears('👥 Друзья', async (ctx) => {
     ctx.reply(text, {
       parse_mode: 'HTML',
       ...Markup.inlineKeyboard([
-        // Открывает выбор чата и вставляет полноценную фото-карточку
-        [Markup.button.switchToChat('📲 Отправить приглашение с картинкой', '')],
-        // Запасная кнопка обычной отправки ссылки
-        [Markup.button.url('🔗 Поделиться ссылкой', fallbackShareUrl)]
+        [Markup.button.switchToChat('📲 Пригласить друга', '')]
       ])
     }).catch(() => {});
   } catch (err) {
