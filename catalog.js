@@ -4,7 +4,7 @@ module.exports = [
   // --- АКСЕССУАРЫ ---
   {
     name: 'Baseball Cap',
-    category: 'accessories', // аксессуары
+    category: 'accessories',
     price_stars: 5,
     image_url: '/items/baseball cap.png'
   },
@@ -39,16 +39,16 @@ module.exports = [
     image_url: '/items/builder hat.png'
   },
   {
-    name: 'Dominus Empyreus',
-    category: 'accessories',
-    price_stars: 5000,
-    image_url: '/items/dominus empyreus.png'
-  },
-  {
     name: 'Doge Head',
     category: 'accessories',
     price_stars: 75,
     image_url: '/items/doge head.png'
+  },
+  {
+    name: 'Dominus Empyreus',
+    category: 'accessories',
+    price_stars: 5000,
+    image_url: '/items/dominus empyreus.png'
   },
   {
     name: 'Domino Crown',
@@ -56,29 +56,24 @@ module.exports = [
     price_stars: 10000,
     image_url: '/items/domino crown.png'
   },
+
   // --- ЛИЦА ---
   {
-    name: 'Super Happy',
-    category: 'faces', // лица
-    price_stars: 1000,
-    image_url: '/items/super happy.png' // Если этой картинки нет, добавь или закомментируй
-  },
-  {
     name: 'Man',
-    category: 'faces', // лица
+    category: 'faces',
     price_stars: 15,
     image_url: '/items/man.png'
   },
   {
-    name: 'Blue Beast',
-    category: 'faces', // лица
-    price_stars: 2000,
-    image_url: '/items/blue beast.png'
-  },
-  {
     name: 'Pal',
-    category: 'faces', // лица
+    category: 'faces',
     price_stars: 150,
     image_url: '/items/pal face.png'
+  },
+  {
+    name: 'Blue Beast',
+    category: 'faces',
+    price_stars: 2000,
+    image_url: '/items/blue beast.png'
   }
 ];
