@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import { api } from '../api.js';
 import { haptic, hapticNotify } from '../telegram.js';
 
@@ -32,35 +32,23 @@ function clampNumber(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-function Slot({ item, placeholder, onOpen, spinning, side }) {
-  if (!item) {
-    return (
-      <button
-        type="button"
-        className={`upgrade-slot upgrade-slot--button upgrade-slot--${side}`}
-        onClick={onOpen}
-        disabled={spinning}
-      >
-        <span className="upgrade-slot__plus">+</span>
-        <span className="upgrade-slot__placeholder">{placeholder}</span>
-      </button>
-    );
-  }
-
+function Slot({ item, placeholder, onOpen, spinning, side, title }) {
   return (
-    <button
-      type="button"
-      className={`upgrade-slot filled upgrade-slot--${side} ${spinning ? 'pulsing' : ''}`}
-      onClick={onOpen}
-      disabled={spinning}
-      aria-label={`Изменить ${item.name}`}
-    >
-      <span className="upgrade-slot__media">
-        <img className="upgrade-slot__image" src={item.image_url} alt={item.name} />
-      </span>
-      <span className="upgrade-slot__name">{item.name}</span>
-      <span className="upgrade-slot__price">★ {Number(item.price_stars).toLocaleString('ru-RU')}</span>
-    </button>
+    <div className={`upgrade-slot-container ${spinning ? 'pulsing' : ''}`} onClick={!spinning ? onOpen : undefined}>
+      <div className="upgrade-slot-title">{title}</div>
+      {!item ? (
+        <div className="upgrade-slot-empty">
+          <span className="upgrade-slot__plus">+</span>
+          <span className="upgrade-slot__placeholder">{placeholder}</span>
+        </div>
+      ) : (
+        <div className="upgrade-slot-filled">
+          <img className="upgrade-slot__image" src={item.image_url} alt={item.name} />
+          <span className="upgrade-slot__name">{item.name}</span>
+          <span className="upgrade-slot__price">★ {Number(item.price_stars).toLocaleString('ru-RU')}</span>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -120,6 +108,7 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
   const [customMultiplier, setCustomMultiplier] = useState('');
   const [needleAngle, setNeedleAngle] = useState(0);
   const [spinDuration, setSpinDuration] = useState(340);
+  const [flash, setFlash] = useState(false); // Состояние для вспышки
   const spinStartedAtRef = useRef(0);
 
   const owned = inventory.find((i) => i.inventory_id === ownedId) || null;
@@ -188,14 +177,18 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
       const serverRoll = Number(res.roll ?? 0);
       const finalAngle = serverRoll * 3.6;
 
-      // Спин уже завершён: фиксируем финальный угол без повторного старта CSS-анимации.
       setSpinning(false);
       setNeedleAngle(finalAngle);
 
-      // Не показываем результат раньше визуального спина.
       const elapsed = performance.now() - spinStartedAtRef.current;
       const remaining = Math.max(0, duration - elapsed);
       if (remaining) await new Promise((resolve) => setTimeout(resolve, remaining));
+
+      // Активация неоновой вспышки при успехе
+      if (res.success) {
+        setFlash(true);
+        setTimeout(() => setFlash(false), 800);
+      }
 
       hapticNotify(res.success ? 'success' : 'error');
       setResult({
@@ -222,59 +215,70 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
 
   return (
     <div className="upgrade-screen">
-      <section className="upgrade-stage">
-        <div className="upgrade-panel">
-          <div className="upgrade-panel__title">Отдать</div>
-          <div className="upgrade-panel__hint">Предмет из инвентаря</div>
-          <Slot item={owned} placeholder="Выберите предмет" spinning={spinning} side="source" onOpen={() => setPicker('owned')} />
-        </div>
+      
+      {/* Эффект неоновой вспышки */}
+      <div className={`neon-flash-overlay ${flash ? 'active' : ''}`}>
+        <div className="neon-flash-circle" />
+      </div>
 
-        <div className="upgrade-wheel-column">
-          <div className={`upgrade-gauge ${spinning ? 'spinning' : ''}`} style={{ '--gauge-offset': offset, '--spin-duration': `${spinDuration}ms` }}>
-            <svg viewBox="0 0 168 168" aria-hidden="true">
-              <defs>
-                <linearGradient id="gaugeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stopColor="var(--crimson-bright)" />
-                  <stop offset="100%" stopColor="var(--gold)" />
-                </linearGradient>
-              </defs>
-              <circle className="upgrade-gauge__track" cx="84" cy="84" r={RADIUS} />
-              <circle
-                className="upgrade-gauge__value-arc"
-                cx="84"
-                cy="84"
-                r={RADIUS}
-                strokeDasharray={CIRCUMFERENCE}
-                strokeDashoffset={offset}
-              />
-            </svg>
-            <div
-              className={`upgrade-needle ${spinning ? 'spinning' : ''}`}
-              style={{ '--needle-angle': `${needleAngle}deg` }}
-            >
-              <span className="upgrade-needle__tip" />
+      <section className="upgrade-stage-modern">
+        {/* Левый блок (Отдать) */}
+        <Slot 
+          title="Выберите предметы для использования" 
+          item={owned} 
+          placeholder="Нажмите, чтобы выбрать" 
+          spinning={spinning} 
+          side="source" 
+          onOpen={() => setPicker('owned')} 
+        />
+
+        {/* Центральный блок (Колесо) */}
+        <div className="upgrade-center-block">
+          <div className="upgrade-wheel-column">
+            <div className={`upgrade-gauge ${spinning ? 'spinning' : ''}`} style={{ '--gauge-offset': offset, '--spin-duration': `${spinDuration}ms` }}>
+              <svg viewBox="0 0 168 168" aria-hidden="true">
+                <defs>
+                  <linearGradient id="gaugeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor="#ffc800" />
+                    <stop offset="100%" stopColor="#ff7a45" />
+                  </linearGradient>
+                </defs>
+                <circle className="upgrade-gauge__track" cx="84" cy="84" r={RADIUS} />
+                <circle
+                  className="upgrade-gauge__value-arc"
+                  cx="84"
+                  cy="84"
+                  r={RADIUS}
+                  strokeDasharray={CIRCUMFERENCE}
+                  strokeDashoffset={offset}
+                />
+              </svg>
+              <div
+                className={`upgrade-needle ${spinning ? 'spinning' : ''}`}
+                style={{ '--needle-angle': `${needleAngle}deg` }}
+              >
+                <span className="upgrade-needle__tip" />
+              </div>
+              <div className="upgrade-gauge__center">
+                <span className="upgrade-gauge__percent">{percent ? percent.toFixed(0) : '—'}%</span>
+              </div>
             </div>
-            <div className="upgrade-gauge__center">
-              <span className="upgrade-gauge__percent">{percent ? percent.toFixed(0) : '—'}%</span>
-            </div>
-          </div>
 
-          <div className="upgrade-wheel-caption">
-            <span className="upgrade-wheel-caption__from">x{selectedMultiplier}</span>
-            <span>шанс апгрейда</span>
+            <button type="button" className="upgrade-action-button" disabled={!canUpgrade} onClick={handleUpgrade}>
+              {spinning ? 'АПГРЕЙД...' : 'ПРОКАЧАТЬ'}
+            </button>
           </div>
-
-          <button type="button" className="upgrade-button" disabled={!canUpgrade} onClick={handleUpgrade}>
-            <span>{spinning ? 'Крутится…' : 'Прокачать'}</span>
-            {!spinning && <span className="upgrade-button__chance">{percent ? `${percent.toFixed(0)}%` : 'Выберите предметы'}</span>}
-          </button>
         </div>
 
-        <div className="upgrade-panel">
-          <div className="upgrade-panel__title">Получить</div>
-          <div className="upgrade-panel__hint">Предмет для апгрейда</div>
-          <Slot item={target} placeholder="Выберите предмет" spinning={spinning} side="target" onOpen={() => setPicker('target')} />
-        </div>
+        {/* Правый блок (Получить) */}
+        <Slot 
+          title="Выберите предмет для апгрейда" 
+          item={target} 
+          placeholder="Нажмите, чтобы выбрать" 
+          spinning={spinning} 
+          side="target" 
+          onOpen={() => setPicker('target')} 
+        />
       </section>
 
       <section className="upgrade-multiplier-bar">
