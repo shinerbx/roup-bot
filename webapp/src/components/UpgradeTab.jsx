@@ -1,109 +1,85 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { haptic, hapticNotify } from '../telegram.js';
 
 const RADIUS = 74;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 const PRESETS = [2, 4, 8, 10];
-const MIN_SPIN_MS = 3000;
-const MAX_SPIN_MS = 5000;
+const MAX_MULTIPLIER = 100;
+const SPIN_MS = 3600;
 
-function randomItem(items, filter = () => true) {
-  const pool = items.filter(filter);
-  if (!pool.length) return null;
-  return pool[Math.floor(Math.random() * pool.length)];
-}
-
-function pickRandomUpgrade(inventory, catalog) {
-  if (!inventory.length || !catalog.length) return { owned: null, target: null };
-
-  const owned = randomItem(inventory);
-  if (!owned) return { owned: null, target: null };
-
-  const sourcePrice = Number(owned.price_stars) || 0;
-  const distinctCatalog = catalog.filter((item) => item.id !== owned.id);
-  const moreValuable = distinctCatalog.filter((item) => Number(item.price_stars) > sourcePrice);
-  const target = randomItem(moreValuable.length ? moreValuable : distinctCatalog);
-
-  return { owned, target };
-}
-
-function clampNumber(value, min, max) {
+function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-// Генератор неонового конфетти
-function NeonConfetti() {
-  const particles = Array.from({ length: 50 });
+function getChance(source, target, multiplier) {
+  if (!source || !target) return 0;
+  const sourcePrice = Number(source.price_stars);
+  const targetPrice = Number(target.price_stars);
+  if (!Number.isFinite(sourcePrice) || !Number.isFinite(targetPrice) || targetPrice <= 0) return 0;
+  const base = Math.min(100, Math.max(0, sourcePrice / targetPrice * 100));
+  return Math.min(100, Math.max(0, base / multiplier));
+}
+
+function randomAngleForResult(success, chance) {
+  const zone = clamp(chance, 0, 100) * 3.6;
+  if (success) {
+    return Math.random() * Math.max(zone, 1);
+  }
+  if (zone >= 359.5) return 359.5 + Math.random() * 0.4;
+  return zone + 1 + Math.random() * (359 - zone - 1);
+}
+
+function ResultBurst({ success }) {
+  const particles = Array.from({ length: 22 });
   return (
-    <div className="confetti-container">
-      {particles.map((_, i) => {
-        const angle = Math.random() * 360;
-        const distance = 80 + Math.random() * 250;
-        const duration = 0.6 + Math.random() * 0.8;
-        const delay = Math.random() * 0.1;
-        const colors = ['#ff003c', '#ffc800', '#00ffcc', '#bf00ff'];
-        const color = colors[Math.floor(Math.random() * colors.length)];
-        
-        return (
-          <div 
-            key={i} 
-            className="confetti-particle"
-            style={{
-              '--angle': `${angle}deg`,
-              '--dist': `${distance}px`,
-              '--duration': `${duration}s`,
-              '--delay': `${delay}s`,
-              '--color': color
-            }}
-          />
-        );
-      })}
+    <div className={`result-burst ${success ? 'result-burst--success' : 'result-burst--failure'}`} aria-hidden="true">
+      {particles.map((_, index) => (
+        <span
+          key={index}
+          style={{
+            '--angle': `${index * (360 / particles.length) + Math.random() * 8}deg`,
+            '--distance': `${70 + Math.random() * 100}px`,
+            '--delay': `${Math.random() * 100}ms`
+          }}
+        />
+      ))}
     </div>
   );
 }
 
 function Slot({ item, placeholder, onOpen, spinning, side, title, resultStatus }) {
-  let content;
-
-  if (side === 'target' && resultStatus === 'fail') {
-    content = (
-      <div className="upgrade-slot-fail">
-        <span className="fail-text">НЕУДАЧА</span>
-      </div>
-    );
-  } else if (!item) {
-    content = (
-      <div className="upgrade-slot-empty">
-        <span className="upgrade-slot__plus">+</span>
-        <span className="upgrade-slot__placeholder">{placeholder}</span>
-      </div>
-    );
-  } else {
-    content = (
-      <div className="upgrade-slot-filled">
-        <img className="upgrade-slot__image" src={item.image_url} alt={item.name} />
-        <span className="upgrade-slot__name">{item.name}</span>
-        <span className="upgrade-slot__price">★ {Number(item.price_stars).toLocaleString('ru-RU')}</span>
-      </div>
-    );
-  }
-
-  const successClass = resultStatus === 'success' ? 'slot-success-red' : '';
-  const failClass = resultStatus === 'fail-source' ? 'slot-fail-dim' : '';
-
+  const failedTarget = side === 'target' && resultStatus === 'fail';
   return (
-    <div 
-      className={`upgrade-slot-container ${spinning ? 'pulsing' : ''} ${successClass} ${failClass}`} 
+    <button
+      type="button"
+      className={`upgrade-slot ${spinning ? 'upgrade-slot--locked' : ''} ${resultStatus === 'success' ? 'upgrade-slot--success' : ''} ${resultStatus === 'fail-source' ? 'upgrade-slot--failed' : ''}`}
       onClick={!spinning && !resultStatus ? onOpen : undefined}
+      disabled={spinning || Boolean(resultStatus)}
+      aria-label={item ? `${title}: ${item.name}` : title}
     >
-      <div className="upgrade-slot-title">{title}</div>
-      {content}
-    </div>
+      <span className="upgrade-slot__title">{title}</span>
+      {failedTarget ? (
+        <span className="upgrade-slot__failure">НЕУДАЧА</span>
+      ) : item ? (
+        <span className="upgrade-slot__filled">
+          <span className="upgrade-slot__image-wrap">
+            <img src={item.image_url} alt="" />
+          </span>
+          <span className="upgrade-slot__name">{item.name}</span>
+          <span className="upgrade-slot__price">★ {Number(item.price_stars).toLocaleString('ru-RU')}</span>
+        </span>
+      ) : (
+        <span className="upgrade-slot__empty">
+          <span className="upgrade-slot__plus">+</span>
+          <span>{placeholder}</span>
+        </span>
+      )}
+    </button>
   );
 }
 
-function PickerSheet({ title, items, selectedId, getId, onSelect, onClose, spinning }) {
+function PickerSheet({ title, items, selectedId, getId, onSelect, onClose, disabledReason }) {
   return (
     <>
       <div className="sheet-backdrop" onClick={onClose} />
@@ -119,8 +95,8 @@ function PickerSheet({ title, items, selectedId, getId, onSelect, onClose, spinn
         </div>
         {items.length === 0 ? (
           <div className="empty-state upgrade-picker-sheet__empty">
-            <p className="empty-state__title">Ничего нет</p>
-            <p>Здесь пока нет доступных предметов.</p>
+            <p className="empty-state__title">Нет доступных предметов</p>
+            <p>{disabledReason || 'Здесь пока ничего нет.'}</p>
           </div>
         ) : (
           <div className="upgrade-modal-grid">
@@ -132,11 +108,8 @@ function PickerSheet({ title, items, selectedId, getId, onSelect, onClose, spinn
                   key={id}
                   className={`upgrade-picker-item ${selectedId === id ? 'selected' : ''}`}
                   onClick={() => onSelect(item)}
-                  disabled={spinning}
                 >
-                  <span className="upgrade-picker-item__image-wrap">
-                    <img src={item.image_url} alt={item.name} />
-                  </span>
+                  <span className="upgrade-picker-item__image-wrap"><img src={item.image_url} alt="" /></span>
                   <span>{item.name}</span>
                   <small>★ {Number(item.price_stars).toLocaleString('ru-RU')}</small>
                 </button>
@@ -158,56 +131,60 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
   const [multiplier, setMultiplier] = useState(2);
   const [customMultiplier, setCustomMultiplier] = useState('');
   const [needleAngle, setNeedleAngle] = useState(0);
-  const [spinDuration, setSpinDuration] = useState(3000);
-  const spinStartedAtRef = useRef(0);
+  const [spinKey, setSpinKey] = useState(0);
+  const [serverChance, setServerChance] = useState(null);
+  const timerRef = useRef(null);
 
   const owned = inventory.find((i) => i.inventory_id === ownedId) || null;
   const target = catalog.find((i) => i.id === targetId) || null;
   const selectedMultiplier = multiplier === 'custom'
-    ? clampNumber(Number(customMultiplier) || 1, 1, 100)
-    : multiplier;
+    ? Number(customMultiplier)
+    : Number(multiplier);
+  const customValid = multiplier !== 'custom' ||
+    (Number.isFinite(selectedMultiplier) && selectedMultiplier >= 1 && selectedMultiplier <= MAX_MULTIPLIER && Number.isInteger(selectedMultiplier * 10));
 
-  const percent = useMemo(() => {
-    if (!owned || !target) return 0;
+  const displayChance = serverChance ?? getChance(owned, target, customValid ? selectedMultiplier : 1);
+
+  const targetItems = useMemo(() => {
+    if (!owned) return catalog;
     const sourcePrice = Number(owned.price_stars);
-    const targetPrice = Number(target.price_stars);
-    if (!Number.isFinite(sourcePrice) || !Number.isFinite(targetPrice) || targetPrice <= 0) return 0;
-    const base = (sourcePrice / targetPrice) * 100;
-    return Math.min(95, Math.max(5, base / selectedMultiplier));
-  }, [owned, target, selectedMultiplier]);
+    return catalog.filter((item) => Number(item.price_stars) !== sourcePrice);
+  }, [catalog, owned]);
 
-  const offset = CIRCUMFERENCE * (1 - percent / 100);
-  const customMultiplierValid = multiplier !== 'custom'
-    || (Number(customMultiplier) >= 1 && Number(customMultiplier) <= 100);
-  
-  const canUpgrade = Boolean(owned && target && !spinning && customMultiplierValid);
-  const isActionDisabled = !canUpgrade && !result;
+  useEffect(() => () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+  }, []);
 
   const chooseOwned = (item) => {
     setOwnedId(item.inventory_id);
+    setTargetId((current) => {
+      const currentTarget = catalog.find((x) => x.id === current);
+      return currentTarget && Number(currentTarget.price_stars) !== Number(item.price_stars) ? current : null;
+    });
+    setServerChance(null);
     setPicker(null);
+    haptic('light');
   };
 
   const chooseTarget = (item) => {
+    if (!owned || Number(item.price_stars) === Number(owned.price_stars)) return;
     setTargetId(item.id);
+    setServerChance(null);
     setPicker(null);
+    haptic('light');
   };
 
-  const handlePreset = (value) => {
+  const chooseMultiplier = (value) => {
     if (spinning || result) return;
     setMultiplier(value);
-
-    const pair = pickRandomUpgrade(inventory, catalog);
-    if (pair.owned && pair.target) {
-      setOwnedId(pair.owned.inventory_id);
-      setTargetId(pair.target.id);
-      haptic('light');
-    }
+    setServerChance(null);
+    haptic('light');
   };
 
   const handleCustom = () => {
     if (spinning || result) return;
     setMultiplier('custom');
+    setServerChance(null);
     haptic('light');
   };
 
@@ -217,47 +194,47 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
       setOwnedId(null);
       setTargetId(null);
       setNeedleAngle(0);
+      setServerChance(null);
       return;
     }
 
-    if (!canUpgrade) return;
+    if (!owned || !target || !customValid || spinning) return;
 
-    const duration = Math.round(MIN_SPIN_MS + Math.random() * (MAX_SPIN_MS - MIN_SPIN_MS));
-    spinStartedAtRef.current = performance.now();
-    setSpinDuration(duration);
     setSpinning(true);
     setResult(null);
+    setServerChance(null);
+    setNeedleAngle(0);
     haptic('medium');
 
-    const request = api.upgrade(owned.inventory_id, target.id, selectedMultiplier);
-    const animationDone = new Promise((resolve) => setTimeout(resolve, duration));
-
     try {
-      const [res] = await Promise.all([request, animationDone]);
-      const serverRoll = Number(res.roll ?? 0);
-      const finalAngle = serverRoll * 3.6;
+      // The server decides success/failure. Animation starts only after its result arrives.
+      const res = await api.upgrade(owned.inventory_id, target.id, selectedMultiplier);
+      const success = Boolean(res.success);
+      const chance = Number.isFinite(Number(res.chance)) ? Number(res.chance) : getChance(owned, target, selectedMultiplier);
+      const finalAngle = randomAngleForResult(success, chance);
 
-      setSpinning(false);
+      setServerChance(chance);
       setNeedleAngle(finalAngle);
+      setSpinKey((value) => value + 1);
 
-      const elapsed = performance.now() - spinStartedAtRef.current;
-      const remaining = Math.max(0, duration - elapsed);
-      if (remaining) await new Promise((resolve) => setTimeout(resolve, remaining));
-
-      hapticNotify(res.success ? 'success' : 'error');
-      
-      setResult({
-        sourceItem: owned,
-        targetItem: target,
-        success: Boolean(res.success)
+      await new Promise((resolve) => {
+        timerRef.current = setTimeout(resolve, SPIN_MS);
       });
-      
+
+      hapticNotify(success ? 'success' : 'error');
+      setResult({ sourceItem: owned, targetItem: target, success, item: res.item });
       onUpgraded?.();
     } catch (err) {
       console.error(err);
-      await animationDone;
       hapticNotify('error');
-      onError?.(err.code === 'invalid_multiplier' ? 'Некорректный множитель.' : 'Не получилось выполнить апгрейд. Попробуй снова.');
+      const messages = {
+        same_price_target: 'Предметы одинаковой стоимости нельзя улучшать.',
+        item_not_owned: 'Исходный предмет уже недоступен.',
+        invalid_multiplier: 'Некорректный множитель.',
+        target_not_found: 'Целевой предмет больше недоступен.'
+      };
+      onError?.(messages[err.code] || 'Не удалось выполнить апгрейд. Попробуйте ещё раз.');
+      setNeedleAngle(0);
     } finally {
       setSpinning(false);
     }
@@ -270,106 +247,81 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
 
   return (
     <div className="upgrade-screen">
-      {result?.success && <NeonConfetti />}
+      {result && <ResultBurst success={result.success} />}
 
       <section className="upgrade-stage-modern">
-        <Slot 
-          title="Выберите предметы для использования" 
-          item={result ? result.sourceItem : owned} 
-          placeholder="Нажмите, чтобы выбрать" 
-          spinning={spinning} 
-          side="source" 
-          onOpen={() => setPicker('owned')} 
+        <Slot
+          title="У тебя есть"
+          item={result?.sourceItem || owned}
+          placeholder="Выбрать"
+          spinning={spinning}
+          side="source"
+          onOpen={() => setPicker('owned')}
           resultStatus={sourceStatus}
         />
 
         <div className="upgrade-center-block">
-          <div className="upgrade-wheel-column" style={{ position: 'relative' }}>
-            
-            {/* Надпись поверх колеса в зависимости от результата */}
-            {result && (
-              <div className="upgrade-result-center">
-                {result.success ? (
-                  <span className="success-text-neon">УСПЕХ!</span>
-                ) : (
-                  <span className="fail-text-neon">НЕУДАЧА</span>
-                )}
-              </div>
-            )}
-
-            <div className={`upgrade-gauge ${spinning ? 'spinning' : ''}`} style={{ '--gauge-offset': offset, '--spin-duration': `${spinDuration}ms` }}>
+          <div className="upgrade-wheel-column">
+            <div
+              key={spinKey}
+              className={`upgrade-gauge ${spinning ? 'spinning' : ''} ${result?.success ? 'success' : ''} ${result && !result.success ? 'failure' : ''}`}
+              style={{ '--spin-duration': `${SPIN_MS}ms`, '--needle-angle': `${needleAngle}deg`, '--chance': `${displayChance}` }}
+            >
               <svg viewBox="0 0 168 168" aria-hidden="true">
                 <defs>
                   <linearGradient id="gaugeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                    <stop offset="0%" stopColor="#ffc800" />
-                    <stop offset="100%" stopColor="#ff7a45" />
+                    <stop offset="0%" stopColor="#e8b84a" />
+                    <stop offset="100%" stopColor="#ef3b4f" />
                   </linearGradient>
                 </defs>
                 <circle className="upgrade-gauge__track" cx="84" cy="84" r={RADIUS} />
-                <circle
-                  className="upgrade-gauge__value-arc"
-                  cx="84"
-                  cy="84"
-                  r={RADIUS}
-                  strokeDasharray={CIRCUMFERENCE}
-                  strokeDashoffset={offset}
-                />
+                <circle className="upgrade-gauge__value-arc" cx="84" cy="84" r={RADIUS} strokeDasharray={CIRCUMFERENCE} strokeDashoffset={CIRCUMFERENCE * (1 - displayChance / 100)} />
               </svg>
-              <div
-                className={`upgrade-needle ${spinning ? 'spinning' : ''}`}
-                style={{ '--needle-angle': `${needleAngle}deg` }}
-              >
-                <span className="upgrade-needle__tip" />
-              </div>
+              <div className="upgrade-needle" aria-hidden="true"><span /></div>
               <div className="upgrade-gauge__center">
-                {!result && <span className="upgrade-gauge__percent">{percent ? percent.toFixed(0) : '—'}%</span>}
+                <strong>{result ? (result.success ? 'УСПЕХ' : 'НЕУДАЧА') : `${Number(displayChance).toFixed(displayChance % 1 ? 1 : 0)}%`}</strong>
               </div>
             </div>
-
-            <button type="button" className="upgrade-action-button" disabled={isActionDisabled} onClick={handleAction}>
-              {spinning ? 'АПГРЕЙД...' : (result ? 'ПРОДОЛЖИТЬ' : 'ПРОКАЧАТЬ')}
+            <button
+              type="button"
+              className="upgrade-action-button"
+              disabled={!owned || !target || !customValid || spinning}
+              onClick={handleAction}
+            >
+              {spinning ? 'ПРОВЕРЯЕМ…' : result ? 'ПРОДОЛЖИТЬ' : 'УЛУЧШИТЬ'}
             </button>
           </div>
         </div>
 
-        <Slot 
-          title="Выберите предмет для апгрейда" 
-          item={result ? result.targetItem : target} 
-          placeholder="Нажмите, чтобы выбрать" 
-          spinning={spinning} 
-          side="target" 
-          onOpen={() => setPicker('target')} 
+        <Slot
+          title="Хочешь получить"
+          item={result?.targetItem || target}
+          placeholder="Выбрать"
+          spinning={spinning}
+          side="target"
+          onOpen={() => setPicker('target')}
           resultStatus={targetStatus}
         />
       </section>
 
       <section className="upgrade-multiplier-bar">
-        <div className="upgrade-multiplier-bar__label">Множитель</div>
+        <div className="upgrade-multiplier-bar__head">
+          <span>Множитель</span>
+          {owned && target && <span className="upgrade-multiplier-bar__chance">Шанс {Number(displayChance).toFixed(displayChance % 1 ? 1 : 0)}%</span>}
+        </div>
         <div className="upgrade-multiplier-row">
           {PRESETS.map((value) => (
-            <button
-              type="button"
-              key={value}
-              className={`upgrade-multiplier ${multiplier === value ? 'selected' : ''}`}
-              onClick={() => handlePreset(value)}
-              disabled={spinning || result || !inventory.length || !catalog.length}
-            >
-              x{value}
+            <button type="button" key={value} className={`upgrade-multiplier ${multiplier === value ? 'selected' : ''}`} onClick={() => chooseMultiplier(value)} disabled={spinning || Boolean(result)}>
+              ×{value}
             </button>
           ))}
-          <button
-            type="button"
-            className={`upgrade-multiplier upgrade-multiplier--custom ${multiplier === 'custom' ? 'selected' : ''}`}
-            onClick={handleCustom}
-            disabled={spinning || result}
-          >
+          <button type="button" className={`upgrade-multiplier upgrade-multiplier--custom ${multiplier === 'custom' ? 'selected' : ''}`} onClick={handleCustom} disabled={spinning || Boolean(result)}>
             Своя
           </button>
         </div>
-
         {multiplier === 'custom' && (
           <div className="upgrade-custom-multiplier">
-            <span>x</span>
+            <span>×</span>
             <input
               inputMode="decimal"
               type="number"
@@ -377,36 +329,42 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
               max="100"
               step="0.1"
               value={customMultiplier}
-              onChange={(e) => setCustomMultiplier(e.target.value)}
+              onChange={(event) => setCustomMultiplier(event.target.value)}
               placeholder="3.5"
-              disabled={spinning || result}
+              disabled={spinning || Boolean(result)}
               aria-label="Пользовательский множитель"
             />
           </div>
         )}
       </section>
 
+      {!owned && !inventory.length && (
+        <div className="empty-state upgrade-empty">
+          <p className="empty-state__title">Нужен предмет</p>
+          <p>Купи или получи предмет, чтобы начать апгрейд.</p>
+        </div>
+      )}
+
+      {owned && !targetItems.length && !result && (
+        <div className="empty-state upgrade-empty">
+          <p className="empty-state__title">Нет подходящих целей</p>
+          <p>Выбери предмет другой стоимости.</p>
+        </div>
+      )}
+
       {picker === 'owned' && (
-        <PickerSheet
-          title="Предмет из инвентаря"
-          items={inventory}
-          selectedId={ownedId}
-          getId={(i) => i.inventory_id}
-          onSelect={chooseOwned}
-          onClose={() => setPicker(null)}
-          spinning={spinning}
-        />
+        <PickerSheet title="Предмет из инвентаря" items={inventory} selectedId={ownedId} getId={(item) => item.inventory_id} onSelect={chooseOwned} onClose={() => setPicker(null)} />
       )}
 
       {picker === 'target' && (
         <PickerSheet
-          title="Желаемый предмет"
-          items={catalog}
+          title="Целевой предмет"
+          items={targetItems}
           selectedId={targetId}
-          getId={(i) => i.id}
+          getId={(item) => item.id}
           onSelect={chooseTarget}
           onClose={() => setPicker(null)}
-          spinning={spinning}
+          disabledReason="Предметы одинаковой стоимости нельзя выбрать."
         />
       )}
     </div>
