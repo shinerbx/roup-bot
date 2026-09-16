@@ -5,7 +5,6 @@ import { haptic, hapticNotify } from '../telegram.js';
 const RADIUS = 74;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 const PRESETS = [2, 4, 8, 10];
-// Увеличиваем время прокрутки рулетки (от 3 до 5 секунд)
 const MIN_SPIN_MS = 3000;
 const MAX_SPIN_MS = 5000;
 
@@ -181,7 +180,6 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
   const customMultiplierValid = multiplier !== 'custom'
     || (Number(customMultiplier) >= 1 && Number(customMultiplier) <= 100);
   
-  // Кнопка активна, если можно начать апгрейд ИЛИ если нужно сбросить результат
   const canUpgrade = Boolean(owned && target && !spinning && customMultiplierValid);
   const isActionDisabled = !canUpgrade && !result;
 
@@ -214,7 +212,6 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
   };
 
   const handleAction = async () => {
-    // Если результат уже есть — это кнопка "Продолжить"
     if (result) {
       setResult(null);
       setOwnedId(null);
@@ -249,7 +246,6 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
 
       hapticNotify(res.success ? 'success' : 'error');
       
-      // Замораживаем предметы, чтобы они не пропали с экрана после обновления инвентаря
       setResult({
         sourceItem: owned,
         targetItem: target,
@@ -274,7 +270,6 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
 
   return (
     <div className="upgrade-screen">
-      {/* Конфетти при успехе */}
       {result?.success && <NeonConfetti />}
 
       <section className="upgrade-stage-modern">
@@ -289,13 +284,16 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
         />
 
         <div className="upgrade-center-block">
-          {/* Добавили position: 'relative' */}
           <div className="upgrade-wheel-column" style={{ position: 'relative' }}>
             
-            {/* Неоновая надпись УСПЕХ! поверх колеса */}
-            {result?.success && (
-              <div className="upgrade-success-center">
-                <span className="success-text-neon">УСПЕХ!</span>
+            {/* Надпись поверх колеса в зависимости от результата */}
+            {result && (
+              <div className="upgrade-result-center">
+                {result.success ? (
+                  <span className="success-text-neon">УСПЕХ!</span>
+                ) : (
+                  <span className="fail-text-neon">НЕУДАЧА</span>
+                )}
               </div>
             )}
 
@@ -324,7 +322,6 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
                 <span className="upgrade-needle__tip" />
               </div>
               <div className="upgrade-gauge__center">
-                {/* Скрываем проценты, если есть результат, чтобы текст не накладывался */}
                 {!result && <span className="upgrade-gauge__percent">{percent ? percent.toFixed(0) : '—'}%</span>}
               </div>
             </div>
