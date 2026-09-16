@@ -50,7 +50,19 @@ export default function App() {
       api.getProfile()
     ]);
 
-    if (catalogRes.status === 'fulfilled') setCatalog(catalogRes.value.items || []);
+    if (catalogRes.status === 'fulfilled') {
+      const fetchedItems = catalogRes.value.items || [];
+      setCatalog(fetchedItems);
+      
+      // МГНОВЕННАЯ ПРЕДЗАГРУЗКА КАРТИНОК В КЭШ
+      fetchedItems.forEach(item => {
+        if (item.image_url) {
+          const img = new window.Image();
+          img.src = item.image_url;
+        }
+      });
+    }
+
     if (inventoryRes.status === 'fulfilled') setInventory(inventoryRes.value.items || []);
     if (profileRes.status === 'fulfilled') setProfile(profileRes.value);
 
