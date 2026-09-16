@@ -7,16 +7,17 @@ function clampQuantity(value) {
   return Number.isInteger(n) ? Math.min(MAX_QUANTITY, Math.max(1, n)) : 1;
 }
 
-export default function PurchaseSheet({ item, pending, balance, onCancel, onConfirm, onTopUp }) {
+export default function PurchaseSheet({ item, initialQuantity = 1, pending, balance, onCancel, onConfirm, onTopUp }) {
   const [quantity, setQuantity] = useState(1);
   const [inputValue, setInputValue] = useState('1');
 
   useEffect(() => {
     if (item) {
-      setQuantity(1);
-      setInputValue('1');
+      const initial = clampQuantity(initialQuantity);
+      setQuantity(initial);
+      setInputValue(String(initial));
     }
-  }, [item]);
+  }, [item, initialQuantity]);
 
   const total = useMemo(() => Number(item?.price_stars || 0) * quantity, [item, quantity]);
   const insufficient = balance < total;
@@ -42,7 +43,7 @@ export default function PurchaseSheet({ item, pending, balance, onCancel, onConf
         <div className="sheet__item purchase-sheet__item">
           <img className="sheet__item-image" src={item.image_url} alt="" />
           <div className="purchase-sheet__info">
-            <p className="sheet__item-name">{item.name}</p>
+            <p className="sheet__item-name" title={item.name}>{item.name}</p>
             <span className="price-tag">★ {Number(item.price_stars).toLocaleString('ru-RU')} <small>за 1</small></span>
           </div>
         </div>
@@ -67,7 +68,7 @@ export default function PurchaseSheet({ item, pending, balance, onCancel, onConf
         </div>
 
         <div className="quantity-presets">
-          {[1, 5, 10, 25].map((value) => (
+          {[1, 5, 10, 25, 100].map((value) => (
             <button type="button" key={value} className={quantity === value ? 'selected' : ''} onClick={() => setSafeQuantity(value)} disabled={pending}>
               ×{value}
             </button>

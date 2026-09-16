@@ -53,7 +53,7 @@ function Slot({ item, placeholder, onOpen, spinning, side, title, resultStatus }
   return (
     <button
       type="button"
-      className={`upgrade-slot ${spinning ? 'upgrade-slot--locked' : ''} ${resultStatus === 'success' ? 'upgrade-slot--success' : ''} ${resultStatus === 'fail-source' ? 'upgrade-slot--failed' : ''}`}
+      className={`upgrade-slot ${spinning ? 'upgrade-slot--locked upgrade-slot--spinning' : ''} ${resultStatus === 'success' ? 'upgrade-slot--success' : ''} ${resultStatus === 'fail' || resultStatus === 'fail-source' ? 'upgrade-slot--failed' : ''}`}
       onClick={!spinning && !resultStatus ? onOpen : undefined}
       disabled={spinning || Boolean(resultStatus)}
       aria-label={item ? `${title}: ${item.name}` : title}
@@ -99,7 +99,7 @@ function PickerSheet({ title, items, selectedId, getId, onSelect, onClose, disab
             <p>{disabledReason || 'Здесь пока ничего нет.'}</p>
           </div>
         ) : (
-          <div className="upgrade-modal-grid">
+          <div className="upgrade-modal-grid" role="list">
             {items.map((item) => {
               const id = getId(item);
               return (
@@ -249,7 +249,12 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
     <div className="upgrade-screen">
       {result && <ResultBurst success={result.success} />}
 
-      <section className="upgrade-stage-modern">
+      <section className={`upgrade-stage-modern ${spinning ? 'upgrade-stage--spinning' : ''} ${result ? (result.success ? 'upgrade-stage--success' : 'upgrade-stage--failure') : ''}`}>
+        {result && (
+          <div className={`upgrade-result-neon ${result.success ? 'upgrade-result-neon--success' : 'upgrade-result-neon--failure'}`} role="status" aria-live="polite">
+            {result.success ? 'УСПЕХ!' : 'НЕУДАЧА!'}
+          </div>
+        )}
         <Slot
           title="У тебя есть"
           item={result?.sourceItem || owned}
@@ -285,10 +290,10 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
             <button
               type="button"
               className="upgrade-action-button"
-              disabled={!owned || !target || !customValid || spinning}
+              disabled={result ? false : (!owned || !target || !customValid || spinning)}
               onClick={handleAction}
             >
-              {spinning ? 'ПРОВЕРЯЕМ…' : result ? 'ПРОДОЛЖИТЬ' : 'УЛУЧШИТЬ'}
+              {spinning ? 'АПГРЕЙДИМ…' : result ? 'ПРОДОЛЖИТЬ' : 'УЛУЧШИТЬ'}
             </button>
           </div>
         </div>

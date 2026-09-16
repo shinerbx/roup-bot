@@ -1,3 +1,5 @@
+import { useState } from 'react';
+
 const CATEGORY_LABELS = {
   accessories: 'Аксессуары',
   faces: 'Лица',
@@ -15,6 +17,7 @@ export default function ItemCard({
   canWithdraw,
   onWithdraw
 }) {
+  const [quickQuantity, setQuickQuantity] = useState(1);
   const categoryLabel = CATEGORY_LABELS[item.category] || item.category;
 
   return (
@@ -49,7 +52,14 @@ export default function ItemCard({
         ) : owned ? (
           <span className="item-card__owned">в инвентаре</span>
         ) : (
-          <button className="item-card__buy" onClick={() => onBuy(item)}>Купить</button>
+          <div className="item-card__buy-group">
+            <div className="item-card__quick-quantity" aria-label="Количество для покупки">
+              <button type="button" onClick={() => setQuickQuantity((value) => Math.max(1, value - 1))} aria-label="Уменьшить количество">−</button>
+              <span>×{quickQuantity}</span>
+              <button type="button" onClick={() => setQuickQuantity((value) => Math.min(9999, value + 1))} aria-label="Увеличить количество">+</button>
+            </div>
+            <button type="button" className="item-card__buy" onClick={() => onBuy(item, quickQuantity)}>Купить ×{quickQuantity}</button>
+          </div>
         )}
       </div>
     </article>
