@@ -43,7 +43,6 @@ function Slot({ item, placeholder, onOpen, spinning, side }) {
       >
         <span className="upgrade-slot__plus">+</span>
         <span className="upgrade-slot__placeholder">{placeholder}</span>
-        <span className="upgrade-slot__action">Выбрать предмет</span>
       </button>
     );
   }
@@ -61,7 +60,6 @@ function Slot({ item, placeholder, onOpen, spinning, side }) {
       </span>
       <span className="upgrade-slot__name">{item.name}</span>
       <span className="upgrade-slot__price">★ {Number(item.price_stars).toLocaleString('ru-RU')}</span>
-      <span className="upgrade-slot__action">Нажми, чтобы заменить</span>
     </button>
   );
 }
@@ -220,20 +218,18 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
     }
   };
 
-  if (loading) return <div className="skeleton" style={{ height: 380 }} />;
+  if (loading) return <div className="skeleton upgrade-skeleton" />;
 
   return (
     <div className="upgrade-screen">
-      <section className="upgrade-hero-card">
-        <div className="upgrade-hero-card__topline">
-          <div>
-            <p className="section-title">Шанс апгрейда</p>
-            <h2>Риск → награда</h2>
-          </div>
-          <span className="upgrade-hero-card__badge">LIVE</span>
+      <section className="upgrade-stage">
+        <div className="upgrade-panel">
+          <div className="upgrade-panel__title">Отдать</div>
+          <div className="upgrade-panel__hint">Предмет из инвентаря</div>
+          <Slot item={owned} placeholder="Выберите предмет" spinning={spinning} side="source" onOpen={() => setPicker('owned')} />
         </div>
 
-        <div className="upgrade-gauge-wrap">
+        <div className="upgrade-wheel-column">
           <div className={`upgrade-gauge ${spinning ? 'spinning' : ''}`} style={{ '--gauge-offset': offset, '--spin-duration': `${spinDuration}ms` }}>
             <svg viewBox="0 0 168 168" aria-hidden="true">
               <defs>
@@ -260,42 +256,29 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
             </div>
             <div className="upgrade-gauge__center">
               <span className="upgrade-gauge__percent">{percent ? percent.toFixed(0) : '—'}%</span>
-              <span className="upgrade-gauge__label">текущий шанс</span>
             </div>
           </div>
+
+          <div className="upgrade-wheel-caption">
+            <span className="upgrade-wheel-caption__from">x{selectedMultiplier}</span>
+            <span>шанс апгрейда</span>
+          </div>
+
+          <button type="button" className="upgrade-button" disabled={!canUpgrade} onClick={handleUpgrade}>
+            <span>{spinning ? 'Крутится…' : 'Прокачать'}</span>
+            {!spinning && <span className="upgrade-button__chance">{percent ? `${percent.toFixed(0)}%` : 'Выберите предметы'}</span>}
+          </button>
         </div>
 
-        <div className="upgrade-gauge-meta">
-          <span>Чем дороже цель, тем ниже шанс</span>
-          <strong>x{selectedMultiplier}</strong>
+        <div className="upgrade-panel">
+          <div className="upgrade-panel__title">Получить</div>
+          <div className="upgrade-panel__hint">Предмет для апгрейда</div>
+          <Slot item={target} placeholder="Выберите предмет" spinning={spinning} side="target" onOpen={() => setPicker('target')} />
         </div>
       </section>
 
-      <section className="upgrade-selection-card">
-        <div className="upgrade-section-heading">
-          <div>
-            <p className="section-title">Ставка</p>
-            <h3>Выбери предметы</h3>
-          </div>
-          {owned && target && <span className="upgrade-selection-card__ready">Готово</span>}
-        </div>
-
-        <div className="upgrade-slots">
-          <Slot item={owned} placeholder="Твой предмет" spinning={spinning} side="source" onOpen={() => setPicker('owned')} />
-          <span className={`upgrade-arrow ${spinning ? 'spinning' : ''}`} aria-hidden="true">→</span>
-          <Slot item={target} placeholder="Хочешь получить" spinning={spinning} side="target" onOpen={() => setPicker('target')} />
-        </div>
-      </section>
-
-      <section className="upgrade-controls-card">
-        <div className="upgrade-section-heading">
-          <div>
-            <p className="section-title">Автовыбор + сложность</p>
-            <h3>Множитель</h3>
-          </div>
-          <span className="upgrade-controls-card__caption">Нажатие сразу подберёт пару</span>
-        </div>
-
+      <section className="upgrade-multiplier-bar">
+        <div className="upgrade-multiplier-bar__label">Множитель</div>
         <div className="upgrade-multiplier-row">
           {PRESETS.map((value) => (
             <button
@@ -305,8 +288,7 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
               onClick={() => handlePreset(value)}
               disabled={spinning || !inventory.length || !catalog.length}
             >
-              <strong>x{value}</strong>
-              <span>рандом</span>
+              x{value}
             </button>
           ))}
           <button
@@ -315,8 +297,7 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
             onClick={handleCustom}
             disabled={spinning}
           >
-            <strong>Своя</strong>
-            <span>1–100x</span>
+            Своя
           </button>
         </div>
 
@@ -331,23 +312,13 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
               step="0.1"
               value={customMultiplier}
               onChange={(e) => setCustomMultiplier(e.target.value)}
-              placeholder="Например, 3.5"
+              placeholder="3.5"
               disabled={spinning}
               aria-label="Пользовательский множитель"
             />
-            <span className="upgrade-custom-multiplier__hint">множитель</span>
           </div>
         )}
       </section>
-
-      <button type="button" className="upgrade-button" disabled={!canUpgrade} onClick={handleUpgrade}>
-        <span>{spinning ? 'Рулетка крутится…' : 'Запустить апгрейд'}</span>
-        {!spinning && <span className="upgrade-button__chance">{percent ? `${percent.toFixed(0)}% шанс` : 'Выбери пару'}</span>}
-      </button>
-
-      <p className="upgrade-mechanics-note">
-        Результат определяет сервер. Стрелка — только визуализация выпавшего roll, поэтому её нельзя использовать для предсказания исхода.
-      </p>
 
       {picker === 'owned' && (
         <PickerSheet

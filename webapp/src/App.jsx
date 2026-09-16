@@ -14,7 +14,7 @@ import Toast from './components/Toast.jsx';
 
 const SCREEN_META = {
   catalog: { title: 'Каталог', subtitle: 'Купить предметы 👇' },
-  upgrade: { title: 'Апгрейд', subtitle: 'Улучшай предметы из инвентаря' },
+  upgrade: { title: null, subtitle: null },
   inventory: { title: 'Инвентарь', subtitle: 'Твои предметы' },
   profile: { title: 'Профиль', subtitle: null }
 };
@@ -198,10 +198,12 @@ export default function App() {
         </div>
       </header>
 
-      <div>
-        <h2 className="screen-title">{meta.title}</h2>
-        {meta.subtitle && <p className="screen-subtitle">{meta.subtitle}</p>}
-      </div>
+      {(meta.title || meta.subtitle) && (
+        <div>
+          {meta.title && <h2 className="screen-title">{meta.title}</h2>}
+          {meta.subtitle && <p className="screen-subtitle">{meta.subtitle}</p>}
+        </div>
+      )
 
       {tab === 'catalog' && (
         <CatalogTab items={catalog} ownedItemIds={ownedItemIds} loading={loading} onBuy={handleBuy} />
