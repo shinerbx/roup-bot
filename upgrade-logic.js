@@ -1,67 +1,44 @@
 /**
- * RoUP — ЕДИНАЯ НАСТРАИВАЕМАЯ МЕХАНИКА АПГРЕЙДА
+ * RoUP — заглушка механики апгрейда.
  *
- * ВАЖНО:
- * Этот файл является единственным местом, где нужно менять правила апгрейда.
- * React/Web App НЕ определяет результат. Браузер может только показать
- * предварительный шанс и анимацию. Финальный шанс, roll и success вычисляются
- * на сервере здесь, а db.js только атомарно применяет результат в Supabase.
+ * ВСЯ игровая логика апгрейда должна настраиваться здесь.
+ * UI/React не определяет результат и не содержит формул игры.
  *
- * Что менять в будущем:
- * 1. BASE_CHANCE_* — ограничения отображаемого шанса.
- * 2. MAX_MULTIPLIER — допустимый максимум пользовательского множителя.
- * 3. calculateBaseChance() — базовая формула шанса.
- * 4. applyMultiplier() — как множитель влияет на шанс.
- * 5. resolveUpgrade() — способ определения победы/поражения.
+ * Сейчас здесь намеренно стоит безопасная заглушка:
+ * - отображаемый шанс = 50%;
+ * - множитель принимается и возвращается без влияния на шанс;
+ * - результат определяется случайно по 50%;
+ * - при успехе возвращается выбранный targetItem.
  *
- * Текущая формула специально простая и легко заменяемая:
- *   baseChance = цена предмета игрока / цена цели * 100
- *   finalChance = baseChance / multiplier
- *
- * x1 = обычный шанс, x2 = половина базового шанса, x4 = четверть и т.д.
- * Пользовательский multiplier можно передать от 1 до MAX_MULTIPLIER.
- *
- * НЕ ДЕЛАЙТЕ Math.random() в React: результат должен создаваться на сервере.
+ * ЗАМЕНИТЕ ТОЛЬКО ФУНКЦИИ НИЖЕ, когда будете подключать свою механику.
  */
 
-const MIN_CHANCE = 5;
-const MAX_CHANCE = 95;
+const MIN_CHANCE = 0;
+const MAX_CHANCE = 100;
 const MAX_MULTIPLIER = 100;
+const STUB_CHANCE = 50;
 
 function clampChance(value) {
   return Math.min(MAX_CHANCE, Math.max(MIN_CHANCE, Number(value) || 0));
 }
 
-/**
- * Базовый шанс до множителя.
- * Здесь в будущем можно полностью заменить формулу, не трогая БД/API/UI.
- */
-function calculateBaseChance(sourceItem, targetItem) {
-  if (!sourceItem || !targetItem) return 50;
-  const sourcePrice = Number(sourceItem.price_stars);
-  const targetPrice = Number(targetItem.price_stars);
-  if (!Number.isFinite(sourcePrice) || !Number.isFinite(targetPrice) || targetPrice <= 0) return 50;
-
-  return (sourcePrice / targetPrice) * 100;
+/** Заглушка базового шанса. Настройте свою формулу здесь. */
+function calculateBaseChance(_sourceItem, _targetItem) {
+  return STUB_CHANCE;
 }
 
-/**
- * Влияние множителя.
- * Сейчас множитель увеличивает сложность: шанс делится на multiplier.
- * Если ты захочешь другую механику, меняй только эту функцию.
- */
+/** Заглушка влияния множителя. Пока множитель не изменяет шанс. */
 function applyMultiplier(baseChance, multiplier = 1) {
   const value = Number(multiplier);
   if (!Number.isFinite(value) || value < 1 || value > MAX_MULTIPLIER) {
     throw new Error('invalid_multiplier');
   }
-  return baseChance / value;
+  return clampChance(baseChance);
 }
 
 /**
- * Финальное серверное решение.
- * roll находится в диапазоне [0, 100). Если roll < chance — успех.
- * Это значение также возвращается UI только для визуализации остановки стрелки.
+ * Точка, где принимается финальное серверное решение.
+ * Здесь вы можете полностью заменить алгоритм апгрейда.
  */
 function resolveUpgrade(sourceItem, targetItem, multiplier = 1) {
   const safeMultiplier = Number(multiplier);
@@ -76,7 +53,7 @@ function resolveUpgrade(sourceItem, targetItem, multiplier = 1) {
 
   return {
     success,
-    resultItemId: success ? targetItem.id : null,
+    resultItemId: success ? targetItem?.id ?? null : null,
     chance: Number(chance.toFixed(2)),
     baseChance: Number(baseChance.toFixed(2)),
     roll: Number(roll.toFixed(2)),
@@ -84,10 +61,7 @@ function resolveUpgrade(sourceItem, targetItem, multiplier = 1) {
   };
 }
 
-/**
- * Предварительный расчёт для Web App. Он повторяет ту же формулу,
- * но НЕ принимает решение об успехе. Сервер всё равно пересчитает значение.
- */
+/** Шанс для отображения в Web App. Не принимает игрового решения. */
 function displayPercent(sourceItem, targetItem, multiplier = 1) {
   const base = calculateBaseChance(sourceItem, targetItem);
   return Number(clampChance(applyMultiplier(base, Number(multiplier) || 1)).toFixed(2));
