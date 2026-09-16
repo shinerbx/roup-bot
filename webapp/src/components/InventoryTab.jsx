@@ -1,6 +1,9 @@
+import { useState } from 'react';
 import ItemCard from './ItemCard.jsx';
 
-export default function InventoryTab({ items, loading }) {
+export default function InventoryTab({ items, loading, onSell, sellingId }) {
+  const [confirmItem, setConfirmItem] = useState(null);
+
   if (loading) {
     return (
       <div className="item-grid">
@@ -20,11 +23,50 @@ export default function InventoryTab({ items, loading }) {
     );
   }
 
+  const handleConfirm = async () => {
+    const item = confirmItem;
+    setConfirmItem(null);
+    await onSell?.(item);
+  };
+
   return (
-    <div className="item-grid">
-      {items.map((item) => (
-        <ItemCard key={item.inventory_id} item={item} owned onBuy={() => {}} />
-      ))}
-    </div>
+    <>
+      <div className="item-grid">
+        {items.map((item) => (
+          <ItemCard
+            key={item.inventory_id}
+            item={item}
+            owned
+            onSell={setConfirmItem}
+            selling={sellingId === item.inventory_id}
+          />
+        ))}
+      </div>
+
+      {confirmItem && (
+        <>
+          <div className="sheet-backdrop" onClick={() => setConfirmItem(null)} />
+          <div className="sheet">
+            <div className="sheet__handle" />
+            <div className="sheet__item">
+              <img className="sheet__item-image" src={confirmItem.image_url} alt={confirmItem.name} />
+              <div>
+                <p className="sheet__item-name">Продать «{confirmItem.name}»?</p>
+                <span className="price-tag">+{confirmItem.price_stars} ★ на баланс</span>
+              </div>
+            </div>
+            <p className="sheet__note">Предмет исчезнет из инвентаря без возможности вернуть.</p>
+            <div className="sheet__actions">
+              <button className="sheet__cancel" onClick={() => setConfirmItem(null)}>
+                Отмена
+              </button>
+              <button className="sheet__confirm" onClick={handleConfirm}>
+                Продать
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+    </>
   );
 }

@@ -5,7 +5,7 @@ import { haptic, hapticNotify } from '../telegram.js';
 const RADIUS = 74;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
-function Slot({ item, placeholder }) {
+function Slot({ item, placeholder, spinning }) {
   if (!item) {
     return (
       <div className="upgrade-slot">
@@ -15,7 +15,7 @@ function Slot({ item, placeholder }) {
     );
   }
   return (
-    <div className="upgrade-slot filled">
+    <div className={`upgrade-slot filled ${spinning ? 'pulsing' : ''}`}>
       <img className="upgrade-slot__image" src={item.image_url} alt={item.name} />
       <span className="upgrade-slot__name">{item.name}</span>
     </div>
@@ -38,36 +38,32 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
   }, [owned, target]);
 
   const offset = CIRCUMFERENCE * (1 - percent / 100);
-
   const canUpgrade = owned && target && !spinning;
-
-  const reset = () => {
-    setOwnedId(null);
-    setTargetId(null);
-  };
 
   const handleUpgrade = async () => {
     if (!canUpgrade) return;
     haptic('medium');
     setSpinning(true);
 
-    // Визуальная прокрутка — сейчас без реальной формулы шанса,
-    // апгрейд всегда завершается успешно.
-    setTimeout(async () => {
-      try {
-        const res = await api.upgrade(owned.inventory_id, target.id);
-        hapticNotify('success');
-        setResult(res.item);
-        reset();
-        onUpgraded?.();
-      } catch (err) {
-        console.error(err);
-        hapticNotify('error');
-        onError?.('Не получилось выполнить апгрейд. Попробуй снова.');
-      } finally {
-        setSpinning(false);
-      }
-    }, 1450);
+    const spinPromise = new Promise((resolve) => setTimeout(resolve, 1800));
+
+    try {
+      // Запрос уходит сразу, но результат показываем не раньше,
+      // чем закончится анимация прокрута.
+      const [res] = await Promise.all([api.upgrade(owned.inventory_id, target.id), spinPromise]);
+      hapticNotify('success');
+      setResult(res.item);
+      setOwnedId(null);
+      setTargetId(null);
+      onUpgraded?.();
+    } catch (err) {
+      console.error(err);
+      await spinPromise;
+      hapticNotify('error');
+      onError?.('Не получилось выполнить апгрейд. Попробуй снова.');
+    } finally {
+      setSpinning(false);
+    }
   };
 
   if (loading) {
@@ -95,6 +91,15 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
               strokeDashoffset={offset}
             />
           </svg>
+
+          {/* Стрелка-указатель, вращается вокруг центра во время прокрута */}
+          <div
+            className={`upgrade-needle ${spinning ? 'spinning' : ''}`}
+            style={{ '--needle-angle': `${percent * 3.6}deg` }}
+          >
+            <span className="upgrade-needle__tip" />
+          </div>
+
           <div className="upgrade-gauge__center">
             <span className="upgrade-gauge__percent">{percent}%</span>
             <span className="upgrade-gauge__label">шанс</span>
@@ -103,9 +108,9 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
       </div>
 
       <div className="upgrade-slots">
-        <Slot item={owned} placeholder="Твой предмет" />
-        <span className="upgrade-arrow">→</span>
-        <Slot item={target} placeholder="Хочешь получить" />
+        <Slot item={owned} placeholder="Твой предмет" spinning={spinning} />
+        <span className={`upgrade-arrow ${spinning ? 'spinning' : ''}`}>➜</span>
+        <Slot item={target} placeholder="Хочешь получить" spinning={spinning} />
       </div>
 
       <button className="upgrade-button" disabled={!canUpgrade} onClick={handleUpgrade}>
@@ -121,6 +126,7 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
               key={item.inventory_id}
               className={`upgrade-picker-item ${ownedId === item.inventory_id ? 'selected' : ''}`}
               onClick={() => setOwnedId(item.inventory_id)}
+              disabled={spinning}
             >
               <img src={item.image_url} alt={item.name} />
               <span>{item.name}</span>
@@ -137,6 +143,7 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
               key={item.id}
               className={`upgrade-picker-item ${targetId === item.id ? 'selected' : ''}`}
               onClick={() => setTargetId(item.id)}
+              disabled={spinning}
             >
               <img src={item.image_url} alt={item.name} />
               <span>{item.name}</span>
@@ -147,10 +154,15 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
 
       {result && (
         <div className="upgrade-result-overlay" onClick={() => setResult(null)}>
+          <div className="upgrade-result-rays" />
           <div className="upgrade-result-card" onClick={(e) => e.stopPropagation()}>
             <p className="upgrade-result-card__badge">УЛУЧШЕНО</p>
-            <img className="upgrade-result-card__image" src={result.image_url} alt={result.name} />
+            <div className="upgrade-result-card__drop">
+              <img className="upgrade-result-card__image" src={result.image_url} alt={result.name} />
+              <span className="upgrade-result-card__shine" />
+            </div>
             <p className="upgrade-result-card__name">{result.name}</p>
+            <span className="price-tag">★ {result.price_stars}</span>
             <button className="upgrade-result-card__close" onClick={() => setResult(null)}>
               Готово
             </button>

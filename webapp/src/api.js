@@ -4,41 +4,71 @@ const BASE = '/api';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function request(path, options = {}, retries = 3, delayMs = 1500) {
+// Скрипт telegram-web-app.js иногда инициализируется чуть позже,
+// чем монтируется React. Если запрос уйдёт с пустым initData,
+// сервер вернёт 401 и данные не загрузятся — поэтому ждём.
+async function waitForInitData(maxWaitMs = 3000) {
+  const started = Date.now();
+  let data = getInitData();
+  while (!data && Date.now() - started < maxWaitMs) {
+    await sleep(100);
+    data = getInitData();
+  }
+  return data;
+}
+
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Render на бесплатном тарифе «засыпает», и первый запрос после простоя
+// может подниматься 30–60 секунд. Поэтому попыток больше, задержка растёт,
+// а таймаут на попытку — щедрый.
+async function request(path, options = {}, { retries = 5, baseDelayMs = 1200, timeoutMs = 20000 } = {}) {
+  const initData = await waitForInitData();
   let lastError;
 
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      const res = await fetch(`${BASE}${path}`, {
-        ...options,
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Telegram-Init-Data': getInitData(),
-          ...(options.headers || {})
-        }
-      });
+      const res = await fetchWithTimeout(
+        `${BASE}${path}`,
+        {
+          ...options,
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Telegram-Init-Data': initData,
+            ...(options.headers || {})
+          }
+        },
+        timeoutMs
+      );
+
+      if (res.status === 401 || res.status === 403) {
+        const body = await res.json().catch(() => ({}));
+        const err = new Error(body.error || 'unauthorized');
+        err.fatal = true;
+        throw err;
+      }
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        // Ошибки авторизации (401/403) повторять нет смысла
-        if (res.status === 401 || res.status === 403) {
-          throw new Error(body.error || `Ошибка доступа: ${res.status}`);
-        }
         throw new Error(body.error || `Ошибка запроса: ${res.status}`);
       }
 
       return await res.json();
     } catch (err) {
       lastError = err;
+      if (err.fatal) throw err;
 
-      // Если ошибка критическая (клиентская), не крутим цикл вхолостую
-      if (err.message.includes('401') || err.message.includes('403')) {
-        throw err;
-      }
-
-      // Если это не последняя попытка — ждем пока проснется Render / пул базы
       if (attempt < retries) {
-        await sleep(delayMs);
+        // 1.2s, 2.4s, 4.8s, 9.6s — успеваем пережить холодный старт Render
+        await sleep(baseDelayMs * 2 ** (attempt - 1));
       }
     }
   }
@@ -51,13 +81,13 @@ export const api = {
   getProfile: () => request('/profile'),
   getInventory: () => request('/inventory'),
   createInvoice: (itemId) =>
-    request('/create-invoice', {
-      method: 'POST',
-      body: JSON.stringify({ itemId })
-    }),
+    request('/create-invoice', { method: 'POST', body: JSON.stringify({ itemId }) }, { retries: 2 }),
   upgrade: (inventoryItemId, targetItemId) =>
-    request('/upgrade', {
-      method: 'POST',
-      body: JSON.stringify({ inventoryItemId, targetItemId })
-    })
+    request(
+      '/upgrade',
+      { method: 'POST', body: JSON.stringify({ inventoryItemId, targetItemId }) },
+      { retries: 2 }
+    ),
+  sell: (inventoryItemId) =>
+    request('/sell', { method: 'POST', body: JSON.stringify({ inventoryItemId }) }, { retries: 2 })
 };
