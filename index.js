@@ -47,6 +47,14 @@ const getMainMenu = () => {
 };
 
 bot.use(async (ctx, next) => {
+  // Платёжные апдейты никогда не троттлим: pre_checkout_query у Telegram
+  // всего 10 секунд на ответ, а если его тихо съест кулдаун — оплата
+  // сорвётся на стороне Telegram ещё до того, как дойдёт до нашей логики.
+  const isPaymentUpdate = Boolean(
+    ctx.preCheckoutQuery || ctx.shippingQuery || ctx.message?.successful_payment
+  );
+  if (isPaymentUpdate) return next();
+
   const userId = ctx.from?.id;
   if (!userId) return next();
 
@@ -347,6 +355,7 @@ bot.hears('🆘 Помощь', (ctx) => {
 // ---------- Оплата Telegram Stars ----------
 
 bot.on('pre_checkout_query', async (ctx) => {
+  console.log('💳 pre_checkout_query от', ctx.from?.id, ctx.preCheckoutQuery?.invoice_payload);
   try {
     await ctx.answerPreCheckoutQuery(true);
   } catch (err) {
@@ -357,6 +366,8 @@ bot.on('pre_checkout_query', async (ctx) => {
 bot.on('message', async (ctx) => {
   const payment = ctx.message?.successful_payment;
   if (!payment) return;
+
+  console.log('💳 successful_payment от', ctx.from?.id, payment.invoice_payload, payment.total_amount, payment.currency);
 
   try {
     const parts = payment.invoice_payload.split('_'); // topup_<userId>_<amount>_<ts>
