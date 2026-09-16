@@ -1,5 +1,7 @@
-export default function PurchaseSheet({ item, pending, onCancel, onConfirm }) {
+export default function PurchaseSheet({ item, pending, balance, onCancel, onConfirm, onTopUp }) {
   if (!item) return null;
+
+  const insufficient = balance < item.price_stars;
 
   return (
     <>
@@ -13,14 +15,31 @@ export default function PurchaseSheet({ item, pending, onCancel, onConfirm }) {
             <span className="price-tag">★ {item.price_stars}</span>
           </div>
         </div>
-        <div className="sheet__actions">
-          <button className="sheet__cancel" onClick={onCancel} disabled={pending}>
-            Отмена
-          </button>
-          <button className="sheet__confirm" onClick={onConfirm} disabled={pending}>
-            {pending ? 'Открываем счёт…' : 'Оплатить Stars'}
-          </button>
-        </div>
+
+        {insufficient ? (
+          <>
+            <p className="sheet__note sheet__note--warn">
+              Недостаточно ⭐ на балансе. Не хватает {item.price_stars - balance} ⭐.
+            </p>
+            <div className="sheet__actions">
+              <button className="sheet__cancel" onClick={onCancel}>
+                Отмена
+              </button>
+              <button className="sheet__confirm" onClick={onTopUp}>
+                Пополнить ⭐
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="sheet__actions">
+            <button className="sheet__cancel" onClick={onCancel} disabled={pending}>
+              Отмена
+            </button>
+            <button className="sheet__confirm" onClick={onConfirm} disabled={pending}>
+              {pending ? 'Покупаем…' : 'Купить'}
+            </button>
+          </div>
+        )}
       </div>
     </>
   );
