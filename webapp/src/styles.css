@@ -1125,3 +1125,59 @@ button {
 .sheet__note--warn {
   color: var(--ember);
 }
+
+/* ---------- Payment method selector ---------- */
+
+.payment-methods {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.payment-method {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--hairline);
+  background: var(--bg-panel-2);
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease, opacity 0.15s ease;
+}
+
+.payment-method__icon {
+  font-size: 17px;
+  width: 22px;
+  text-align: center;
+}
+
+.payment-method__label {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.payment-method__badge {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--text-faint);
+  background: var(--bg-panel-3);
+  border-radius: 999px;
+  padding: 3px 9px;
+}
+
+.payment-method.selected {
+  border-color: var(--crimson-bright);
+  background: linear-gradient(150deg, var(--bg-panel-3), var(--bg-panel-2));
+  box-shadow: 0 8px 20px var(--shadow-glow);
+}
+
+.payment-method.disabled {
+  opacity: 0.55;
+}
+
+.payment-method.disabled:active {
+  transform: none;
+}
