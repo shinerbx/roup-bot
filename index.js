@@ -300,7 +300,18 @@ app.use('/api', createWebappRouter(bot, BOT_TOKEN));
 app.get('/ping', (req, res) => res.status(200).send('pong'));
 
 const webappDist = path.join(__dirname, 'webapp', 'dist');
-app.use(express.static(webappDist));
+
+// ---------- Настройка кэширования для статики (включая картинки) ----------
+app.use(express.static(webappDist, {
+  maxAge: '30d', // Заставляем Telegram кэшировать картинки на 30 дней
+  setHeaders: (res, path) => {
+    if (path.endsWith('.html')) {
+      // HTML файл не кэшируем, чтобы у игроков всегда была последняя версия кода
+      res.setHeader('Cache-Control', 'no-cache');
+    }
+  }
+}));
+
 app.use((req, res) => {
   if (req.path.startsWith('/api') || req.path.startsWith('/telegraf')) return res.status(404).json({ error: 'Маршрут API не найден' });
   res.sendFile(path.join(webappDist, 'index.html'));
