@@ -1327,3 +1327,95 @@ button {
   font-weight: 800;
   margin-top: auto;
 }
+
+/* ==========================================================================
+   ЭФФЕКТЫ АПГРЕЙДА (УСПЕХ / НЕУДАЧА / КОНФЕТТИ)
+   ========================================================================== */
+
+/* Переписываем анимацию рулетки: теперь стрелка крутится долго (5 оборотов) */
+@keyframes needle-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(calc(var(--needle-angle) + 1800deg)); }
+}
+
+/* Успешный апгрейд: оба слота загораются красным неоном */
+.slot-success-red {
+  border-color: #ff003c !important;
+  background: rgba(255, 0, 60, 0.15) !important;
+  box-shadow: 0 0 30px rgba(255, 0, 60, 0.4), inset 0 0 20px rgba(255, 0, 60, 0.2);
+  animation: success-pulse 1s infinite alternate;
+}
+
+@keyframes success-pulse {
+  from { box-shadow: 0 0 20px rgba(255, 0, 60, 0.4), inset 0 0 10px rgba(255, 0, 60, 0.2); }
+  to { box-shadow: 0 0 40px rgba(255, 0, 60, 0.8), inset 0 0 30px rgba(255, 0, 60, 0.4); }
+}
+
+/* Проваленный апгрейд: левый слот тускнеет (предмет сгорел) */
+.slot-fail-dim {
+  border-color: rgba(255, 255, 255, 0.05) !important;
+  background: rgba(0, 0, 0, 0.4) !important;
+  opacity: 0.6;
+}
+
+/* Проваленный апгрейд: правый слот показывает надпись НЕУДАЧА */
+.upgrade-slot-fail {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  width: 100%;
+}
+
+.fail-text {
+  color: #ff4a4a;
+  font-family: 'Unbounded', sans-serif;
+  font-weight: 900;
+  font-size: 18px;
+  letter-spacing: 1px;
+  text-shadow: 0 0 15px rgba(255, 74, 74, 0.6);
+  animation: fail-shake 0.4s ease;
+}
+
+@keyframes fail-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-5px); }
+  50% { transform: translateX(5px); }
+  75% { transform: translateX(-5px); }
+}
+
+/* Неоновое конфетти при успехе */
+.confetti-container {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  z-index: 9999;
+}
+
+.confetti-particle {
+  position: absolute;
+  width: 6px;
+  height: 15px;
+  background: var(--color);
+  box-shadow: 0 0 10px var(--color), 0 0 20px var(--color);
+  border-radius: 4px;
+  top: 0; 
+  left: 0;
+  animation: confetti-explode var(--duration) cubic-bezier(0.25, 1, 0.5, 1) var(--delay) forwards;
+  opacity: 0;
+}
+
+@keyframes confetti-explode {
+  0% {
+    opacity: 1;
+    transform: rotate(var(--angle)) translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: rotate(var(--angle)) translateY(var(--dist)) scale(0.3);
+  }
+}
