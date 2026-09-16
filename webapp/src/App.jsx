@@ -15,7 +15,7 @@ import Toast from './components/Toast.jsx';
 const SCREEN_META = {
   catalog: { title: 'Каталог', subtitle: 'Купить предметы 👇' },
   upgrade: { title: null, subtitle: null },
-  inventory: { title: 'Инвентарь', subtitle: 'Твои предметы' },
+  inventory: { title: null, subtitle: null },
   profile: { title: 'Профиль', subtitle: null }
 };
 
@@ -111,11 +111,11 @@ export default function App() {
     setSheetItem(item);
   };
 
-  const handleConfirmPurchase = async () => {
+  const handleConfirmPurchase = async (quantity = 1) => {
     if (!sheetItem) return;
     setBuying(true);
     try {
-      const res = await api.buy(sheetItem.id);
+      const res = await api.buy(sheetItem.id, quantity);
       hapticNotify('success');
       setToast(`Куплено: ${sheetItem.name}`);
       setSheetItem(null);
