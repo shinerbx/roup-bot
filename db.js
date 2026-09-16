@@ -1,10 +1,19 @@
 const { Pool } = require('pg');
 const catalogItems = require('./catalog');
+const { resolveUpgrade } = require('./upgrade-logic');
 
-const connectionString = 'postgresql://postgres.qozrohmqnmbghemlgohb:roupgrade1509!@aws-1-eu-west-1.pooler.supabase.com:5432/postgres';
+// ВАЖНО: строка подключения берётся только из переменной окружения.
+// На Render добавьте переменную DATABASE_URL со значением вида:
+// postgresql://postgres.<project>:<ПАРОЛЬ>@aws-1-eu-west-1.pooler.supabase.com:5432/postgres
+// Спецсимволы в пароле нужно URL-кодировать (@ -> %40, # -> %23, $ -> %24, ! -> %21).
+const connectionString = process.env.DATABASE_URL;
+
+if (!connectionString) {
+  console.error('❌ Не задана переменная окружения DATABASE_URL — база не подключится.');
+}
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || connectionString,
+  connectionString,
   ssl: { rejectUnauthorized: false },
   max: 10,
   idleTimeoutMillis: 10000,
@@ -189,11 +198,18 @@ async function upgradeItem(userId, inventoryItemId, targetItemId) {
   try {
     await client.query('BEGIN');
 
-    const ownedRes = await client.query(
-      'SELECT id FROM user_inventory WHERE id = $1 AND user_id = $2 FOR UPDATE',
-      [inventoryItemId, userId]
-    );
-    if (ownedRes.rows.length === 0) {
+    // Блокируем строку инвентаря, чтобы два параллельных запроса
+    // не смогли использовать один и тот же предмет дважды.
+    const ownedRes = await client.query(`
+      SELECT ui.id, i.id AS item_id, i.name, i.price_stars
+      FROM user_inventory ui
+      JOIN items i ON i.id = ui.item_id
+      WHERE ui.id = $1 AND ui.user_id = $2
+      FOR UPDATE OF ui
+    `, [inventoryItemId, userId]);
+
+    const sourceItem = ownedRes.rows[0];
+    if (!sourceItem) {
       await client.query('ROLLBACK');
       return { error: 'item_not_owned' };
     }
@@ -205,12 +221,75 @@ async function upgradeItem(userId, inventoryItemId, targetItemId) {
       return { error: 'target_not_found' };
     }
 
+    // Решение принимает отдельный модуль upgrade-logic.js
+    const decision = resolveUpgrade(
+      { id: sourceItem.item_id, name: sourceItem.name, price_stars: sourceItem.price_stars },
+      targetItem
+    );
+
+    // Предмет-донор в любом случае уходит из инвентаря
     await client.query('DELETE FROM user_inventory WHERE id = $1', [inventoryItemId]);
-    await client.query('INSERT INTO user_inventory (user_id, item_id) VALUES ($1, $2)', [userId, targetItemId]);
     await client.query('UPDATE users SET upgrades_count = upgrades_count + 1 WHERE telegram_id = $1', [userId]);
 
+    if (!decision.success) {
+      await client.query('COMMIT');
+      return { success: false, item: null };
+    }
+
+    const resultRes = await client.query('SELECT * FROM items WHERE id = $1', [decision.resultItemId]);
+    const resultItem = resultRes.rows[0];
+    if (!resultItem) {
+      await client.query('ROLLBACK');
+      return { error: 'result_not_found' };
+    }
+
+    await client.query('INSERT INTO user_inventory (user_id, item_id) VALUES ($1, $2)', [userId, resultItem.id]);
+
     await client.query('COMMIT');
-    return { item: targetItem };
+    return { success: true, item: resultItem };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// Продажа предмета: удаляет его из инвентаря и начисляет его цену
+// на внутренний баланс пользователя. Всё в одной транзакции,
+// строка инвентаря блокируется, чтобы предмет нельзя было продать дважды.
+async function sellInventoryItem(userId, inventoryItemId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const ownedRes = await client.query(`
+      SELECT ui.id, i.name, i.price_stars
+      FROM user_inventory ui
+      JOIN items i ON i.id = ui.item_id
+      WHERE ui.id = $1 AND ui.user_id = $2
+      FOR UPDATE OF ui
+    `, [inventoryItemId, userId]);
+
+    const row = ownedRes.rows[0];
+    if (!row) {
+      await client.query('ROLLBACK');
+      return { error: 'item_not_owned' };
+    }
+
+    await client.query('DELETE FROM user_inventory WHERE id = $1', [inventoryItemId]);
+
+    const balRes = await client.query(
+      'UPDATE users SET balance = balance + $1 WHERE telegram_id = $2 RETURNING balance',
+      [row.price_stars, userId]
+    );
+
+    await client.query('COMMIT');
+    return {
+      soldName: row.name,
+      earned: row.price_stars,
+      balance: balRes.rows[0]?.balance ?? 0
+    };
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -230,5 +309,6 @@ module.exports = {
   getItemById,
   getUserInventory,
   addInventoryItem,
-  upgradeItem
+  upgradeItem,
+  sellInventoryItem
 };

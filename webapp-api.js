@@ -8,7 +8,8 @@ const {
   getUserInventoryCount,
   getItemById,
   ensureUserExists,
-  upgradeItem
+  upgradeItem,
+  sellInventoryItem
 } = require('./db');
 
 function verifyInitData(initData, botToken) {
@@ -31,6 +32,10 @@ function verifyInitData(initData, botToken) {
     const computedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
 
     if (computedHash !== hash) return null;
+
+    // Отклоняем слишком старые initData
+    const authDate = Number(params.get('auth_date') || 0);
+    if (!authDate || Date.now() / 1000 - authDate > 86400) return null;
 
     const userRaw = params.get('user');
     if (!userRaw) return null;
@@ -142,9 +147,29 @@ function createWebappRouter(bot, botToken) {
         return res.status(400).json({ error: result.error });
       }
 
-      res.json({ item: result.item });
+      res.json({ success: result.success, item: result.item });
     } catch (err) {
       console.error('Ошибка /api/upgrade:', err.message);
+      res.status(500).json({ error: 'server_error' });
+    }
+  });
+
+  // Продажа предмета из инвентаря — начисляет его цену на внутренний баланс
+  router.post('/sell', async (req, res) => {
+    try {
+      const inventoryItemId = Number(req.body.inventoryItemId);
+      if (!inventoryItemId) {
+        return res.status(400).json({ error: 'missing_fields' });
+      }
+
+      const result = await sellInventoryItem(req.tgUser.id, inventoryItemId);
+      if (result.error) {
+        return res.status(400).json({ error: result.error });
+      }
+
+      res.json(result);
+    } catch (err) {
+      console.error('Ошибка /api/sell:', err.message);
       res.status(500).json({ error: 'server_error' });
     }
   });

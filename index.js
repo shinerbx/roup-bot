@@ -11,9 +11,14 @@ const {
 } = require('./db');
 const { createWebappRouter } = require('./webapp-api');
 
-const BOT_TOKEN = '8800513849:AAEaDLYPqGgNfKVZZTrhUUTQ7pirs3gr35c';
+// Токен берётся из переменной окружения BOT_TOKEN (задать на Render).
+const BOT_TOKEN = process.env.BOT_TOKEN;
+
+if (!BOT_TOKEN) {
+  console.error('❌ Не задана переменная окружения BOT_TOKEN — бот не запустится.');
+}
 const BOT_USERNAME = 'roupgrade_bot';
-const WEB_APP_URL = 'https://roup-bot.onrender.com';
+const WEB_APP_URL = process.env.WEB_APP_URL || 'https://roup-bot.onrender.com';
 const CHANNEL_USERNAME = '@ro_upgrade';
 
 // Прямая ссылка на баннер для отправки приглашения другу
