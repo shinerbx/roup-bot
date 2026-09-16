@@ -1,67 +1,59 @@
 /**
- * RoUP — заглушка механики апгрейда.
- *
- * ВСЯ игровая логика апгрейда должна настраиваться здесь.
- * UI/React не определяет результат и не содержит формул игры.
- *
- * Сейчас здесь намеренно стоит безопасная заглушка:
- * - отображаемый шанс = 50%;
- * - множитель принимается и возвращается без влияния на шанс;
- * - результат определяется случайно по 50%;
- * - при успехе возвращается выбранный targetItem.
- *
- * ЗАМЕНИТЕ ТОЛЬКО ФУНКЦИИ НИЖЕ, когда будете подключать свою механику.
+ * ЛОГИКА АПГРЕЙДА (ЗАГЛУШКА)
+ * В этом файле высчитывается шанс и определяется успех/неудача.
  */
 
 const MIN_CHANCE = 0;
 const MAX_CHANCE = 100;
 const MAX_MULTIPLIER = 100;
-const STUB_CHANCE = 50;
 
 function clampChance(value) {
   return Math.min(MAX_CHANCE, Math.max(MIN_CHANCE, Number(value) || 0));
 }
 
-/** Заглушка базового шанса. Настройте свою формулу здесь. */
-function calculateBaseChance(_sourceItem, _targetItem) {
-  return STUB_CHANCE;
+// 1. Формула базового шанса 
+// TODO: Напиши здесь свою логику расчета между двумя предметами.
+// Пример: шанс зависит от разницы в цене (sourceItem.price_stars / targetItem.price_stars) * 100
+function calculateBaseChance(sourceItem, targetItem) {
+  const sourcePrice = Number(sourceItem.price_stars) || 0;
+  const targetPrice = Number(targetItem.price_stars) || 1;
+  return (sourcePrice / targetPrice) * 100;
 }
 
-/** Заглушка влияния множителя. Пока множитель не изменяет шанс. */
+// 2. Влияние множителя 
+// TODO: Напиши логику того, как кнопка "Множитель" меняет шанс.
 function applyMultiplier(baseChance, multiplier = 1) {
-  const value = Number(multiplier);
-  if (!Number.isFinite(value) || value < 1 || value > MAX_MULTIPLIER) {
-    throw new Error('invalid_multiplier');
-  }
-  return clampChance(baseChance);
+  const safeMultiplier = Number(multiplier) || 1;
+  return clampChance(baseChance / safeMultiplier);
 }
 
-/**
- * Точка, где принимается финальное серверное решение.
- * Здесь вы можете полностью заменить алгоритм апгрейда.
- */
+// 3. Главная функция принятия решения (срабатывает на сервере)
 function resolveUpgrade(sourceItem, targetItem, multiplier = 1) {
   const safeMultiplier = Number(multiplier);
   if (!Number.isFinite(safeMultiplier) || safeMultiplier < 1 || safeMultiplier > MAX_MULTIPLIER) {
     throw new Error('invalid_multiplier');
   }
-
+  
   const baseChance = clampChance(calculateBaseChance(sourceItem, targetItem));
-  const chance = clampChance(applyMultiplier(baseChance, safeMultiplier));
+  const finalChance = clampChance(applyMultiplier(baseChance, safeMultiplier));
+  
+  // Бросаем кубик (случайное число от 0 до 100)
   const roll = Math.random() * 100;
-  const success = roll < chance;
+  
+  // Успех, если выпавшее число меньше шанса
+  const success = roll < finalChance;
 
   return {
     success,
-    resultItemId: success ? targetItem?.id ?? null : null,
-    chance: Number(chance.toFixed(2)),
+    resultItemId: success ? targetItem.id : null,
+    chance: Number(finalChance.toFixed(2)),
     baseChance: Number(baseChance.toFixed(2)),
     roll: Number(roll.toFixed(2)),
     multiplier: safeMultiplier
   };
 }
 
-/** Шанс для отображения в Web App. Не принимает игрового решения. */
+// 4. Для отображения шанса в React (до нажатия кнопки)
 function displayPercent(sourceItem, targetItem, multiplier = 1) {
   const base = calculateBaseChance(sourceItem, targetItem);
   return Number(clampChance(applyMultiplier(base, Number(multiplier) || 1)).toFixed(2));
