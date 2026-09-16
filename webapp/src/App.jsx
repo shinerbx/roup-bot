@@ -203,7 +203,7 @@ export default function App() {
           {meta.title && <h2 className="screen-title">{meta.title}</h2>}
           {meta.subtitle && <p className="screen-subtitle">{meta.subtitle}</p>}
         </div>
-      )
+      )}
 
       {tab === 'catalog' && (
         <CatalogTab items={catalog} ownedItemIds={ownedItemIds} loading={loading} onBuy={handleBuy} />
