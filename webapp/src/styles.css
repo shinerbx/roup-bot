@@ -272,9 +272,9 @@ button {
 }
 
 .item-card__image {
-  width: 72%;
-  height: 72%;
-  object-fit: contain;
+  width: 100%;
+  height: 100%;
+  object-fit: cover; /* Обновлено для полного покрытия квадрата */
   filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.4));
 }
 
@@ -1002,10 +1002,25 @@ button {
 }
 
 .upgrade-slot__image {
-  width: 68px;
-  height: 68px;
-  object-fit: contain;
+  width: 120px; /* Обновлено (было 68px) */
+  height: 120px;
+  object-fit: contain; /* Оставляем contain для шляп, чтобы не резались */
   filter: drop-shadow(0 8px 14px rgba(0,0,0,.44));
+  margin-bottom: 8px;
+}
+
+@media (max-width: 470px) {
+  .upgrade-slot__image { 
+    width: 90px; 
+    height: 90px; 
+  }
+}
+
+@media (max-width: 360px) {
+  .upgrade-slot__image { 
+    width: 75px; 
+    height: 75px; 
+  }
 }
 
 .upgrade-slot__name {
@@ -1289,11 +1304,11 @@ button {
   margin-bottom: 4px;
 }
 
-/* Ограничиваем размер самой картинки */
+/* Обновлено (было contain) */
 .upgrade-picker-item__image-wrap img {
-  width: 75%;
-  height: 75%;
-  object-fit: contain;
+  width: 100%;
+  height: 100%;
+  object-fit: cover; 
   filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.5));
 }
 
@@ -1318,7 +1333,6 @@ button {
    ЭФФЕКТЫ АПГРЕЙДА (УСПЕХ / НЕУДАЧА / КОНФЕТТИ)
    ========================================================================== */
 
-/* Переписываем анимацию рулетки: теперь стрелка крутится долго (5 оборотов) */
 .upgrade-needle.spinning {
   animation: needle-spin var(--spin-duration) cubic-bezier(.12,.78,.16,1) both;
 }
