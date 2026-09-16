@@ -1,12 +1,13 @@
-import { useMemo, useRef, useState, useEffect } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { haptic, hapticNotify } from '../telegram.js';
 
 const RADIUS = 74;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 const PRESETS = [2, 4, 8, 10];
-const MIN_SPIN_MS = 260;
-const MAX_SPIN_MS = 460;
+// Увеличиваем время прокрутки рулетки (от 3 до 5 секунд)
+const MIN_SPIN_MS = 3000;
+const MAX_SPIN_MS = 5000;
 
 function randomItem(items, filter = () => true) {
   const pool = items.filter(filter);
@@ -32,22 +33,73 @@ function clampNumber(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-function Slot({ item, placeholder, onOpen, spinning, side, title }) {
+// Генератор неонового конфетти
+function NeonConfetti() {
+  const particles = Array.from({ length: 50 });
   return (
-    <div className={`upgrade-slot-container ${spinning ? 'pulsing' : ''}`} onClick={!spinning ? onOpen : undefined}>
+    <div className="confetti-container">
+      {particles.map((_, i) => {
+        const angle = Math.random() * 360;
+        const distance = 80 + Math.random() * 250;
+        const duration = 0.6 + Math.random() * 0.8;
+        const delay = Math.random() * 0.1;
+        const colors = ['#ff003c', '#ffc800', '#00ffcc', '#bf00ff'];
+        const color = colors[Math.floor(Math.random() * colors.length)];
+        
+        return (
+          <div 
+            key={i} 
+            className="confetti-particle"
+            style={{
+              '--angle': `${angle}deg`,
+              '--dist': `${distance}px`,
+              '--duration': `${duration}s`,
+              '--delay': `${delay}s`,
+              '--color': color
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function Slot({ item, placeholder, onOpen, spinning, side, title, resultStatus }) {
+  let content;
+
+  if (side === 'target' && resultStatus === 'fail') {
+    content = (
+      <div className="upgrade-slot-fail">
+        <span className="fail-text">НЕУДАЧА</span>
+      </div>
+    );
+  } else if (!item) {
+    content = (
+      <div className="upgrade-slot-empty">
+        <span className="upgrade-slot__plus">+</span>
+        <span className="upgrade-slot__placeholder">{placeholder}</span>
+      </div>
+    );
+  } else {
+    content = (
+      <div className="upgrade-slot-filled">
+        <img className="upgrade-slot__image" src={item.image_url} alt={item.name} />
+        <span className="upgrade-slot__name">{item.name}</span>
+        <span className="upgrade-slot__price">★ {Number(item.price_stars).toLocaleString('ru-RU')}</span>
+      </div>
+    );
+  }
+
+  const successClass = resultStatus === 'success' ? 'slot-success-red' : '';
+  const failClass = resultStatus === 'fail-source' ? 'slot-fail-dim' : '';
+
+  return (
+    <div 
+      className={`upgrade-slot-container ${spinning ? 'pulsing' : ''} ${successClass} ${failClass}`} 
+      onClick={!spinning && !resultStatus ? onOpen : undefined}
+    >
       <div className="upgrade-slot-title">{title}</div>
-      {!item ? (
-        <div className="upgrade-slot-empty">
-          <span className="upgrade-slot__plus">+</span>
-          <span className="upgrade-slot__placeholder">{placeholder}</span>
-        </div>
-      ) : (
-        <div className="upgrade-slot-filled">
-          <img className="upgrade-slot__image" src={item.image_url} alt={item.name} />
-          <span className="upgrade-slot__name">{item.name}</span>
-          <span className="upgrade-slot__price">★ {Number(item.price_stars).toLocaleString('ru-RU')}</span>
-        </div>
-      )}
+      {content}
     </div>
   );
 }
@@ -107,8 +159,7 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
   const [multiplier, setMultiplier] = useState(2);
   const [customMultiplier, setCustomMultiplier] = useState('');
   const [needleAngle, setNeedleAngle] = useState(0);
-  const [spinDuration, setSpinDuration] = useState(340);
-  const [flash, setFlash] = useState(false); // Состояние для вспышки
+  const [spinDuration, setSpinDuration] = useState(3000);
   const spinStartedAtRef = useRef(0);
 
   const owned = inventory.find((i) => i.inventory_id === ownedId) || null;
@@ -129,7 +180,10 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
   const offset = CIRCUMFERENCE * (1 - percent / 100);
   const customMultiplierValid = multiplier !== 'custom'
     || (Number(customMultiplier) >= 1 && Number(customMultiplier) <= 100);
+  
+  // Кнопка активна, если можно начать апгрейд ИЛИ если нужно сбросить результат
   const canUpgrade = Boolean(owned && target && !spinning && customMultiplierValid);
+  const isActionDisabled = !canUpgrade && !result;
 
   const chooseOwned = (item) => {
     setOwnedId(item.inventory_id);
@@ -142,7 +196,7 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
   };
 
   const handlePreset = (value) => {
-    if (spinning) return;
+    if (spinning || result) return;
     setMultiplier(value);
 
     const pair = pickRandomUpgrade(inventory, catalog);
@@ -154,12 +208,21 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
   };
 
   const handleCustom = () => {
-    if (spinning) return;
+    if (spinning || result) return;
     setMultiplier('custom');
     haptic('light');
   };
 
-  const handleUpgrade = async () => {
+  const handleAction = async () => {
+    // Если результат уже есть — это кнопка "Продолжить"
+    if (result) {
+      setResult(null);
+      setOwnedId(null);
+      setTargetId(null);
+      setNeedleAngle(0);
+      return;
+    }
+
     if (!canUpgrade) return;
 
     const duration = Math.round(MIN_SPIN_MS + Math.random() * (MAX_SPIN_MS - MIN_SPIN_MS));
@@ -184,22 +247,15 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
       const remaining = Math.max(0, duration - elapsed);
       if (remaining) await new Promise((resolve) => setTimeout(resolve, remaining));
 
-      // Активация неоновой вспышки при успехе
-      if (res.success) {
-        setFlash(true);
-        setTimeout(() => setFlash(false), 800);
-      }
-
       hapticNotify(res.success ? 'success' : 'error');
+      
+      // Замораживаем предметы, чтобы они не пропали с экрана после обновления инвентаря
       setResult({
-        item: res.item,
-        success: Boolean(res.success),
-        chance: Number(res.chance ?? percent),
-        roll: serverRoll,
-        multiplier: Number(res.multiplier ?? selectedMultiplier)
+        sourceItem: owned,
+        targetItem: target,
+        success: Boolean(res.success)
       });
-      setOwnedId(null);
-      setTargetId(null);
+      
       onUpgraded?.();
     } catch (err) {
       console.error(err);
@@ -213,26 +269,25 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
 
   if (loading) return <div className="skeleton upgrade-skeleton" />;
 
+  const sourceStatus = result ? (result.success ? 'success' : 'fail-source') : null;
+  const targetStatus = result ? (result.success ? 'success' : 'fail') : null;
+
   return (
     <div className="upgrade-screen">
-      
-      {/* Эффект неоновой вспышки */}
-      <div className={`neon-flash-overlay ${flash ? 'active' : ''}`}>
-        <div className="neon-flash-circle" />
-      </div>
+      {/* Конфетти при успехе */}
+      {result?.success && <NeonConfetti />}
 
       <section className="upgrade-stage-modern">
-        {/* Левый блок (Отдать) */}
         <Slot 
           title="Выберите предметы для использования" 
-          item={owned} 
+          item={result ? result.sourceItem : owned} 
           placeholder="Нажмите, чтобы выбрать" 
           spinning={spinning} 
           side="source" 
           onOpen={() => setPicker('owned')} 
+          resultStatus={sourceStatus}
         />
 
-        {/* Центральный блок (Колесо) */}
         <div className="upgrade-center-block">
           <div className="upgrade-wheel-column">
             <div className={`upgrade-gauge ${spinning ? 'spinning' : ''}`} style={{ '--gauge-offset': offset, '--spin-duration': `${spinDuration}ms` }}>
@@ -264,20 +319,20 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
               </div>
             </div>
 
-            <button type="button" className="upgrade-action-button" disabled={!canUpgrade} onClick={handleUpgrade}>
-              {spinning ? 'АПГРЕЙД...' : 'ПРОКАЧАТЬ'}
+            <button type="button" className="upgrade-action-button" disabled={isActionDisabled} onClick={handleAction}>
+              {spinning ? 'АПГРЕЙД...' : (result ? 'ПРОДОЛЖИТЬ' : 'ПРОКАЧАТЬ')}
             </button>
           </div>
         </div>
 
-        {/* Правый блок (Получить) */}
         <Slot 
           title="Выберите предмет для апгрейда" 
-          item={target} 
+          item={result ? result.targetItem : target} 
           placeholder="Нажмите, чтобы выбрать" 
           spinning={spinning} 
           side="target" 
           onOpen={() => setPicker('target')} 
+          resultStatus={targetStatus}
         />
       </section>
 
@@ -290,7 +345,7 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
               key={value}
               className={`upgrade-multiplier ${multiplier === value ? 'selected' : ''}`}
               onClick={() => handlePreset(value)}
-              disabled={spinning || !inventory.length || !catalog.length}
+              disabled={spinning || result || !inventory.length || !catalog.length}
             >
               x{value}
             </button>
@@ -299,7 +354,7 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
             type="button"
             className={`upgrade-multiplier upgrade-multiplier--custom ${multiplier === 'custom' ? 'selected' : ''}`}
             onClick={handleCustom}
-            disabled={spinning}
+            disabled={spinning || result}
           >
             Своя
           </button>
@@ -317,7 +372,7 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
               value={customMultiplier}
               onChange={(e) => setCustomMultiplier(e.target.value)}
               placeholder="3.5"
-              disabled={spinning}
+              disabled={spinning || result}
               aria-label="Пользовательский множитель"
             />
           </div>
@@ -346,32 +401,6 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
           onClose={() => setPicker(null)}
           spinning={spinning}
         />
-      )}
-
-      {result && (
-        <div className="upgrade-result-overlay" onClick={() => setResult(null)}>
-          <div className="upgrade-result-rays" />
-          <div className="upgrade-result-card" onClick={(e) => e.stopPropagation()}>
-            <div className={`upgrade-result-card__status ${result.success ? 'is-success' : 'is-miss'}`}>
-              <span className="upgrade-result-card__status-dot" />
-              {result.success ? 'АПГРЕЙД УСПЕШЕН' : 'НЕ ПОВЕЗЛО'}
-            </div>
-            {result.item ? (
-              <div className="upgrade-result-card__drop">
-                <img className="upgrade-result-card__image" src={result.item.image_url} alt={result.item.name} />
-                <span className="upgrade-result-card__shine" />
-              </div>
-            ) : (
-              <div className="upgrade-result-card__drop upgrade-result-card__drop--miss">×</div>
-            )}
-            {result.item && <p className="upgrade-result-card__name">{result.item.name}</p>}
-            {result.item && <span className="price-tag">★ {Number(result.item.price_stars).toLocaleString('ru-RU')}</span>}
-            <p className="upgrade-result-card__hint">
-              Шанс {result.chance}% · x{result.multiplier} · roll {result.roll.toFixed(2)}%
-            </p>
-            <button type="button" className="upgrade-result-card__close" onClick={() => setResult(null)}>Продолжить</button>
-          </div>
-        </div>
       )}
     </div>
   );
