@@ -30,6 +30,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
   const [sheetItem, setSheetItem] = useState(null);
+  const [sheetQuantity, setSheetQuantity] = useState(1);
   const [buying, setBuying] = useState(false);
   const [sellingId, setSellingId] = useState(null);
   const [toast, setToast] = useState(null);
@@ -106,8 +107,9 @@ export default function App() {
 
   const ownedItemIds = useMemo(() => new Set(inventory.map((i) => i.id)), [inventory]);
 
-  const handleBuy = (item) => {
+  const handleBuy = (item, quantity = 1) => {
     haptic('light');
+    setSheetQuantity(Math.min(9999, Math.max(1, Number.isInteger(quantity) ? quantity : 1)));
     setSheetItem(item);
   };
 
@@ -119,6 +121,7 @@ export default function App() {
       hapticNotify('success');
       setToast(`Куплено: ${sheetItem.name}`);
       setSheetItem(null);
+      setSheetQuantity(1);
       setProfile((prev) => (prev ? { ...prev, balance: res.balance } : prev));
       await refreshInventoryAndProfile();
     } catch (err) {
@@ -246,9 +249,10 @@ export default function App() {
 
       <PurchaseSheet
         item={sheetItem}
+        initialQuantity={sheetQuantity}
         pending={buying}
         balance={profile?.balance ?? 0}
-        onCancel={() => !buying && setSheetItem(null)}
+        onCancel={() => { if (!buying) { setSheetItem(null); setSheetQuantity(1); } }}
         onConfirm={handleConfirmPurchase}
         onTopUp={() => {
           setSheetItem(null);

@@ -2042,3 +2042,434 @@ button {
   0%, 100% { filter: drop-shadow(0 8px 18px rgba(232,184,74,.10)); }
   50% { filter: drop-shadow(0 8px 26px rgba(239,59,79,.25)); }
 }
+
+/* --------------------------------------------------------------------------
+   Final mobile polish: prevent text collisions and make purchase/upgrade
+   controls comfortable on narrow Telegram WebViews.
+   -------------------------------------------------------------------------- */
+
+.screen-title,
+.screen-subtitle,
+.item-card__name,
+.item-card__category,
+.sheet__item-name,
+.upgrade-slot__name,
+.upgrade-slot__title,
+.upgrade-picker-item > span,
+.upgrade-picker-sheet__header h3 {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.screen-title { line-height: 1.2; }
+.screen-subtitle { line-height: 1.45; }
+
+.item-card__name {
+  min-height: 34px;
+  max-height: 36px;
+  overflow: hidden;
+}
+
+.item-card__category {
+  min-height: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.item-card__footer {
+  min-width: 0;
+}
+
+.item-card__footer .price-tag {
+  min-width: 0;
+  max-width: 48%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.item-card__buy {
+  min-width: 74px;
+  white-space: nowrap;
+}
+
+.item-card__buy span {
+  opacity: .72;
+  margin-left: 2px;
+}
+
+.purchase-sheet__item {
+  min-width: 0;
+}
+
+.purchase-sheet__info {
+  min-width: 0;
+  flex: 1;
+}
+
+.sheet__item-name {
+  line-height: 1.25;
+  max-height: 2.5em;
+  overflow: hidden;
+}
+
+.purchase-sheet__summary strong {
+  min-width: 0;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.quantity-presets {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.quantity-presets button {
+  min-width: 0;
+  padding-inline: 3px;
+}
+
+.sheet__actions {
+  min-width: 0;
+}
+
+.sheet__cancel,
+.sheet__confirm {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upgrade-stage-modern,
+.upgrade-slot,
+.upgrade-center-block,
+.upgrade-wheel-column,
+.upgrade-multiplier-bar {
+  min-width: 0;
+}
+
+.upgrade-slot__title {
+  min-height: 28px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  text-align: center;
+}
+
+.upgrade-slot__filled {
+  min-height: 0;
+}
+
+.upgrade-slot__name {
+  min-height: 23px;
+  max-height: 29px;
+}
+
+.upgrade-action-button {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upgrade-multiplier-row {
+  min-width: 0;
+}
+
+.upgrade-multiplier {
+  min-width: 0;
+  padding-inline: 2px;
+  white-space: nowrap;
+}
+
+.upgrade-picker-sheet__header > div:first-child {
+  min-width: 0;
+}
+
+.upgrade-picker-sheet__header h3 {
+  line-height: 1.2;
+}
+
+.upgrade-modal-grid {
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 390px) {
+  .app { gap: 16px; }
+
+  .top-nav {
+    padding-left: 12px;
+    padding-right: 12px;
+    margin-left: -12px;
+    margin-right: -12px;
+  }
+
+  .balance-pill {
+    gap: 5px;
+    padding-right: 8px;
+  }
+
+  .balance-pill__value {
+    max-width: 76px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .upgrade-stage-modern {
+    grid-template-columns: minmax(0, 1fr) 96px minmax(0, 1fr);
+    gap: 5px;
+    padding: 8px;
+  }
+
+  .upgrade-slot {
+    min-height: 178px;
+    padding-inline: 5px;
+  }
+
+  .upgrade-slot__image-wrap { width: 66px; height: 66px; }
+  .upgrade-gauge { width: 90px; height: 90px; }
+  .upgrade-action-button { font-size: 8px; min-height: 40px; }
+
+  .quantity-control {
+    grid-template-columns: 48px minmax(64px, 1fr) 48px;
+  }
+}
+
+@media (max-width: 340px) {
+  .item-grid { gap: 8px; }
+  .item-card { padding: 8px; }
+  .item-card__buy { min-width: 68px; padding-inline: 8px; }
+  .price-tag { font-size: 11px; }
+  .upgrade-stage-modern {
+    grid-template-columns: minmax(0, 1fr) 88px minmax(0, 1fr);
+  }
+  .upgrade-gauge { width: 82px; height: 82px; }
+  .upgrade-slot__image-wrap { width: 58px; height: 58px; }
+  .upgrade-action-button { font-size: 7.5px; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .quantity-control input,
+  .purchase-sheet__summary strong {
+    transition: transform .18s ease, opacity .18s ease;
+  }
+
+  .quantity-control button:active,
+  .quantity-presets button:active,
+  .sheet__confirm:active:not(:disabled) {
+    transform: scale(.97);
+  }
+}
+
+/* Quick quantity control on catalog cards */
+.item-card__buy-group {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.item-card__quick-quantity {
+  height: 38px;
+  display: grid;
+  grid-template-columns: 24px minmax(28px, auto) 24px;
+  align-items: center;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: rgba(255,255,255,.025);
+  overflow: hidden;
+}
+
+.item-card__quick-quantity button {
+  width: 24px;
+  height: 38px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.item-card__quick-quantity button:active {
+  background: rgba(239,59,79,.1);
+  color: var(--text-primary);
+}
+
+.item-card__quick-quantity span {
+  min-width: 28px;
+  padding-inline: 2px;
+  color: var(--gold);
+  font-size: 10px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.item-card__buy-group .item-card__buy {
+  min-width: 0;
+  flex: 1;
+  padding-inline: 8px;
+  font-size: 11px;
+}
+
+@media (max-width: 390px) {
+  .item-card__buy-group { gap: 4px; }
+  .item-card__quick-quantity { grid-template-columns: 22px minmax(25px, auto) 22px; }
+  .item-card__quick-quantity button { width: 22px; }
+  .item-card__quick-quantity span { min-width: 25px; }
+  .item-card__buy-group .item-card__buy { font-size: 10px; padding-inline: 6px; }
+}
+
+@media (max-width: 340px) {
+  .item-card__buy-group { flex-direction: column; align-items: stretch; }
+  .item-card__quick-quantity { width: 100%; }
+  .item-card__buy-group .item-card__buy { width: 100%; }
+}
+
+/* Upgrade result lighting: strictly tied to the active upgrade/result state. */
+.upgrade-stage-modern {
+  position: relative;
+  overflow: hidden;
+}
+
+.upgrade-slot {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.upgrade-slot--spinning {
+  border-color: rgba(255, 200, 0, .28);
+  animation: upgrade-slot-gold-breathe 1.15s ease-in-out infinite;
+}
+
+.upgrade-slot--spinning::after {
+  content: '';
+  position: absolute;
+  inset: -35%;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(circle at 50% 50%, rgba(255, 200, 0, .24), transparent 58%);
+  opacity: .35;
+  transform: scale(.88);
+  animation: upgrade-slot-gold-glow 1.15s ease-in-out infinite;
+}
+
+@keyframes upgrade-slot-gold-breathe {
+  0%, 100% {
+    border-color: rgba(255, 200, 0, .22);
+    box-shadow: 0 0 10px rgba(255, 200, 0, .06), inset 0 0 10px rgba(255, 200, 0, .025);
+  }
+  50% {
+    border-color: rgba(255, 200, 0, .72);
+    box-shadow: 0 0 28px rgba(255, 200, 0, .28), inset 0 0 24px rgba(255, 200, 0, .10);
+  }
+}
+
+@keyframes upgrade-slot-gold-glow {
+  0%, 100% { opacity: .18; transform: scale(.86); }
+  50% { opacity: .62; transform: scale(1); }
+}
+
+/* Result state replaces the gold animation completely. */
+.upgrade-slot--success {
+  border-color: rgba(48, 255, 143, .9) !important;
+  background: rgba(48, 255, 143, .055) !important;
+  box-shadow: 0 0 18px rgba(48, 255, 143, .20), 0 0 42px rgba(48, 255, 143, .12), inset 0 0 22px rgba(48, 255, 143, .08) !important;
+  animation: upgrade-result-green 1.45s ease-in-out infinite alternate;
+}
+
+.upgrade-slot--success::after {
+  content: '';
+  position: absolute;
+  inset: -25%;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(circle at 50% 45%, rgba(48,255,143,.24), transparent 62%);
+  animation: upgrade-result-green-glow 1.45s ease-in-out infinite alternate;
+}
+
+.upgrade-slot--failed {
+  opacity: 1;
+  filter: none;
+  border-color: rgba(255, 64, 86, .9) !important;
+  background: rgba(255, 64, 86, .055) !important;
+  box-shadow: 0 0 18px rgba(255, 64, 86, .20), 0 0 42px rgba(255, 64, 86, .12), inset 0 0 22px rgba(255, 64, 86, .08) !important;
+  animation: upgrade-result-red 1.35s ease-in-out infinite alternate;
+}
+
+.upgrade-slot--failed::after {
+  content: '';
+  position: absolute;
+  inset: -25%;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(circle at 50% 45%, rgba(255,64,86,.22), transparent 62%);
+  animation: upgrade-result-red-glow 1.35s ease-in-out infinite alternate;
+}
+
+@keyframes upgrade-result-green {
+  from { box-shadow: 0 0 16px rgba(48,255,143,.16), inset 0 0 16px rgba(48,255,143,.06); }
+  to { box-shadow: 0 0 34px rgba(48,255,143,.42), 0 0 58px rgba(48,255,143,.14), inset 0 0 28px rgba(48,255,143,.13); }
+}
+@keyframes upgrade-result-green-glow { from { opacity: .18; transform: scale(.88); } to { opacity: .55; transform: scale(1.02); } }
+@keyframes upgrade-result-red {
+  from { box-shadow: 0 0 16px rgba(255,64,86,.16), inset 0 0 16px rgba(255,64,86,.06); }
+  to { box-shadow: 0 0 34px rgba(255,64,86,.40), 0 0 58px rgba(255,64,86,.13), inset 0 0 28px rgba(255,64,86,.13); }
+}
+@keyframes upgrade-result-red-glow { from { opacity: .16; transform: scale(.88); } to { opacity: .52; transform: scale(1.02); } }
+
+.upgrade-result-neon {
+  position: absolute;
+  z-index: 20;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) scale(.88);
+  pointer-events: none;
+  white-space: nowrap;
+  font-family: 'Unbounded', sans-serif;
+  font-size: clamp(16px, 4.8vw, 25px);
+  font-weight: 900;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  animation: upgrade-result-neon-in .42s cubic-bezier(.2,.85,.25,1) forwards, upgrade-result-neon-pulse 1.25s ease-in-out .42s infinite alternate;
+}
+
+.upgrade-result-neon--success {
+  color: #dffff0;
+  text-shadow: 0 0 6px #30ff8f, 0 0 14px #30ff8f, 0 0 30px rgba(48,255,143,.95), 0 0 58px rgba(48,255,143,.58);
+}
+
+.upgrade-result-neon--failure {
+  color: #ffe7ea;
+  text-shadow: 0 0 6px #ff4056, 0 0 14px #ff4056, 0 0 30px rgba(255,64,86,.95), 0 0 58px rgba(255,64,86,.58);
+}
+
+@keyframes upgrade-result-neon-in {
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+@keyframes upgrade-result-neon-pulse {
+  from { opacity: .78; filter: brightness(.92); }
+  to { opacity: 1; filter: brightness(1.18); }
+}
+
+@media (max-width: 600px) {
+  .upgrade-result-neon {
+    top: 48%;
+    font-size: clamp(15px, 5vw, 21px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .upgrade-slot--spinning,
+  .upgrade-slot--spinning::after,
+  .upgrade-slot--success,
+  .upgrade-slot--success::after,
+  .upgrade-slot--failed,
+  .upgrade-slot--failed::after,
+  .upgrade-result-neon {
+    animation: none;
+  }
+  .upgrade-result-neon { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
