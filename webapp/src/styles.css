@@ -542,7 +542,10 @@ button {
   font-weight: 700;
 }
 
-/* ---------- Upgrade tab ---------- */
+
+/* ==========================================================================
+   UPGRADE TAB (NEW MODERN STYLE) 
+   ========================================================================== */
 
 .upgrade-screen {
   display: grid;
@@ -550,35 +553,169 @@ button {
   min-width: 0;
 }
 
-.upgrade-stage {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 156px minmax(0, 1fr);
+/* Эффект неоновой вспышки */
+.neon-flash-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: center;
+  visibility: hidden;
 }
 
-.upgrade-panel {
-  min-width: 0;
-  min-height: 218px;
-  padding: 14px 10px 10px;
-  border: 1px solid rgba(255,255,255,.07);
-  border-radius: 18px;
-  background: linear-gradient(160deg, rgba(28,29,34,.98), rgba(18,19,23,.98));
-  box-shadow: 0 16px 38px rgba(0,0,0,.24);
+.neon-flash-overlay.active {
+  visibility: visible;
+}
+
+.neon-flash-circle {
+  width: 10px;
+  height: 10px;
+  background-color: #fff;
+  border-radius: 50%;
+  opacity: 0;
+  transform: scale(1);
+  box-shadow: 0 0 20px #fff, 
+              0 0 60px #ffc800, 
+              0 0 120px #ffc800, 
+              0 0 200px #ffc800;
+  transition: transform 0.6s cubic-bezier(0.1, 0.8, 0.1, 1), 
+              opacity 0.6s ease-out;
+}
+
+.neon-flash-overlay.active .neon-flash-circle {
+  opacity: 1;
+  transform: scale(150); /* Вспышка заполняет весь экран */
+}
+
+/* Основная раскладка (3 колонки) */
+.upgrade-stage-modern {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 12px;
+  background: #121418;
+  padding: 16px;
+  border-radius: 20px;
+  box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+@media (max-width: 600px) {
+  .upgrade-stage-modern {
+    flex-direction: column;
+    align-items: center;
+  }
+}
+
+/* Блоки для предметов */
+.upgrade-slot-container {
+  flex: 1;
+  background: #1a1d24;
+  border-radius: 16px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   text-align: center;
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  min-height: 180px;
+  width: 100%;
 }
 
-.upgrade-panel__title {
-  font-size: 13px;
-  font-weight: 800;
-  color: var(--text-primary);
-  line-height: 1.2;
+.upgrade-slot-container:hover {
+  border-color: rgba(255, 200, 0, 0.3);
+  background: #1e222a;
 }
 
-.upgrade-panel__hint {
-  margin-top: 4px;
-  font-size: 9px;
+.upgrade-slot-container.pulsing {
+  animation: slot-pulse-gold 1s infinite alternate;
+  pointer-events: none;
+}
+
+@keyframes slot-pulse-gold {
+  from { box-shadow: 0 0 0 rgba(255, 200, 0, 0); }
+  to { box-shadow: 0 0 20px rgba(255, 200, 0, 0.2); border-color: #ffc800; }
+}
+
+.upgrade-slot-title {
+  font-size: 11px;
   color: var(--text-faint);
+  margin-bottom: auto;
+  font-weight: 600;
+}
+
+.upgrade-slot-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin: auto 0;
+}
+
+.upgrade-slot-filled {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin: auto 0;
+}
+
+.upgrade-slot__plus {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  color: var(--gold);
+  background: rgba(232,184,74,.08);
+  border: 1px solid rgba(232,184,74,.18);
+  font-size: 24px;
+  font-weight: 300;
+}
+
+.upgrade-slot__placeholder {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.25;
+}
+
+.upgrade-slot__image {
+  width: 68px;
+  height: 68px;
+  object-fit: contain;
+  filter: drop-shadow(0 8px 14px rgba(0,0,0,.44));
+}
+
+.upgrade-slot__name {
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.18;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.upgrade-slot__price {
+  color: var(--gold);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+/* Центр с колесом шанса */
+.upgrade-center-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
 }
 
 .upgrade-wheel-column {
@@ -592,7 +729,7 @@ button {
   position: relative;
   width: 148px;
   height: 148px;
-  filter: drop-shadow(0 10px 24px rgba(239,59,79,.12));
+  filter: drop-shadow(0 10px 24px rgba(255, 200, 0, 0.12));
 }
 
 .upgrade-gauge svg {
@@ -608,17 +745,25 @@ button {
   stroke-width: 10;
 }
 
-.upgrade-gauge__track { stroke: rgba(255,255,255,.055); }
+.upgrade-gauge__track { 
+  stroke: rgba(255,255,255,.055); 
+}
 
 .upgrade-gauge__value-arc {
   stroke: url(#gaugeGradient);
   stroke-linecap: round;
   transition: stroke-dashoffset .28s cubic-bezier(.22,1,.36,1);
-  filter: drop-shadow(0 0 7px rgba(239,59,79,.22));
+  filter: drop-shadow(0 0 7px rgba(255, 200, 0, 0.3));
 }
 
 .upgrade-gauge.spinning .upgrade-gauge__value-arc {
   animation: gauge-pulse var(--spin-duration) ease-in-out 1;
+}
+
+@keyframes gauge-pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.7; filter: drop-shadow(0 0 15px rgba(255, 200, 0, 0.6)); }
+  100% { opacity: 1; }
 }
 
 .upgrade-gauge__center {
@@ -652,157 +797,49 @@ button {
   margin-top: 4px;
   border-left: 5px solid transparent;
   border-right: 5px solid transparent;
-  border-top: 13px solid var(--ember);
-  filter: drop-shadow(0 0 7px rgba(255,122,69,.85));
+  border-top: 13px solid #ffc800; /* Желтый индикатор */
+  filter: drop-shadow(0 0 7px rgba(255, 200, 0, 0.85));
 }
 
 .upgrade-needle.spinning {
   animation: needle-spin var(--spin-duration) cubic-bezier(.12,.78,.16,1) both;
 }
 
-.upgrade-wheel-caption {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  font-size: 8.5px;
-  color: var(--text-faint);
-  white-space: nowrap;
+@keyframes needle-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(calc(var(--needle-angle) + 720deg)); }
 }
 
-.upgrade-wheel-caption__from {
-  color: var(--gold);
-  font-weight: 900;
-}
-
-.upgrade-slots {
-  margin-top: 14px;
-}
-
-.upgrade-slot {
-  width: 100%;
-  min-width: 0;
-  min-height: 150px;
-  border: 1px dashed rgba(255,255,255,.09);
-  border-radius: 14px;
-  padding: 12px 8px 9px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  text-align: center;
-  color: var(--text-primary);
-  background: radial-gradient(circle at 50% 36%, rgba(232,184,74,.08), transparent 60%), rgba(255,255,255,.015);
-  transition: transform .18s ease, border-color .18s ease, background .18s ease, box-shadow .18s ease;
-}
-
-.upgrade-slot--button { cursor: pointer; }
-.upgrade-slot--button:active { transform: scale(.985); }
-.upgrade-slot:disabled { cursor: default; }
-
-.upgrade-slot.filled {
-  border-style: solid;
-  border-color: rgba(232,184,74,.17);
-  background: radial-gradient(circle at 50% 28%, rgba(232,184,74,.09), transparent 62%), rgba(255,255,255,.018);
-}
-
-.upgrade-panel > .upgrade-slot {
-  margin-top: 13px;
-  min-height: 154px;
-  border-color: rgba(255,255,255,.035);
-  background: radial-gradient(circle at 50% 34%, rgba(232,184,74,.08), transparent 62%);
-}
-.upgrade-panel > .upgrade-slot.filled {
-  border-color: transparent;
-  background: radial-gradient(circle at 50% 30%, rgba(232,184,74,.09), transparent 66%);
-}
-
-.upgrade-slot__media {
-  width: 72px;
-  height: 72px;
-  display: grid;
-  place-items: center;
-  border-radius: 14px;
-}
-
-.upgrade-slot__image {
-  width: 68px;
-  height: 68px;
-  object-fit: contain;
-  filter: drop-shadow(0 8px 14px rgba(0,0,0,.44));
-}
-
-.upgrade-slot__plus {
-  width: 44px;
-  height: 44px;
-  display: grid;
-  place-items: center;
+/* Кнопка "ПРОКАЧАТЬ" */
+.upgrade-action-button {
+  margin-top: 16px;
+  background: #ffc800; /* Желтый цвет как в Upgrader */
+  color: #111;
+  border: none;
   border-radius: 12px;
-  color: var(--gold);
-  background: rgba(232,184,74,.08);
-  border: 1px solid rgba(232,184,74,.18);
-  font-size: 24px;
-  font-weight: 300;
-}
-
-.upgrade-slot__placeholder,
-.upgrade-slot__name,
-.upgrade-slot__price,
-.upgrade-slot__action { max-width: 100%; }
-
-.upgrade-slot__placeholder {
-  font-size: 10px;
-  font-weight: 700;
-  color: var(--text-primary);
-  line-height: 1.25;
-}
-
-.upgrade-slot__name {
-  font-size: 10px;
+  padding: 14px 24px;
+  font-family: 'Unbounded', sans-serif;
   font-weight: 800;
-  line-height: 1.18;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-}
-
-.upgrade-slot__price {
-  color: var(--gold);
-  font-size: 9px;
-  font-weight: 800;
-}
-
-.upgrade-slot__action {
-  color: var(--text-faint);
-  font-size: 8px;
-  line-height: 1.2;
-}
-
-.upgrade-arrow { display: none; }
-
-.upgrade-button {
+  font-size: 13px;
+  cursor: pointer;
   width: 100%;
-  min-height: 48px;
-  border: 0;
-  border-radius: 13px;
-  padding: 9px 10px;
-  background: linear-gradient(135deg, var(--gold), #b98b12);
-  color: #1c1504;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  box-shadow: 0 10px 22px rgba(232,184,74,.14);
-  transition: transform .12s ease, filter .15s ease, opacity .15s ease;
+  box-shadow: 0 4px 15px rgba(255, 200, 0, 0.2);
+  transition: all 0.2s;
+  text-transform: uppercase;
 }
 
-.upgrade-button > span:first-child { font-size: 13px; font-weight: 900; }
-.upgrade-button__chance { font-size: 9px; font-weight: 800; opacity: .7; }
-.upgrade-button:active { transform: translateY(1px) scale(.99); }
-.upgrade-button:disabled { opacity: .38; box-shadow: none; }
+.upgrade-action-button:disabled {
+  background: #333;
+  color: #777;
+  box-shadow: none;
+  cursor: not-allowed;
+}
 
+.upgrade-action-button:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+/* Множители */
 .upgrade-multiplier-bar {
   padding: 10px 12px;
   border: 1px solid rgba(255,255,255,.06);
@@ -873,48 +910,10 @@ button {
 
 .upgrade-skeleton { height: 360px; }
 
-.upgrade-slot.pulsing {
-  animation: slot-pulse .56s ease-in-out infinite alternate;
-  border-color: rgba(239,59,79,.42);
-}
 
-@keyframes slot-pulse {
-  from { box-shadow: 0 0 0 0 rgba(239,59,79,0); }
-  to { box-shadow: 0 0 0 3px rgba(239,59,79,.11), 0 8px 24px rgba(239,59,79,.08); }
-}
-
-@media (max-width: 470px) {
-  .upgrade-stage {
-    grid-template-columns: minmax(0, 1fr) 132px minmax(0, 1fr);
-    gap: 7px;
-  }
-  .upgrade-panel { min-height: 205px; padding-left: 7px; padding-right: 7px; }
-  .upgrade-gauge { width: 126px; height: 126px; }
-  .upgrade-gauge__percent { font-size: 20px; }
-  .upgrade-slot { min-height: 138px; }
-  .upgrade-slot__media { width: 60px; height: 60px; }
-  .upgrade-slot__image { width: 56px; height: 56px; }
-  .upgrade-wheel-caption { font-size: 8px; }
-}
-
-@media (max-width: 360px) {
-  .upgrade-stage {
-    grid-template-columns: minmax(0, 1fr) 112px minmax(0, 1fr);
-    gap: 5px;
-  }
-  .upgrade-panel { min-height: 194px; }
-  .upgrade-gauge { width: 108px; height: 108px; }
-  .upgrade-gauge__percent { font-size: 18px; }
-  .upgrade-slot { min-height: 126px; padding-left: 4px; padding-right: 4px; }
-  .upgrade-slot__media { width: 52px; height: 52px; }
-  .upgrade-slot__image { width: 48px; height: 48px; }
-  .upgrade-slot__name { font-size: 9px; }
-  .upgrade-slot__price { font-size: 8px; }
-  .upgrade-slot__action { font-size: 7px; }
-  .upgrade-button > span:first-child { font-size: 12px; }
-  .upgrade-multiplier-row { gap: 5px; }
-  .upgrade-multiplier { min-height: 36px; font-size: 10px; }
-}
+/* ==========================================================================
+   OTHER EXISTING CLASSES
+   ========================================================================== */
 
 /* ---------- Кнопка продажи в инвентаре ---------- */
 
