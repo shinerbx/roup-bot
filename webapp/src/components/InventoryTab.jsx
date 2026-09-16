@@ -1,17 +1,11 @@
 import { useState } from 'react';
 import ItemCard from './ItemCard.jsx';
 
-export default function InventoryTab({ items, loading, onSell, sellingId }) {
+export default function InventoryTab({ items, loading, onSell, sellingId, canWithdraw, referralProgress, onWithdraw }) {
   const [confirmItem, setConfirmItem] = useState(null);
 
   if (loading) {
-    return (
-      <div className="item-grid">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="skeleton" style={{ aspectRatio: '0.78' }} />
-        ))}
-      </div>
-    );
+    return <div className="item-grid">{Array.from({ length: 4 }).map((_, i) => <div key={i} className="skeleton" style={{ aspectRatio: '0.78' }} />)}</div>;
   }
 
   if (items.length === 0) {
@@ -31,6 +25,21 @@ export default function InventoryTab({ items, loading, onSell, sellingId }) {
 
   return (
     <>
+      <div className="withdraw-progress-card">
+        <p className="section-title">Вывод предметов</p>
+        {canWithdraw ? (
+          <p>✅ Условие выполнено. Кнопка «Вывести предмет» доступна.</p>
+        ) : (
+          <p>
+            🔒 Ещё {referralProgress?.premiumRemaining ?? 5} Premium или {referralProgress?.regularRemaining ?? 10} пользователей без Premium.
+          </p>
+        )}
+        <div className="withdraw-progress-row">
+          <span>⭐ Premium: {referralProgress?.premium ?? 0}/5</span>
+          <span>👤 Обычные: {referralProgress?.regular ?? 0}/10</span>
+        </div>
+      </div>
+
       <div className="item-grid">
         {items.map((item) => (
           <ItemCard
@@ -39,6 +48,8 @@ export default function InventoryTab({ items, loading, onSell, sellingId }) {
             owned
             onSell={setConfirmItem}
             selling={sellingId === item.inventory_id}
+            canWithdraw={canWithdraw}
+            onWithdraw={() => onWithdraw?.()}
           />
         ))}
       </div>
@@ -57,12 +68,8 @@ export default function InventoryTab({ items, loading, onSell, sellingId }) {
             </div>
             <p className="sheet__note">Предмет исчезнет из инвентаря без возможности вернуть.</p>
             <div className="sheet__actions">
-              <button className="sheet__cancel" onClick={() => setConfirmItem(null)}>
-                Отмена
-              </button>
-              <button className="sheet__confirm" onClick={handleConfirm}>
-                Продать
-              </button>
+              <button className="sheet__cancel" onClick={() => setConfirmItem(null)}>Отмена</button>
+              <button className="sheet__confirm" onClick={handleConfirm}>Продать</button>
             </div>
           </div>
         </>

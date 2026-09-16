@@ -9,6 +9,7 @@ import InventoryTab from './components/InventoryTab.jsx';
 import ProfileTab from './components/ProfileTab.jsx';
 import PurchaseSheet from './components/PurchaseSheet.jsx';
 import TopUpScreen from './components/TopUpScreen.jsx';
+import WithdrawScreen from './components/WithdrawScreen.jsx';
 import Toast from './components/Toast.jsx';
 
 const SCREEN_META = {
@@ -22,6 +23,7 @@ export default function App() {
   const [showSplash, setShowSplash] = useState(true);
   const [tab, setTab] = useState('catalog');
   const [showTopUp, setShowTopUp] = useState(false);
+  const [showWithdraw, setShowWithdraw] = useState(false);
   const [catalog, setCatalog] = useState([]);
   const [inventory, setInventory] = useState([]);
   const [profile, setProfile] = useState(null);
@@ -138,11 +140,6 @@ export default function App() {
     }
   };
 
-  const handleTopUpSuccess = async (amount) => {
-    setShowTopUp(false);
-    setToast(`Баланс пополнен на ${amount} ★`);
-    await refreshInventoryAndProfile();
-  };
 
   const meta = SCREEN_META[tab];
 
@@ -169,10 +166,18 @@ export default function App() {
     );
   }
 
+  if (showWithdraw) {
+    return (
+      <div className="app">
+        <WithdrawScreen onClose={() => setShowWithdraw(false)} />
+      </div>
+    );
+  }
+
   if (showTopUp) {
     return (
       <div className="app">
-        <TopUpScreen onClose={() => setShowTopUp(false)} onSuccess={handleTopUpSuccess} onError={setToast} />
+        <TopUpScreen onClose={() => setShowTopUp(false)} onError={setToast} />
         <Toast message={toast} />
       </div>
     );
@@ -211,7 +216,15 @@ export default function App() {
         />
       )}
       {tab === 'inventory' && (
-        <InventoryTab items={inventory} loading={loading} onSell={handleSell} sellingId={sellingId} />
+        <InventoryTab
+          items={inventory}
+          loading={loading}
+          onSell={handleSell}
+          sellingId={sellingId}
+          canWithdraw={Boolean(profile?.can_withdraw)}
+          referralProgress={profile?.referral_progress}
+          onWithdraw={() => setShowWithdraw(true)}
+        />
       )}
       {tab === 'profile' && <ProfileTab profile={profile} loading={loading} />}
 

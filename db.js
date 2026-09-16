@@ -1,6 +1,6 @@
 const { Pool } = require('pg');
 const catalogItems = require('./catalog');
-const { resolveUpgrade } = require('./upgrade-logic');
+const { resolveUpgrade, MAX_MULTIPLIER } = require('./upgrade-logic');
 
 // ВАЖНО: строка подключения берётся только из переменной окружения.
 // На Render добавьте переменную DATABASE_URL со значением вида:
@@ -39,6 +39,7 @@ async function initDb() {
         subscribed_reward_claimed INTEGER DEFAULT 0,
         invited_by BIGINT DEFAULT NULL,
         referrals_count INTEGER DEFAULT 0,
+        is_premium INTEGER DEFAULT 0,
         accepted_tos INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
@@ -58,6 +59,10 @@ async function initDb() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
+
+    // Совместимо с уже существующей Supabase БД: добавляем только минимальное поле,
+    // нужное для условия вывода. Старые данные не удаляются.
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS is_premium INTEGER DEFAULT 0');
 
     // Загружаем предметы одним запросом, чтобы не спамить в пул базы
     for (const item of catalogItems) {
@@ -82,6 +87,7 @@ async function registerUser(tgUser, referrerId = null) {
   let res = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [tgUser.id]);
   let user = res.rows[0];
   let successfulReferrer = null;
+  const isPremium = tgUser.is_premium ? 1 : 0;
 
   if (!user) {
     if (referrerId && Number(referrerId) !== tgUser.id) {
@@ -90,10 +96,10 @@ async function registerUser(tgUser, referrerId = null) {
     }
 
     await pool.query(`
-      INSERT INTO users (telegram_id, username, first_name, invited_by, accepted_tos)
-      VALUES ($1, $2, $3, $4, 1)
+      INSERT INTO users (telegram_id, username, first_name, invited_by, accepted_tos, is_premium)
+      VALUES ($1, $2, $3, $4, 1, $5)
       ON CONFLICT (telegram_id) DO NOTHING
-    `, [tgUser.id, tgUser.username || null, tgUser.first_name || '', successfulReferrer]);
+    `, [tgUser.id, tgUser.username || null, tgUser.first_name || '', successfulReferrer, isPremium]);
 
     if (successfulReferrer) {
       await pool.query('UPDATE users SET referrals_count = referrals_count + 1 WHERE telegram_id = $1', [successfulReferrer]);
@@ -104,20 +110,29 @@ async function registerUser(tgUser, referrerId = null) {
     user = res.rows[0];
   }
 
-  return { user, rewardedReferrerId: successfulReferrer };
+  // Telegram присылает актуальный флаг Premium. Обновляем его при каждом входе.
+  await pool.query('UPDATE users SET is_premium = $1, username = $2, first_name = $3 WHERE telegram_id = $4', [isPremium, tgUser.username || null, tgUser.first_name || '', tgUser.id]);
+  return { user: (await getUser(tgUser.id)), rewardedReferrerId: successfulReferrer };
 }
 
 async function ensureUserExists(tgUser) {
   let res = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [tgUser.id]);
-  if (res.rows[0]) return res.rows[0];
+  if (res.rows[0]) {
+    await pool.query(
+      'UPDATE users SET is_premium = $1, username = $2, first_name = $3 WHERE telegram_id = $4',
+      [tgUser.is_premium ? 1 : 0, tgUser.username || null, tgUser.first_name || '', tgUser.id]
+    );
+    res = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [tgUser.id]);
+    return res.rows[0];
+  }
 
   await pool.query(`
-    INSERT INTO users (telegram_id, username, first_name, accepted_tos)
-    VALUES ($1, $2, $3, 1)
+    INSERT INTO users (telegram_id, username, first_name, accepted_tos, is_premium)
+    VALUES ($1, $2, $3, 1, $4)
     ON CONFLICT (telegram_id) DO UPDATE SET
       username = EXCLUDED.username,
       first_name = EXCLUDED.first_name
-  `, [tgUser.id, tgUser.username || null, tgUser.first_name || null]);
+  `, [tgUser.id, tgUser.username || null, tgUser.first_name || null, tgUser.is_premium ? 1 : 0]);
 
   res = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [tgUser.id]);
   return res.rows[0];
@@ -237,16 +252,31 @@ async function buyItemWithBalance(userId, itemId) {
   }
 }
 
-// Начисление баланса после успешной оплаты Telegram Stars (пополнение).
-async function addBalance(userId, amount) {
-  const res = await pool.query(
-    'UPDATE users SET balance = balance + $1 WHERE telegram_id = $2 RETURNING balance',
-    [amount, userId]
-  );
-  return res.rows[0]?.balance ?? null;
+async function getReferralProgress(userId) {
+  const res = await pool.query(`
+    SELECT
+      COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE is_premium = 1)::int AS premium,
+      COUNT(*) FILTER (WHERE COALESCE(is_premium, 0) = 0)::int AS regular
+    FROM users
+    WHERE invited_by = $1
+  `, [userId]);
+
+  const row = res.rows[0] || { total: 0, premium: 0, regular: 0 };
+  const premium = Number(row.premium) || 0;
+  const regular = Number(row.regular) || 0;
+  return {
+    total: Number(row.total) || 0,
+    premium,
+    regular,
+    premiumRemaining: Math.max(0, 5 - premium),
+    regularRemaining: Math.max(0, 10 - regular),
+    canWithdraw: premium >= 5 || regular >= 10
+  };
 }
 
-async function upgradeItem(userId, inventoryItemId, targetItemId) {
+
+async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -274,10 +304,17 @@ async function upgradeItem(userId, inventoryItemId, targetItemId) {
       return { error: 'target_not_found' };
     }
 
-    // Решение принимает отдельный модуль upgrade-logic.js
+    const safeMultiplier = Number(multiplier);
+    if (!Number.isFinite(safeMultiplier) || safeMultiplier < 1 || safeMultiplier > MAX_MULTIPLIER) {
+      await client.query('ROLLBACK');
+      return { error: 'invalid_multiplier' };
+    }
+
+    // Вся игровая механика находится в upgrade-logic.js.
     const decision = resolveUpgrade(
       { id: sourceItem.item_id, name: sourceItem.name, price_stars: sourceItem.price_stars },
-      targetItem
+      targetItem,
+      safeMultiplier
     );
 
     // Предмет-донор в любом случае уходит из инвентаря
@@ -286,7 +323,7 @@ async function upgradeItem(userId, inventoryItemId, targetItemId) {
 
     if (!decision.success) {
       await client.query('COMMIT');
-      return { success: false, item: null };
+      return { success: false, item: null, chance: decision.chance, baseChance: decision.baseChance, roll: decision.roll, multiplier: decision.multiplier };
     }
 
     const resultRes = await client.query('SELECT * FROM items WHERE id = $1', [decision.resultItemId]);
@@ -299,7 +336,7 @@ async function upgradeItem(userId, inventoryItemId, targetItemId) {
     await client.query('INSERT INTO user_inventory (user_id, item_id) VALUES ($1, $2)', [userId, resultItem.id]);
 
     await client.query('COMMIT');
-    return { success: true, item: resultItem };
+    return { success: true, item: resultItem, chance: decision.chance, baseChance: decision.baseChance, roll: decision.roll, multiplier: decision.multiplier };
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -357,13 +394,13 @@ module.exports = {
   calculateTier,
   claimSubscriptionItem,
   getUserInventoryCount,
+  getReferralProgress,
   ensureUserExists,
   getCatalogItems,
   getItemById,
   getUserInventory,
   addInventoryItem,
   buyItemWithBalance,
-  addBalance,
   upgradeItem,
   sellInventoryItem
 };

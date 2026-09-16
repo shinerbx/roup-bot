@@ -83,12 +83,12 @@ export const api = {
   getProfile: () => request('/profile'),
   getInventory: () => request('/inventory'),
   buy: (itemId) => request('/buy', { method: 'POST', body: JSON.stringify({ itemId }) }, { retries: 2 }),
-  createTopupInvoice: (amount) =>
-    request('/topup/create-invoice', { method: 'POST', body: JSON.stringify({ amount }) }, { retries: 2 }),
-  upgrade: (inventoryItemId, targetItemId) =>
+  createSupportInvoice: (amount) =>
+    request('/support/create-invoice', { method: 'POST', body: JSON.stringify({ amount }) }, { retries: 2 }),
+  upgrade: (inventoryItemId, targetItemId, multiplier = 1) =>
     request(
       '/upgrade',
-      { method: 'POST', body: JSON.stringify({ inventoryItemId, targetItemId }) },
+      { method: 'POST', body: JSON.stringify({ inventoryItemId, targetItemId, multiplier }) },
       { retries: 2 }
     ),
   sell: (inventoryItemId) =>

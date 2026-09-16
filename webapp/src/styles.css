@@ -1181,3 +1181,74 @@ button {
 .payment-method.disabled:active {
   transform: none;
 }
+
+/* ---------- New catalog filter ---------- */
+.catalog-filter {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 132px;
+  gap: 8px;
+}
+.catalog-search,
+.catalog-sort {
+  min-width: 0;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: var(--bg-panel-2);
+  color: var(--text-primary);
+  padding: 11px 12px;
+  font: inherit;
+  font-size: 12px;
+}
+.catalog-search::placeholder { color: var(--text-faint); }
+.catalog-search:focus,
+.catalog-sort:focus { outline: none; border-color: var(--crimson-bright); }
+.catalog-sort option { background: var(--bg-panel-2); color: var(--text-primary); }
+
+/* ---------- Upgrade mobile picker / multiplier ---------- */
+.upgrade-slot--button { color: inherit; font: inherit; cursor: pointer; }
+.upgrade-slot--button:disabled { opacity: .55; }
+.upgrade-multiplier-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.upgrade-multiplier {
+  min-height: 42px; border: 1px solid var(--hairline); border-radius: 12px;
+  background: var(--bg-panel-2); color: var(--text-primary); font-weight: 800;
+}
+.upgrade-multiplier.selected { border-color: var(--crimson-bright); background: rgba(239,59,79,.12); box-shadow: 0 6px 18px var(--shadow-glow); }
+.upgrade-multiplier:last-child { grid-column: 1 / -1; }
+.upgrade-custom-multiplier {
+  display:flex; align-items:center; gap:8px; margin-top:8px; padding:11px 13px;
+  border:1px solid var(--hairline); border-radius:12px; background:var(--bg-panel-2); color:var(--gold); font-weight:800;
+}
+.upgrade-custom-multiplier input { width:100%; border:0; outline:0; background:transparent; color:var(--text-primary); font:inherit; }
+.upgrade-mechanics-note { margin: 0; font-size: 11px; color: var(--text-faint); text-align:center; line-height:1.45; }
+.upgrade-picker-sheet { max-height: 82vh; overflow: auto; }
+.upgrade-picker-sheet__header { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; }
+.upgrade-picker-sheet__header h3 { margin: 2px 0 0; font-size: 16px; }
+.upgrade-modal-grid { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:9px; max-height:55vh; overflow:auto; padding-bottom:8px; }
+.upgrade-modal-grid .upgrade-picker-item { width:auto; min-width:0; }
+.upgrade-picker-item small { color:var(--gold); font-size:10px; }
+.upgrade-picker-sheet__empty { padding:20px 0; }
+.upgrade-result-card__hint { margin: 12px 0 0; color: var(--text-muted); font-size: 11px; line-height: 1.4; }
+.upgrade-result-card__drop--miss { display:flex; align-items:center; justify-content:center; border-radius:50%; background:rgba(239,59,79,.12); color:var(--crimson-bright); font-size:70px; font-weight:300; }
+
+/* ---------- Inventory withdrawal ---------- */
+.withdraw-progress-card,
+.balance-disabled-card,
+.support-project,
+.withdraw-placeholder {
+  background: linear-gradient(150deg, var(--bg-panel-3), var(--bg-panel));
+  border:1px solid var(--hairline); border-radius:16px; padding:16px;
+}
+.withdraw-progress-card p:not(.section-title), .balance-disabled-card p:not(.section-title), .support-project p { margin:6px 0 0; color:var(--text-muted); font-size:12px; line-height:1.45; }
+.withdraw-progress-row { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; font-size:11px; color:var(--text-primary); }
+.item-card__actions { display:flex; gap:6px; align-items:center; }
+.item-card__withdraw { border:1px solid var(--hairline); border-radius:10px; padding:7px 9px; font-size:11px; font-weight:700; color:var(--text-primary); background:rgba(239,59,79,.1); white-space:nowrap; }
+.item-card__withdraw.disabled { opacity:.35; cursor:not-allowed; }
+.withdraw-placeholder { text-align:center; margin-top:20vh; }
+.withdraw-placeholder__icon { font-size:48px; margin-bottom:12px; }
+
+@media (max-width: 380px) {
+  .catalog-filter { grid-template-columns: 1fr; }
+  .upgrade-modal-grid { grid-template-columns:repeat(2, minmax(0,1fr)); }
+  .item-card__actions { flex-direction:column; align-items:stretch; }
+  .item-card__sell, .item-card__withdraw { width:100%; }
+}

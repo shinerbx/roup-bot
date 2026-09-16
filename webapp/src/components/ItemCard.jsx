@@ -5,7 +5,7 @@ const CATEGORY_LABELS = {
   gear: 'Снаряжение'
 };
 
-export default function ItemCard({ item, owned, onBuy, onSell, selling }) {
+export default function ItemCard({ item, owned, onBuy, onSell, selling, canWithdraw, onWithdraw }) {
   const categoryLabel = CATEGORY_LABELS[item.category] || item.category;
 
   return (
@@ -19,6 +19,7 @@ export default function ItemCard({ item, owned, onBuy, onSell, selling }) {
         <span className="price-tag">★ {item.price_stars}</span>
 
         {onSell ? (
+          <div className="item-card__actions">
           <button
             className="item-card__sell"
             disabled={selling}
@@ -26,6 +27,14 @@ export default function ItemCard({ item, owned, onBuy, onSell, selling }) {
           >
             {selling ? '…' : 'Продать'}
           </button>
+          <button
+            className={`item-card__withdraw ${canWithdraw ? '' : 'disabled'}`}
+            disabled={!canWithdraw}
+            onClick={() => canWithdraw && onWithdraw?.()}
+          >
+            Вывести предмет
+          </button>
+          </div>
         ) : owned ? (
           <span className="item-card__owned">в инвентаре</span>
         ) : (

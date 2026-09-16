@@ -9,7 +9,8 @@ const {
   ensureUserExists,
   upgradeItem,
   sellInventoryItem,
-  buyItemWithBalance
+  buyItemWithBalance,
+  getReferralProgress
 } = require('./db');
 
 function verifyInitData(initData, botToken) {
@@ -82,6 +83,7 @@ function createWebappRouter(bot, botToken) {
     try {
       const user = await getUser(req.tgUser.id) || req.dbUser;
       const itemsCount = await getUserInventoryCount(req.tgUser.id);
+      const referralProgress = await getReferralProgress(req.tgUser.id);
       res.json({
         telegram_id: String(user.telegram_id),
         first_name: user.first_name || '',
@@ -89,6 +91,8 @@ function createWebappRouter(bot, botToken) {
         tier: calculateTier(user),
         upgrades_count: user.upgrades_count || 0,
         referrals_count: user.referrals_count || 0,
+        referral_progress: referralProgress,
+        can_withdraw: referralProgress.canWithdraw,
         balance: user.balance || 0,
         items_count: itemsCount || 0,
         created_at: user.created_at
@@ -128,35 +132,29 @@ function createWebappRouter(bot, botToken) {
     }
   });
 
-  // Пополнение баланса настоящими Telegram Stars: 1 ⭐ Stars = 1 ⭐ баланса.
-  // Создаёт ссылку на счёт; сами звёзды начисляются в successful_payment (index.js).
-  router.post('/topup/create-invoice', async (req, res) => {
+  // Stars не используются для пополнения игрового баланса.
+  // Отдельный invoice предназначен только для поддержки проекта.
+  router.post('/support/create-invoice', async (req, res) => {
     try {
       const amount = Math.floor(Number(req.body.amount));
       if (!Number.isFinite(amount) || amount < 1 || amount > 100000) {
         return res.status(400).json({ error: 'invalid_amount' });
       }
 
-      const payload = `topup_${req.tgUser.id}_${amount}_${Date.now()}`;
-
-      console.log('🧾 Создаю инвойс:', { userId: req.tgUser.id, amount, payload });
-
+      const payload = `support_${req.tgUser.id}_${Date.now()}`;
       const invoiceLink = await bot.telegram.createInvoiceLink({
-        title: `Пополнение на ${amount} ⭐`,
-        description: `Пополнение баланса RoUP на ${amount} звёзд`,
+        title: 'Поддержка проекта RoUP',
+        description: 'Добровольная поддержка проекта. Игровой баланс за эту операцию не начисляется.',
         payload,
         provider_token: '',
         currency: 'XTR',
-        prices: [{ label: `${amount} ⭐`, amount }]
+        prices: [{ label: `${amount} Telegram Stars`, amount }]
       });
 
-      console.log('🧾 Инвойс создан:', invoiceLink);
       res.json({ invoiceLink });
     } catch (err) {
-      // err.response.description — здесь лежит настоящая причина от Bot API
-      // (например "Bad Request: currency_total_amount_invalid").
       const detail = err.response?.description || err.description || err.message;
-      console.error('❌ Ошибка /api/topup/create-invoice:', detail, err);
+      console.error('❌ Ошибка /api/support/create-invoice:', detail, err);
       res.status(500).json({ error: 'server_error', detail });
     }
   });
@@ -165,17 +163,25 @@ function createWebappRouter(bot, botToken) {
     try {
       const inventoryItemId = Number(req.body.inventoryItemId);
       const targetItemId = Number(req.body.targetItemId);
+      const multiplier = Number(req.body.multiplier ?? 1);
 
-      if (!inventoryItemId || !targetItemId) {
+      if (!inventoryItemId || !targetItemId || !Number.isFinite(multiplier) || multiplier < 1) {
         return res.status(400).json({ error: 'missing_fields' });
       }
 
-      const result = await upgradeItem(req.tgUser.id, inventoryItemId, targetItemId);
+      const result = await upgradeItem(req.tgUser.id, inventoryItemId, targetItemId, multiplier);
       if (result.error) {
         return res.status(400).json({ error: result.error });
       }
 
-      res.json({ success: result.success, item: result.item });
+      res.json({
+        success: result.success,
+        item: result.item,
+        chance: result.chance,
+        baseChance: result.baseChance,
+        roll: result.roll,
+        multiplier: result.multiplier
+      });
     } catch (err) {
       console.error('Ошибка /api/upgrade:', err.message);
       res.status(500).json({ error: 'server_error' });
