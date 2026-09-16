@@ -139,19 +139,25 @@ function createWebappRouter(bot, botToken) {
 
       const payload = `topup_${req.tgUser.id}_${amount}_${Date.now()}`;
 
-      const invoiceLink = await bot.telegram.createInvoiceLink(
-        `Пополнение на ${amount} ⭐`,
-        `Пополнение баланса RoUP на ${amount} звёзд`,
-        payload,
-        '',
-        'XTR',
-        [{ label: `${amount} ⭐`, amount }]
-      );
+      console.log('🧾 Создаю инвойс:', { userId: req.tgUser.id, amount, payload });
 
+      const invoiceLink = await bot.telegram.createInvoiceLink({
+        title: `Пополнение на ${amount} ⭐`,
+        description: `Пополнение баланса RoUP на ${amount} звёзд`,
+        payload,
+        provider_token: '',
+        currency: 'XTR',
+        prices: [{ label: `${amount} ⭐`, amount }]
+      });
+
+      console.log('🧾 Инвойс создан:', invoiceLink);
       res.json({ invoiceLink });
     } catch (err) {
-      console.error('Ошибка /api/topup/create-invoice:', err.message);
-      res.status(500).json({ error: 'server_error' });
+      // err.response.description — здесь лежит настоящая причина от Bot API
+      // (например "Bad Request: currency_total_amount_invalid").
+      const detail = err.response?.description || err.description || err.message;
+      console.error('❌ Ошибка /api/topup/create-invoice:', detail, err);
+      res.status(500).json({ error: 'server_error', detail });
     }
   });
 
