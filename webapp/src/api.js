@@ -49,9 +49,11 @@ async function request(path, options = {}, { retries = 5, baseDelayMs = 1200, ti
         timeoutMs
       );
 
-      if (res.status === 401 || res.status === 403) {
+      if (res.status >= 400 && res.status < 500) {
         const body = await res.json().catch(() => ({}));
-        const err = new Error(body.error || 'unauthorized');
+        const err = new Error(body.error || `Ошибка запроса: ${res.status}`);
+        err.status = res.status;
+        err.code = body.error;
         err.fatal = true;
         throw err;
       }
@@ -80,8 +82,9 @@ export const api = {
   getCatalog: () => request('/catalog'),
   getProfile: () => request('/profile'),
   getInventory: () => request('/inventory'),
-  createInvoice: (itemId) =>
-    request('/create-invoice', { method: 'POST', body: JSON.stringify({ itemId }) }, { retries: 2 }),
+  buy: (itemId) => request('/buy', { method: 'POST', body: JSON.stringify({ itemId }) }, { retries: 2 }),
+  createTopupInvoice: (amount) =>
+    request('/topup/create-invoice', { method: 'POST', body: JSON.stringify({ amount }) }, { retries: 2 }),
   upgrade: (inventoryItemId, targetItemId) =>
     request(
       '/upgrade',

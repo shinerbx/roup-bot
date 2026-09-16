@@ -1,12 +1,14 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { api } from './api.js';
-import { initTelegram, openInvoice, haptic, hapticNotify } from './telegram.js';
+import { initTelegram, haptic, hapticNotify } from './telegram.js';
+import SplashScreen from './components/SplashScreen.jsx';
 import TabBar from './components/TabBar.jsx';
 import CatalogTab from './components/CatalogTab.jsx';
 import UpgradeTab from './components/UpgradeTab.jsx';
 import InventoryTab from './components/InventoryTab.jsx';
 import ProfileTab from './components/ProfileTab.jsx';
 import PurchaseSheet from './components/PurchaseSheet.jsx';
+import TopUpScreen from './components/TopUpScreen.jsx';
 import Toast from './components/Toast.jsx';
 
 const SCREEN_META = {
@@ -17,7 +19,9 @@ const SCREEN_META = {
 };
 
 export default function App() {
+  const [showSplash, setShowSplash] = useState(true);
   const [tab, setTab] = useState('catalog');
+  const [showTopUp, setShowTopUp] = useState(false);
   const [catalog, setCatalog] = useState([]);
   const [inventory, setInventory] = useState([]);
   const [profile, setProfile] = useState(null);
@@ -65,6 +69,8 @@ export default function App() {
     if (profileRes.status === 'fulfilled') setProfile(profileRes.value);
   }, []);
 
+  // Данные начинают грузиться сразу, параллельно со сплэш-анимацией —
+  // к моменту, когда заставка закрывается, обычно уже всё готово.
   useEffect(() => {
     loadAll();
   }, [loadAll]);
@@ -95,25 +101,22 @@ export default function App() {
     if (!sheetItem) return;
     setBuying(true);
     try {
-      const { invoiceLink } = await api.createInvoice(sheetItem.id);
-      openInvoice(invoiceLink, async (status) => {
-        setBuying(false);
-        setSheetItem(null);
-
-        if (status === 'paid') {
-          hapticNotify('success');
-          setToast(`Куплено: ${sheetItem.name}`);
-          await refreshInventoryAndProfile();
-        } else if (status !== 'cancelled') {
-          hapticNotify('error');
-          setToast('Оплата не прошла. Попробуй ещё раз.');
-        }
-      });
+      const res = await api.buy(sheetItem.id);
+      hapticNotify('success');
+      setToast(`Куплено: ${sheetItem.name}`);
+      setSheetItem(null);
+      setProfile((prev) => (prev ? { ...prev, balance: res.balance } : prev));
+      await refreshInventoryAndProfile();
     } catch (err) {
       console.error(err);
-      setBuying(false);
       hapticNotify('error');
-      setToast('Не получилось создать счёт на оплату.');
+      if (err.code === 'insufficient_balance') {
+        setToast('Недостаточно ⭐ на балансе.');
+      } else {
+        setToast('Не получилось купить предмет.');
+      }
+    } finally {
+      setBuying(false);
     }
   };
 
@@ -135,7 +138,17 @@ export default function App() {
     }
   };
 
+  const handleTopUpSuccess = async (amount) => {
+    setShowTopUp(false);
+    setToast(`Баланс пополнен на ${amount} ★`);
+    await refreshInventoryAndProfile();
+  };
+
   const meta = SCREEN_META[tab];
+
+  if (showSplash) {
+    return <SplashScreen onDone={() => setShowSplash(false)} />;
+  }
 
   if (loadFailed) {
     return (
@@ -156,6 +169,15 @@ export default function App() {
     );
   }
 
+  if (showTopUp) {
+    return (
+      <div className="app">
+        <TopUpScreen onClose={() => setShowTopUp(false)} onSuccess={handleTopUpSuccess} onError={setToast} />
+        <Toast message={toast} />
+      </div>
+    );
+  }
+
   return (
     <div className="app">
       <header className="top-nav">
@@ -165,7 +187,9 @@ export default function App() {
         <div className="balance-pill">
           <span className="balance-pill__icon">★</span>
           <span className="balance-pill__value">{profile?.balance ?? 0}</span>
-          {profile?.tier && <span className="balance-pill__tier">{profile.tier}</span>}
+          <button className="balance-pill__add" onClick={() => setShowTopUp(true)} aria-label="Пополнить баланс">
+            +
+          </button>
         </div>
       </header>
 
@@ -196,8 +220,13 @@ export default function App() {
       <PurchaseSheet
         item={sheetItem}
         pending={buying}
+        balance={profile?.balance ?? 0}
         onCancel={() => !buying && setSheetItem(null)}
         onConfirm={handleConfirmPurchase}
+        onTopUp={() => {
+          setSheetItem(null);
+          setShowTopUp(true);
+        }}
       />
 
       <Toast message={toast} />
