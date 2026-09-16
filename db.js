@@ -193,6 +193,59 @@ async function addInventoryItem(userId, itemId) {
   await pool.query('INSERT INTO user_inventory (user_id, item_id) VALUES ($1, $2)', [userId, itemId]);
 }
 
+// Покупка предмета из каталога за внутренний баланс (не за живые Stars).
+// Баланс списывается и предмет начисляется в одной транзакции;
+// строка пользователя блокируется, чтобы нельзя было купить дважды
+// на грани баланса параллельными запросами.
+async function buyItemWithBalance(userId, itemId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const userRes = await client.query('SELECT balance FROM users WHERE telegram_id = $1 FOR UPDATE', [userId]);
+    const user = userRes.rows[0];
+    if (!user) {
+      await client.query('ROLLBACK');
+      return { error: 'user_not_found' };
+    }
+
+    const itemRes = await client.query('SELECT * FROM items WHERE id = $1', [itemId]);
+    const item = itemRes.rows[0];
+    if (!item) {
+      await client.query('ROLLBACK');
+      return { error: 'item_not_found' };
+    }
+
+    if (user.balance < item.price_stars) {
+      await client.query('ROLLBACK');
+      return { error: 'insufficient_balance' };
+    }
+
+    const balRes = await client.query(
+      'UPDATE users SET balance = balance - $1 WHERE telegram_id = $2 RETURNING balance',
+      [item.price_stars, userId]
+    );
+    await client.query('INSERT INTO user_inventory (user_id, item_id) VALUES ($1, $2)', [userId, item.id]);
+
+    await client.query('COMMIT');
+    return { item, balance: balRes.rows[0].balance };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// Начисление баланса после успешной оплаты Telegram Stars (пополнение).
+async function addBalance(userId, amount) {
+  const res = await pool.query(
+    'UPDATE users SET balance = balance + $1 WHERE telegram_id = $2 RETURNING balance',
+    [amount, userId]
+  );
+  return res.rows[0]?.balance ?? null;
+}
+
 async function upgradeItem(userId, inventoryItemId, targetItemId) {
   const client = await pool.connect();
   try {
@@ -309,6 +362,8 @@ module.exports = {
   getItemById,
   getUserInventory,
   addInventoryItem,
+  buyItemWithBalance,
+  addBalance,
   upgradeItem,
   sellInventoryItem
 };

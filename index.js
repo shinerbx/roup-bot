@@ -7,7 +7,7 @@ const {
   calculateTier,
   claimSubscriptionItem,
   getUserInventoryCount,
-  addInventoryItem
+  addBalance
 } = require('./db');
 const { createWebappRouter } = require('./webapp-api');
 
@@ -359,22 +359,22 @@ bot.on('message', async (ctx) => {
   if (!payment) return;
 
   try {
-    const parts = payment.invoice_payload.split('_');
-    if (parts[0] !== 'buy') return;
+    const parts = payment.invoice_payload.split('_'); // topup_<userId>_<amount>_<ts>
+    if (parts[0] !== 'topup') return;
 
     const payloadUserId = Number(parts[1]);
-    const itemId = Number(parts[2]);
+    const amount = Number(parts[2]);
 
     if (payloadUserId !== ctx.from.id) {
       console.error('Несовпадение user_id в payload оплаты:', payment.invoice_payload, ctx.from.id);
       return;
     }
 
-    await addInventoryItem(ctx.from.id, itemId);
+    const newBalance = await addBalance(ctx.from.id, amount);
 
-    ctx.reply('✅ Оплата прошла успешно! Предмет добавлен в твой инвентарь.', {
+    ctx.reply(`✅ Баланс пополнен на ${amount} ⭐! Текущий баланс: ${newBalance} ⭐.`, {
       parse_mode: 'HTML',
-      ...Markup.inlineKeyboard([[Markup.button.webApp('🎒 Открыть инвентарь', WEB_APP_URL)]])
+      ...Markup.inlineKeyboard([[Markup.button.webApp('🛒 Открыть каталог', WEB_APP_URL)]])
     }).catch(() => {});
   } catch (err) {
     console.error('Ошибка обработки successful_payment:', err.message);
@@ -447,3 +447,14 @@ app.listen(PORT, async () => {
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
+
+// Разгоняем собственный «сон» на бесплатном тарифе Render: пока процесс жив,
+// каждые 4 минуты дёргаем свой /ping. Это НЕ спасает от первого холодного
+// старта (если сервис уже уснул — некому себя пинговать), но продлевает
+// активную фазу между визитами. Для полного решения нужен внешний пингер
+// (см. CHANGELOG-RU.md) или платный план Render без сна.
+if (WEB_APP_URL && !WEB_APP_URL.includes('localhost')) {
+  setInterval(() => {
+    fetch(`${WEB_APP_URL}/ping`).catch(() => {});
+  }, 4 * 60 * 1000);
+}

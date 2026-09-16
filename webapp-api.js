@@ -6,10 +6,10 @@ const {
   getUser,
   calculateTier,
   getUserInventoryCount,
-  getItemById,
   ensureUserExists,
   upgradeItem,
-  sellInventoryItem
+  sellInventoryItem,
+  buyItemWithBalance
 } = require('./db');
 
 function verifyInitData(initData, botToken) {
@@ -109,26 +109,48 @@ function createWebappRouter(bot, botToken) {
     }
   });
 
-  router.post('/create-invoice', async (req, res) => {
+  // Покупка предмета из каталога за внутренний баланс (⭐, а не за живые Stars)
+  router.post('/buy', async (req, res) => {
     try {
       const itemId = Number(req.body.itemId);
-      const item = await getItemById(itemId);
-      if (!item) return res.status(404).json({ error: 'item_not_found' });
+      if (!itemId) return res.status(400).json({ error: 'missing_fields' });
 
-      const payload = `buy_${req.tgUser.id}_${item.id}_${Date.now()}`;
+      const result = await buyItemWithBalance(req.tgUser.id, itemId);
+      if (result.error) {
+        const status = result.error === 'insufficient_balance' ? 402 : 400;
+        return res.status(status).json({ error: result.error });
+      }
+
+      res.json(result);
+    } catch (err) {
+      console.error('Ошибка /api/buy:', err.message);
+      res.status(500).json({ error: 'server_error' });
+    }
+  });
+
+  // Пополнение баланса настоящими Telegram Stars: 1 ⭐ Stars = 1 ⭐ баланса.
+  // Создаёт ссылку на счёт; сами звёзды начисляются в successful_payment (index.js).
+  router.post('/topup/create-invoice', async (req, res) => {
+    try {
+      const amount = Math.floor(Number(req.body.amount));
+      if (!Number.isFinite(amount) || amount < 1 || amount > 100000) {
+        return res.status(400).json({ error: 'invalid_amount' });
+      }
+
+      const payload = `topup_${req.tgUser.id}_${amount}_${Date.now()}`;
 
       const invoiceLink = await bot.telegram.createInvoiceLink(
-        item.name,
-        `Покупка предмета «${item.name}» в RoUP`,
+        `Пополнение на ${amount} ⭐`,
+        `Пополнение баланса RoUP на ${amount} звёзд`,
         payload,
         '',
         'XTR',
-        [{ label: item.name, amount: item.price_stars }]
+        [{ label: `${amount} ⭐`, amount }]
       );
 
       res.json({ invoiceLink });
     } catch (err) {
-      console.error('Ошибка /api/create-invoice:', err.message);
+      console.error('Ошибка /api/topup/create-invoice:', err.message);
       res.status(500).json({ error: 'server_error' });
     }
   });
