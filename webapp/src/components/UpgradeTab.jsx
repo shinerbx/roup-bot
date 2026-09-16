@@ -289,7 +289,16 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
         />
 
         <div className="upgrade-center-block">
-          <div className="upgrade-wheel-column">
+          {/* Добавили position: 'relative' */}
+          <div className="upgrade-wheel-column" style={{ position: 'relative' }}>
+            
+            {/* Неоновая надпись УСПЕХ! поверх колеса */}
+            {result?.success && (
+              <div className="upgrade-success-center">
+                <span className="success-text-neon">УСПЕХ!</span>
+              </div>
+            )}
+
             <div className={`upgrade-gauge ${spinning ? 'spinning' : ''}`} style={{ '--gauge-offset': offset, '--spin-duration': `${spinDuration}ms` }}>
               <svg viewBox="0 0 168 168" aria-hidden="true">
                 <defs>
@@ -315,7 +324,8 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
                 <span className="upgrade-needle__tip" />
               </div>
               <div className="upgrade-gauge__center">
-                <span className="upgrade-gauge__percent">{percent ? percent.toFixed(0) : '—'}%</span>
+                {/* Скрываем проценты, если есть результат, чтобы текст не накладывался */}
+                {!result && <span className="upgrade-gauge__percent">{percent ? percent.toFixed(0) : '—'}%</span>}
               </div>
             </div>
 
