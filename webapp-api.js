@@ -116,13 +116,21 @@ function createWebappRouter(bot, botToken) {
   // Покупка предмета из каталога за внутренний баланс (⭐, а не за живые Stars)
   router.post('/buy', async (req, res) => {
     try {
-      const itemId = Number(req.body.itemId);
-      const quantity = Number(req.body.quantity ?? 1);
-      if (!Number.isSafeInteger(itemId) || itemId <= 0 || !Number.isSafeInteger(quantity) || quantity < 1 || quantity > 9999) {
+      const itemId = Number(req.body?.itemId);
+      const quantity = Number(req.body?.quantity ?? 1);
+      const operationId = String(req.body?.operationId || '');
+
+      if (!Number.isInteger(itemId) || itemId <= 0) {
+        return res.status(400).json({ error: 'invalid_item' });
+      }
+      if (!Number.isInteger(quantity) || quantity < 1 || quantity > 9999) {
         return res.status(400).json({ error: 'invalid_quantity' });
       }
+      if (!operationId || operationId.length > 100) {
+        return res.status(400).json({ error: 'missing_operation_id' });
+      }
 
-      const result = await buyItemsWithBalance(req.tgUser.id, itemId, quantity);
+      const result = await buyItemsWithBalance(req.tgUser.id, itemId, quantity, operationId);
       if (result.error) {
         const status = result.error === 'insufficient_balance' ? 402 : 400;
         return res.status(status).json({ error: result.error });
@@ -164,17 +172,26 @@ function createWebappRouter(bot, botToken) {
 
   router.post('/upgrade', async (req, res) => {
     try {
-      const inventoryItemId = Number(req.body.inventoryItemId);
-      const targetItemId = Number(req.body.targetItemId);
-      const multiplier = Number(req.body.multiplier ?? 1);
+      const inventoryItemId = Number(req.body?.inventoryItemId);
+      const targetItemId = Number(req.body?.targetItemId);
+      const multiplier = Number(req.body?.multiplier ?? 1);
+      const operationId = String(req.body?.operationId || '');
 
-      if (!inventoryItemId || !targetItemId || !Number.isFinite(multiplier) || multiplier < 1) {
+      if (!Number.isInteger(inventoryItemId) || inventoryItemId <= 0 ||
+          !Number.isInteger(targetItemId) || targetItemId <= 0) {
         return res.status(400).json({ error: 'missing_fields' });
       }
+      if (!Number.isFinite(multiplier) || !Number.isInteger(multiplier * 10) || multiplier < 1 || multiplier > 100) {
+        return res.status(400).json({ error: 'invalid_multiplier' });
+      }
+      if (!operationId || operationId.length > 100) {
+        return res.status(400).json({ error: 'missing_operation_id' });
+      }
 
-      const result = await upgradeItem(req.tgUser.id, inventoryItemId, targetItemId, multiplier);
+      const result = await upgradeItem(req.tgUser.id, inventoryItemId, targetItemId, multiplier, operationId);
       if (result.error) {
-        return res.status(400).json({ error: result.error });
+        const status = result.error === 'same_price_target' ? 409 : 400;
+        return res.status(status).json({ error: result.error });
       }
 
       res.json({

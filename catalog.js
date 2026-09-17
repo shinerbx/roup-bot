@@ -75,11 +75,5 @@ module.exports = [
     category: 'faces',
     price_stars: 2000,
     image_url: '/items/blue beast.png'
-  },
-  {
-    name: 'Super Happy',
-    category: 'faces',
-    price_stars: 1000,
-    image_url: '/items/super happy.png'
   }
 ];

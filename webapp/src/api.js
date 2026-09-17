@@ -2,6 +2,11 @@ import { getInitData } from './telegram';
 
 const BASE = '/api';
 
+const createOperationId = () => {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+};
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Скрипт telegram-web-app.js иногда инициализируется чуть позже,
@@ -82,13 +87,16 @@ export const api = {
   getCatalog: () => request('/catalog'),
   getProfile: () => request('/profile'),
   getInventory: () => request('/inventory'),
-  buy: (itemId, quantity = 1) => request('/buy', { method: 'POST', body: JSON.stringify({ itemId, quantity }) }, { retries: 2 }),
+  buy: (itemId, quantity = 1) => request('/buy', {
+    method: 'POST',
+    body: JSON.stringify({ itemId, quantity, operationId: createOperationId() })
+  }, { retries: 2 }),
   createSupportInvoice: (amount) =>
     request('/support/create-invoice', { method: 'POST', body: JSON.stringify({ amount }) }, { retries: 2 }),
   upgrade: (inventoryItemId, targetItemId, multiplier = 1) =>
     request(
       '/upgrade',
-      { method: 'POST', body: JSON.stringify({ inventoryItemId, targetItemId, multiplier }) },
+      { method: 'POST', body: JSON.stringify({ inventoryItemId, targetItemId, multiplier, operationId: createOperationId() }) },
       { retries: 2 }
     ),
   sell: (inventoryItemId) =>

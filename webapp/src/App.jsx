@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { api } from './api.js';
 import { initTelegram, haptic, hapticNotify } from './telegram.js';
 import SplashScreen from './components/SplashScreen.jsx';
@@ -15,7 +15,7 @@ import Toast from './components/Toast.jsx';
 const SCREEN_META = {
   catalog: { title: 'Каталог', subtitle: 'Купить предметы 👇' },
   upgrade: { title: null, subtitle: null },
-  inventory: { title: 'Инвентарь', subtitle: 'Твои предметы' },
+  inventory: { title: null, subtitle: null },
   profile: { title: 'Профиль', subtitle: null }
 };
 
@@ -105,20 +105,21 @@ export default function App() {
     return () => clearTimeout(t);
   }, [toast]);
 
+  const ownedItemIds = useMemo(() => new Set(inventory.map((i) => i.id)), [inventory]);
+
   const handleBuy = (item, quantity = 1) => {
     haptic('light');
-    const safeQuantity = Number.isSafeInteger(quantity) ? Math.min(9999, Math.max(1, quantity)) : 1;
-    setSheetQuantity(safeQuantity);
+    setSheetQuantity(Math.min(9999, Math.max(1, Number.isInteger(quantity) ? quantity : 1)));
     setSheetItem(item);
   };
 
-  const handleConfirmPurchase = async () => {
+  const handleConfirmPurchase = async (quantity = 1) => {
     if (!sheetItem) return;
     setBuying(true);
     try {
-      const res = await api.buy(sheetItem.id, sheetQuantity);
+      const res = await api.buy(sheetItem.id, quantity);
       hapticNotify('success');
-      setToast(`Куплено: ${sheetItem.name} ×${sheetQuantity}`);
+      setToast(`Куплено: ${sheetItem.name}`);
       setSheetItem(null);
       setSheetQuantity(1);
       setProfile((prev) => (prev ? { ...prev, balance: res.balance } : prev));
@@ -220,7 +221,7 @@ export default function App() {
       )}
 
       {tab === 'catalog' && (
-        <CatalogTab items={catalog} loading={loading} onBuy={handleBuy} />
+        <CatalogTab items={catalog} ownedItemIds={ownedItemIds} loading={loading} onBuy={handleBuy} />
       )}
       {tab === 'upgrade' && (
         <UpgradeTab
