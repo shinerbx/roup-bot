@@ -1,98 +1,78 @@
 import { useEffect, useMemo, useState } from 'react';
 
 const MAX_QUANTITY = 9999;
-
-function clampQuantity(value) {
-  const n = Number(value);
-  return Number.isInteger(n) ? Math.min(MAX_QUANTITY, Math.max(1, n)) : 1;
-}
+const clampQuantity = (value) => Math.min(MAX_QUANTITY, Math.max(1, Number.isSafeInteger(value) ? value : 1));
 
 export default function PurchaseSheet({ item, initialQuantity = 1, pending, balance, onCancel, onConfirm, onTopUp }) {
-  const [quantity, setQuantity] = useState(1);
-  const [inputValue, setInputValue] = useState('1');
+  const [quantity, setQuantity] = useState(clampQuantity(initialQuantity));
+  const [inputValue, setInputValue] = useState(String(clampQuantity(initialQuantity)));
 
   useEffect(() => {
-    if (item) {
-      const initial = clampQuantity(initialQuantity);
-      setQuantity(initial);
-      setInputValue(String(initial));
-    }
+    const next = clampQuantity(initialQuantity);
+    setQuantity(next);
+    setInputValue(String(next));
   }, [item, initialQuantity]);
 
-  const total = useMemo(() => Number(item?.price_stars || 0) * quantity, [item, quantity]);
+  const unitPrice = Number(item?.price_stars) || 0;
+  const total = useMemo(() => unitPrice * quantity, [unitPrice, quantity]);
   const insufficient = balance < total;
-  const setSafeQuantity = (next) => {
+
+  if (!item) return null;
+
+  const updateQuantity = (next) => {
     const value = clampQuantity(next);
     setQuantity(value);
     setInputValue(String(value));
   };
 
-  const handleInput = (event) => {
-    const raw = event.target.value.replace(/\D/g, '').slice(0, 4);
-    setInputValue(raw);
-    if (raw) setQuantity(clampQuantity(raw));
+  const handleInput = (value) => {
+    setInputValue(value);
+    const parsed = Number(value);
+    if (Number.isSafeInteger(parsed) && parsed >= 1) setQuantity(Math.min(MAX_QUANTITY, parsed));
   };
-
-  if (!item) return null;
 
   return (
     <>
-      <div className="sheet-backdrop" onClick={() => !pending && onCancel()} />
+      <div className="sheet-backdrop" onClick={onCancel} />
       <div className="sheet purchase-sheet" role="dialog" aria-modal="true" aria-label={`Покупка ${item.name}`}>
         <div className="sheet__handle" />
-        <div className="sheet__item purchase-sheet__item">
-          <img className="sheet__item-image" src={item.image_url} alt="" />
-          <div className="purchase-sheet__info">
+        <div className="sheet__item">
+          <img className="sheet__item-image" src={item.image_url} alt={item.name} />
+          <div className="sheet__item-info">
+            <p className="sheet__eyebrow">Покупка</p>
             <p className="sheet__item-name" title={item.name}>{item.name}</p>
-            <span className="price-tag">★ {Number(item.price_stars).toLocaleString('ru-RU')} <small>за 1</small></span>
+            <span className="price-tag">★ {unitPrice.toLocaleString('ru-RU')} за 1</span>
           </div>
         </div>
 
-        <div className="purchase-sheet__summary">
-          <span>Итого</span>
-          <strong>★ {total.toLocaleString('ru-RU')}</strong>
+        <div className="purchase-sheet__quantity-head">
+          <span>Количество</span>
+          <span>Макс. {MAX_QUANTITY.toLocaleString('ru-RU')}</span>
         </div>
-
-        <div className="quantity-control" aria-label="Количество">
-          <button type="button" onClick={() => setSafeQuantity(quantity - 1)} disabled={pending || quantity <= 1} aria-label="Уменьшить количество">−</button>
-          <input
-            inputMode="numeric"
-            pattern="[0-9]*"
-            value={inputValue}
-            onChange={handleInput}
-            onBlur={() => setSafeQuantity(quantity)}
-            disabled={pending}
-            aria-label="Количество предметов"
-          />
-          <button type="button" onClick={() => setSafeQuantity(quantity + 1)} disabled={pending || quantity >= MAX_QUANTITY} aria-label="Увеличить количество">+</button>
+        <div className="quantity-control">
+          <button type="button" onClick={() => updateQuantity(quantity - 1)} disabled={pending || quantity <= 1} aria-label="Уменьшить">−</button>
+          <input inputMode="numeric" pattern="[0-9]*" value={inputValue} onChange={(e) => handleInput(e.target.value.replace(/\D/g, ''))} onBlur={() => updateQuantity(quantity)} disabled={pending} aria-label="Количество" />
+          <button type="button" onClick={() => updateQuantity(quantity + 1)} disabled={pending || quantity >= MAX_QUANTITY} aria-label="Увеличить">+</button>
         </div>
-
         <div className="quantity-presets">
           {[1, 5, 10, 25, 100].map((value) => (
-            <button type="button" key={value} className={quantity === value ? 'selected' : ''} onClick={() => setSafeQuantity(value)} disabled={pending}>
-              ×{value}
-            </button>
+            <button type="button" key={value} className={quantity === value ? 'active' : ''} onClick={() => updateQuantity(value)} disabled={pending}>{value}</button>
           ))}
         </div>
 
-        {insufficient ? (
-          <p className="sheet__note sheet__note--warn">
-            Недостаточно ⭐. Не хватает {(total - balance).toLocaleString('ru-RU')} ⭐.
-          </p>
-        ) : (
-          <p className="sheet__note purchase-sheet__available">
-            После покупки останется {(balance - total).toLocaleString('ru-RU')} ⭐.
-          </p>
-        )}
+        <div className="purchase-sheet__total">
+          <div><span>Итого</span><small>{unitPrice.toLocaleString('ru-RU')} × {quantity}</small></div>
+          <strong>★ {total.toLocaleString('ru-RU')}</strong>
+        </div>
+
+        {insufficient && <p className="sheet__note sheet__note--warn">Недостаточно ⭐. Не хватает {(total - balance).toLocaleString('ru-RU')} ⭐.</p>}
 
         <div className="sheet__actions">
           <button className="sheet__cancel" onClick={onCancel} disabled={pending}>Отмена</button>
           {insufficient ? (
             <button className="sheet__confirm" onClick={onTopUp} disabled={pending}>Пополнить ⭐</button>
           ) : (
-            <button className="sheet__confirm" onClick={() => onConfirm(quantity)} disabled={pending || !Number.isInteger(quantity) || quantity < 1}>
-              {pending ? 'Покупаем…' : `Купить ×${quantity}`}
-            </button>
+            <button className="sheet__confirm" onClick={onConfirm} disabled={pending}>{pending ? 'Покупаем…' : `Купить ×${quantity}`}</button>
           )}
         </div>
       </div>

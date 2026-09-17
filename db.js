@@ -58,15 +58,6 @@ async function initDb() {
         item_id INTEGER NOT NULL REFERENCES items(id),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-
-      CREATE TABLE IF NOT EXISTS operation_results (
-        user_id BIGINT NOT NULL REFERENCES users(telegram_id),
-        operation_type TEXT NOT NULL,
-        operation_id TEXT NOT NULL,
-        response JSONB NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY (user_id, operation_type, operation_id)
-      );
     `);
 
     // Совместимо с уже существующей Supabase БД: добавляем только минимальное поле,
@@ -221,9 +212,9 @@ async function addInventoryItem(userId, itemId) {
 // Баланс списывается и предмет начисляется в одной транзакции;
 // строка пользователя блокируется, чтобы нельзя было купить дважды
 // на грани баланса параллельными запросами.
-async function buyItemsWithBalance(userId, itemId, quantity = 1, operationId = null) {
+async function buyItemsWithBalance(userId, itemId, quantity = 1) {
   const safeQuantity = Number(quantity);
-  if (!Number.isInteger(safeQuantity) || safeQuantity < 1 || safeQuantity > 9999) {
+  if (!Number.isSafeInteger(safeQuantity) || safeQuantity < 1 || safeQuantity > 9999) {
     return { error: 'invalid_quantity' };
   }
 
@@ -231,24 +222,8 @@ async function buyItemsWithBalance(userId, itemId, quantity = 1, operationId = n
   try {
     await client.query('BEGIN');
 
-    if (operationId) {
-      const opRes = await client.query(`
-        INSERT INTO operation_results (user_id, operation_type, operation_id, response)
-        VALUES ($1, 'purchase', $2, '{}'::jsonb)
-        ON CONFLICT (user_id, operation_type, operation_id) DO NOTHING
-        RETURNING response
-      `, [userId, String(operationId).slice(0, 100)]);
-
-      if (!opRes.rowCount) {
-        const existing = await client.query(`
-          SELECT response FROM operation_results
-          WHERE user_id = $1 AND operation_type = 'purchase' AND operation_id = $2
-        `, [userId, String(operationId).slice(0, 100)]);
-        await client.query('ROLLBACK');
-        return existing.rows[0]?.response || { error: 'operation_in_progress' };
-      }
-    }
-
+    // Lock the balance row for the whole operation. This makes a multi-buy
+    // atomic and prevents concurrent purchases from overspending the balance.
     const userRes = await client.query(
       'SELECT balance FROM users WHERE telegram_id = $1 FOR UPDATE',
       [userId]
@@ -259,10 +234,7 @@ async function buyItemsWithBalance(userId, itemId, quantity = 1, operationId = n
       return { error: 'user_not_found' };
     }
 
-    const itemRes = await client.query(
-      'SELECT id, name, category, price_stars, image_url FROM items WHERE id = $1',
-      [itemId]
-    );
+    const itemRes = await client.query('SELECT * FROM items WHERE id = $1', [itemId]);
     const item = itemRes.rows[0];
     if (!item) {
       await client.query('ROLLBACK');
@@ -270,53 +242,37 @@ async function buyItemsWithBalance(userId, itemId, quantity = 1, operationId = n
     }
 
     const unitPrice = Number(item.price_stars);
-    if (!Number.isInteger(unitPrice) || unitPrice < 0) {
+    if (!Number.isFinite(unitPrice) || unitPrice < 0) {
       await client.query('ROLLBACK');
       return { error: 'invalid_item_price' };
     }
 
     const total = unitPrice * safeQuantity;
-    if (!Number.isSafeInteger(total)) {
+    if (!Number.isSafeInteger(total) || total < 0) {
       await client.query('ROLLBACK');
       return { error: 'invalid_quantity' };
     }
 
-    if (user.balance < total) {
+    if (Number(user.balance) < total) {
       await client.query('ROLLBACK');
-      return { error: 'insufficient_balance' };
+      return { error: 'insufficient_balance', total, quantity: safeQuantity };
     }
 
     const balRes = await client.query(
-      'UPDATE users SET balance = balance - $1 WHERE telegram_id = $2 AND balance >= $1 RETURNING balance',
+      'UPDATE users SET balance = balance - $1 WHERE telegram_id = $2 RETURNING balance',
       [total, userId]
     );
-    if (!balRes.rowCount) {
-      await client.query('ROLLBACK');
-      return { error: 'insufficient_balance' };
-    }
 
-    await client.query(`
-      INSERT INTO user_inventory (user_id, item_id)
-      SELECT $1, $2 FROM generate_series(1, $3)
-    `, [userId, item.id, safeQuantity]);
-
-    const response = {
-      item,
-      quantity: safeQuantity,
-      total,
-      balance: balRes.rows[0].balance
-    };
-
-    if (operationId) {
-      await client.query(`
-        UPDATE operation_results
-        SET response = $3::jsonb
-        WHERE user_id = $1 AND operation_type = 'purchase' AND operation_id = $2
-      `, [userId, String(operationId).slice(0, 100), JSON.stringify(response)]);
-    }
+    // Insert all instances in the same transaction. generate_series keeps the
+    // operation a single SQL statement and still preserves individual inventory rows.
+    await client.query(
+      `INSERT INTO user_inventory (user_id, item_id)
+       SELECT $1, $2 FROM generate_series(1, $3)`,
+      [userId, item.id, safeQuantity]
+    );
 
     await client.query('COMMIT');
-    return response;
+    return { item, balance: balRes.rows[0].balance, quantity: safeQuantity, total };
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -325,9 +281,9 @@ async function buyItemsWithBalance(userId, itemId, quantity = 1, operationId = n
   }
 }
 
-// Backwards-compatible single-item helper.
+// Backwards-compatible helper for any existing server-side callers.
 async function buyItemWithBalance(userId, itemId) {
-  return buyItemsWithBalance(userId, itemId, 1, null);
+  return buyItemsWithBalance(userId, itemId, 1);
 }
 
 async function getReferralProgress(userId) {
@@ -354,29 +310,13 @@ async function getReferralProgress(userId) {
 }
 
 
-async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1, operationId = null) {
+async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
-    if (operationId) {
-      const opRes = await client.query(`
-        INSERT INTO operation_results (user_id, operation_type, operation_id, response)
-        VALUES ($1, 'upgrade', $2, '{}'::jsonb)
-        ON CONFLICT (user_id, operation_type, operation_id) DO NOTHING
-        RETURNING response
-      `, [userId, String(operationId).slice(0, 100)]);
-
-      if (!opRes.rowCount) {
-        const existing = await client.query(`
-          SELECT response FROM operation_results
-          WHERE user_id = $1 AND operation_type = 'upgrade' AND operation_id = $2
-        `, [userId, String(operationId).slice(0, 100)]);
-        await client.query('ROLLBACK');
-        return existing.rows[0]?.response || { error: 'operation_in_progress' };
-      }
-    }
-
+    // Блокируем строку инвентаря, чтобы два параллельных запроса
+    // не смогли использовать один и тот же предмет дважды.
     const ownedRes = await client.query(`
       SELECT ui.id, i.id AS item_id, i.name, i.price_stars
       FROM user_inventory ui
@@ -398,56 +338,39 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
       return { error: 'target_not_found' };
     }
 
-    if (Number(sourceItem.price_stars) === Number(targetItem.price_stars)) {
-      await client.query('ROLLBACK');
-      return { error: 'same_price_target' };
-    }
-
     const safeMultiplier = Number(multiplier);
-    if (!Number.isFinite(safeMultiplier) || !Number.isInteger(safeMultiplier * 10) || safeMultiplier < 1 || safeMultiplier > MAX_MULTIPLIER) {
+    if (!Number.isFinite(safeMultiplier) || safeMultiplier < 1 || safeMultiplier > MAX_MULTIPLIER) {
       await client.query('ROLLBACK');
       return { error: 'invalid_multiplier' };
     }
 
+    // Вся игровая механика находится в upgrade-logic.js.
     const decision = resolveUpgrade(
       { id: sourceItem.item_id, name: sourceItem.name, price_stars: sourceItem.price_stars },
       targetItem,
       safeMultiplier
     );
 
+    // Предмет-донор в любом случае уходит из инвентаря
     await client.query('DELETE FROM user_inventory WHERE id = $1', [inventoryItemId]);
     await client.query('UPDATE users SET upgrades_count = upgrades_count + 1 WHERE telegram_id = $1', [userId]);
 
-    let resultItem = null;
-    if (decision.success) {
-      const resultRes = await client.query('SELECT * FROM items WHERE id = $1', [decision.resultItemId]);
-      resultItem = resultRes.rows[0];
-      if (!resultItem) {
-        await client.query('ROLLBACK');
-        return { error: 'result_not_found' };
-      }
-      await client.query('INSERT INTO user_inventory (user_id, item_id) VALUES ($1, $2)', [userId, resultItem.id]);
+    if (!decision.success) {
+      await client.query('COMMIT');
+      return { success: false, item: null, chance: decision.chance, baseChance: decision.baseChance, roll: decision.roll, multiplier: decision.multiplier };
     }
 
-    const response = {
-      success: Boolean(decision.success),
-      item: resultItem,
-      chance: decision.chance,
-      baseChance: decision.baseChance,
-      roll: decision.roll,
-      multiplier: decision.multiplier
-    };
-
-    if (operationId) {
-      await client.query(`
-        UPDATE operation_results
-        SET response = $3::jsonb
-        WHERE user_id = $1 AND operation_type = 'upgrade' AND operation_id = $2
-      `, [userId, String(operationId).slice(0, 100), JSON.stringify(response)]);
+    const resultRes = await client.query('SELECT * FROM items WHERE id = $1', [decision.resultItemId]);
+    const resultItem = resultRes.rows[0];
+    if (!resultItem) {
+      await client.query('ROLLBACK');
+      return { error: 'result_not_found' };
     }
+
+    await client.query('INSERT INTO user_inventory (user_id, item_id) VALUES ($1, $2)', [userId, resultItem.id]);
 
     await client.query('COMMIT');
-    return response;
+    return { success: true, item: resultItem, chance: decision.chance, baseChance: decision.baseChance, roll: decision.roll, multiplier: decision.multiplier };
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -511,8 +434,8 @@ module.exports = {
   getItemById,
   getUserInventory,
   addInventoryItem,
-  buyItemWithBalance,
   buyItemsWithBalance,
+  buyItemWithBalance,
   upgradeItem,
   sellInventoryItem
 };

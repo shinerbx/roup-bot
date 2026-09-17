@@ -9,7 +9,7 @@ const CATEGORY_LABELS = {
   gear: 'Снаряжение'
 };
 
-export default function CatalogTab({ items, ownedItemIds, loading, onBuy }) {
+export default function CatalogTab({ items, loading, onBuy }) {
   const [activeCategory, setActiveCategory] = useState('all');
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState('default');
@@ -72,7 +72,7 @@ export default function CatalogTab({ items, ownedItemIds, loading, onBuy }) {
         <div className="empty-state"><p className="empty-state__title">Ничего не найдено</p><p>Измени фильтр или поисковый запрос.</p></div>
       ) : (
         <div className="item-grid">
-          {visibleItems.map((item) => <ItemCard key={item.id} item={item} owned={ownedItemIds.has(item.id)} onBuy={onBuy} />)}
+          {visibleItems.map((item) => <ItemCard key={item.id} item={item} onBuy={onBuy} />)}
         </div>
       )}
     </>
