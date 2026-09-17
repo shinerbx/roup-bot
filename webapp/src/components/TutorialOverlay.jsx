@@ -7,6 +7,10 @@ const STEPS = {
   3: { target: 'inventory', text: 'А ТУТ НАХОДИТСЯ ТВОЙ ИНВЕНТАРЬ' }
 };
 
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
 function readTargetRect(target) {
   if (!target) return null;
   const element = document.querySelector(`[data-tutorial-target="${target}"]`);
@@ -116,10 +120,24 @@ export default function TutorialOverlay({ step, onFinish, onTargetClick }) {
           </div>
           <div
             className="tutorial-tooltip"
-            style={{
-              left: Math.min(Math.max(16, rect.left + rect.width / 2), window.innerWidth - 16),
-              top: Math.max(12, rect.top - 145)
-            }}
+            style={(() => {
+              // Keep the tooltip inside the viewport on every Telegram WebView
+              // size while preserving the little pointer toward the target.
+              const narrow = window.innerWidth <= 390;
+              const side = narrow ? 12 : 16;
+              const maxWidth = narrow ? 320 : 360;
+              const width = Math.min(maxWidth, Math.max(0, window.innerWidth - side * 2));
+              const half = width / 2;
+              const targetCenter = rect.left + rect.width / 2;
+              const center = clamp(targetCenter, side + half, window.innerWidth - side - half);
+              const tail = clamp(targetCenter - (center - half), 22, Math.max(22, width - 22));
+
+              return {
+                left: center,
+                top: Math.max(12, rect.top - 145),
+                '--tutorial-tail-left': `${tail}px`
+              };
+            })()}
           >
             <span className="tutorial-tooltip__step">ШАГ {step} / 3</span>
             <strong>{config.text}</strong>

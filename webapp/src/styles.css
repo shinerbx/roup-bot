@@ -2644,6 +2644,7 @@ button {
 
 .tutorial-tooltip {
   position: fixed;
+  box-sizing: border-box;
   transform: translateX(-50%);
   width: min(360px, calc(100vw - 32px));
   padding: 13px 15px 12px;
@@ -2658,7 +2659,7 @@ button {
 .tutorial-tooltip::after {
   content: '';
   position: absolute;
-  left: 50%;
+  left: var(--tutorial-tail-left, 50%);
   bottom: -7px;
   width: 13px;
   height: 13px;
@@ -2828,9 +2829,30 @@ button {
 }
 
 .upgrade-picker-item__name {
+  flex: 0 0 auto;
+  width: 100%;
+  min-height: 30px;
+  max-height: 30px;
   font-size: clamp(9px, 2.35vw, 11px);
-  line-height: 1.2;
+  line-height: 15px;
   -webkit-line-clamp: 2;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-overflow: ellipsis;
+  position: relative;
+  z-index: 1;
+}
+
+.upgrade-picker-item small {
+  flex: 0 0 auto;
+  min-height: 14px;
+  margin-top: 0;
+  line-height: 14px;
+  position: relative;
+  z-index: 1;
 }
 
 .item-card__name {
@@ -2847,6 +2869,21 @@ button {
   .tutorial-tooltip {
     width: min(320px, calc(100vw - 24px));
     padding-inline: 12px;
+  }
+
+  .upgrade-picker-item {
+    padding: 10px;
+  }
+
+  .upgrade-picker-item__name {
+    font-size: 10px;
+    line-height: 14px;
+    min-height: 28px;
+    max-height: 28px;
+  }
+
+  .upgrade-picker-item small {
+    font-size: 10px;
   }
 
   .tutorial-final-card {
