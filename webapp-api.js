@@ -10,7 +10,8 @@ const {
   upgradeItem,
   sellInventoryItem,
   buyItemsWithBalance,
-  getReferralProgress
+  getReferralProgress,
+  setTutorialCompleted
 } = require('./db');
 
 function verifyInitData(initData, botToken) {
@@ -95,10 +96,21 @@ function createWebappRouter(bot, botToken) {
         can_withdraw: referralProgress.canWithdraw,
         balance: user.balance || 0,
         items_count: itemsCount || 0,
+        tutorial_completed: Boolean(user.tutorial_completed),
         created_at: user.created_at
       });
     } catch (err) {
       console.error('Ошибка /api/profile:', err.message);
+      res.status(500).json({ error: 'server_error' });
+    }
+  });
+
+  router.post('/tutorial/complete', async (req, res) => {
+    try {
+      const completed = await setTutorialCompleted(req.tgUser.id);
+      res.json({ tutorial_completed: completed });
+    } catch (err) {
+      console.error('Ошибка /api/tutorial/complete:', err.message);
       res.status(500).json({ error: 'server_error' });
     }
   });
@@ -181,7 +193,7 @@ function createWebappRouter(bot, botToken) {
           !Number.isInteger(targetItemId) || targetItemId <= 0) {
         return res.status(400).json({ error: 'missing_fields' });
       }
-      if (!Number.isFinite(multiplier) || !Number.isInteger(multiplier * 10) || multiplier < 1 || multiplier > 100) {
+      if (!Number.isFinite(multiplier) || Math.abs(multiplier * 10 - Math.round(multiplier * 10)) >= 1e-9 || multiplier < 1 || multiplier > 100) {
         return res.status(400).json({ error: 'invalid_multiplier' });
       }
       if (!operationId || operationId.length > 100) {
@@ -212,11 +224,15 @@ function createWebappRouter(bot, botToken) {
   router.post('/sell', async (req, res) => {
     try {
       const inventoryItemId = Number(req.body.inventoryItemId);
-      if (!inventoryItemId) {
+      if (!Number.isInteger(inventoryItemId) || inventoryItemId <= 0) {
         return res.status(400).json({ error: 'missing_fields' });
       }
+      const operationId = String(req.body?.operationId || '');
+      if (!operationId || operationId.length > 100) {
+        return res.status(400).json({ error: 'missing_operation_id' });
+      }
 
-      const result = await sellInventoryItem(req.tgUser.id, inventoryItemId);
+      const result = await sellInventoryItem(req.tgUser.id, inventoryItemId, operationId);
       if (result.error) {
         return res.status(400).json({ error: result.error });
       }

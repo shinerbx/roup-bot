@@ -14,9 +14,17 @@ function clampChance(value) {
 // 1. Формула базового шанса 
 // TODO: Напиши здесь свою логику расчета между двумя предметами.
 // Пример: шанс зависит от разницы в цене (sourceItem.price_stars / targetItem.price_stars) * 100
+function canUpgradeTo(sourceItem, targetItem) {
+  if (!sourceItem || !targetItem) return false;
+  const sourcePrice = Number(sourceItem.price_stars);
+  const targetPrice = Number(targetItem.price_stars);
+  return Number.isFinite(sourcePrice) && Number.isFinite(targetPrice) && targetPrice > sourcePrice;
+}
+
 function calculateBaseChance(sourceItem, targetItem) {
-  const sourcePrice = Number(sourceItem.price_stars) || 0;
-  const targetPrice = Number(targetItem.price_stars) || 1;
+  if (!canUpgradeTo(sourceItem, targetItem)) return 0;
+  const sourcePrice = Number(sourceItem.price_stars);
+  const targetPrice = Number(targetItem.price_stars);
   return (sourcePrice / targetPrice) * 100;
 }
 
@@ -30,8 +38,12 @@ function applyMultiplier(baseChance, multiplier = 1) {
 // 3. Главная функция принятия решения (срабатывает на сервере)
 function resolveUpgrade(sourceItem, targetItem, multiplier = 1) {
   const safeMultiplier = Number(multiplier);
-  if (!Number.isFinite(safeMultiplier) || safeMultiplier < 1 || safeMultiplier > MAX_MULTIPLIER) {
+  if (!Number.isFinite(safeMultiplier) || safeMultiplier < 1 || safeMultiplier > MAX_MULTIPLIER || Math.abs(safeMultiplier * 10 - Math.round(safeMultiplier * 10)) >= 1e-9) {
     throw new Error('invalid_multiplier');
+  }
+
+  if (!canUpgradeTo(sourceItem, targetItem)) {
+    throw new Error('target_not_higher');
   }
   
   const baseChance = clampChance(calculateBaseChance(sourceItem, targetItem));
@@ -65,6 +77,7 @@ module.exports = {
   MAX_MULTIPLIER,
   calculateBaseChance,
   applyMultiplier,
+  canUpgradeTo,
   resolveUpgrade,
   displayPercent
 };

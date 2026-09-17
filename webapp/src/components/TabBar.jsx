@@ -12,6 +12,7 @@ export default function TabBar({ active, onChange }) {
         <button
           key={tab.id}
           className={`tab-bar__item ${active === tab.id ? 'active' : ''}`}
+          data-tutorial-target={tab.id}
           onClick={() => onChange(tab.id)}
         >
           <span className="tab-bar__icon">{tab.icon}</span>

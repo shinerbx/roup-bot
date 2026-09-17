@@ -87,6 +87,7 @@ export const api = {
   getCatalog: () => request('/catalog'),
   getProfile: () => request('/profile'),
   getInventory: () => request('/inventory'),
+  completeTutorial: () => request('/tutorial/complete', { method: 'POST', body: JSON.stringify({}) }, { retries: 2 }),
   buy: (itemId, quantity = 1) => request('/buy', {
     method: 'POST',
     body: JSON.stringify({ itemId, quantity, operationId: createOperationId() })
@@ -100,5 +101,8 @@ export const api = {
       { retries: 2 }
     ),
   sell: (inventoryItemId) =>
-    request('/sell', { method: 'POST', body: JSON.stringify({ inventoryItemId }) }, { retries: 2 })
+    request('/sell', {
+      method: 'POST',
+      body: JSON.stringify({ inventoryItemId, operationId: createOperationId() })
+    }, { retries: 2 })
 };

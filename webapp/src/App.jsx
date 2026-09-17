@@ -11,6 +11,7 @@ import PurchaseSheet from './components/PurchaseSheet.jsx';
 import TopUpScreen from './components/TopUpScreen.jsx';
 import WithdrawScreen from './components/WithdrawScreen.jsx';
 import Toast from './components/Toast.jsx';
+import TutorialOverlay from './components/TutorialOverlay.jsx';
 
 const SCREEN_META = {
   catalog: { title: 'Каталог', subtitle: 'Купить предметы 👇' },
@@ -34,6 +35,7 @@ export default function App() {
   const [buying, setBuying] = useState(false);
   const [sellingId, setSellingId] = useState(null);
   const [toast, setToast] = useState(null);
+  const [tutorialStep, setTutorialStep] = useState(null);
 
   useEffect(() => {
     initTelegram();
@@ -105,6 +107,15 @@ export default function App() {
     return () => clearTimeout(t);
   }, [toast]);
 
+  // Первый запуск привязан к аккаунту Telegram, а не к конкретному устройству.
+  useEffect(() => {
+    if (showSplash || !profile || tutorialStep !== null) return;
+    if (!profile.tutorial_completed) {
+      setTab('catalog');
+      setTutorialStep(1);
+    }
+  }, [showSplash, profile, tutorialStep]);
+
   const ownedItemIds = useMemo(() => new Set(inventory.map((i) => i.id)), [inventory]);
 
   const handleBuy = (item, quantity = 1) => {
@@ -155,6 +166,49 @@ export default function App() {
     }
   };
 
+
+  const handleTabChange = (nextTab) => {
+    if (tutorialStep === 1) {
+      if (nextTab === 'catalog') {
+        haptic('light');
+        setTab('catalog');
+        setTutorialStep(2);
+      }
+      return;
+    }
+
+    if (tutorialStep === 2) {
+      if (nextTab === 'upgrade') {
+        haptic('light');
+        setTab('upgrade');
+        setTutorialStep(3);
+      }
+      return;
+    }
+
+    if (tutorialStep === 3) {
+      if (nextTab === 'inventory') {
+        haptic('light');
+        setTab('inventory');
+        setTutorialStep(4);
+      }
+      return;
+    }
+
+    if (tutorialStep === 4) return;
+    setTab(nextTab);
+  };
+
+  const finishTutorial = async () => {
+    try {
+      await api.completeTutorial();
+    } catch (err) {
+      // Локальный UI не должен зависеть от временного сбоя сервера.
+      console.warn('Не удалось сохранить завершение туториала:', err);
+    }
+    setProfile((prev) => (prev ? { ...prev, tutorial_completed: true } : prev));
+    setTutorialStep(null);
+  };
 
   const meta = SCREEN_META[tab];
 
@@ -246,6 +300,8 @@ export default function App() {
       {tab === 'profile' && <ProfileTab profile={profile} loading={loading} />}
 
       <TabBar active={tab} onChange={setTab} />
+
+      <TutorialOverlay step={tutorialStep} onFinish={finishTutorial} onTargetClick={handleTabChange} />
 
       <PurchaseSheet
         item={sheetItem}

@@ -1,6 +1,6 @@
 const { Pool } = require('pg');
 const catalogItems = require('./catalog');
-const { resolveUpgrade, MAX_MULTIPLIER } = require('./upgrade-logic');
+const { resolveUpgrade, canUpgradeTo, MAX_MULTIPLIER } = require('./upgrade-logic');
 
 // ВАЖНО: строка подключения берётся только из переменной окружения.
 // На Render добавьте переменную DATABASE_URL со значением вида:
@@ -41,6 +41,7 @@ async function initDb() {
         referrals_count INTEGER DEFAULT 0,
         is_premium INTEGER DEFAULT 0,
         accepted_tos INTEGER DEFAULT 0,
+        tutorial_completed INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
@@ -69,9 +70,11 @@ async function initDb() {
       );
     `);
 
-    // Совместимо с уже существующей Supabase БД: добавляем только минимальное поле,
-    // нужное для условия вывода. Старые данные не удаляются.
+    // Совместимо с уже существующей Supabase БД: добавляем только недостающие поля.
+    // Старые данные не удаляются.
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS is_premium INTEGER DEFAULT 0');
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS tutorial_completed INTEGER DEFAULT 0');
+
 
     // Загружаем предметы одним запросом, чтобы не спамить в пул базы
     for (const item of catalogItems) {
@@ -104,15 +107,20 @@ async function registerUser(tgUser, referrerId = null) {
       if (refCheck.rows.length > 0) successfulReferrer = referrerId;
     }
 
-    await pool.query(`
+    const insertRes = await pool.query(`
       INSERT INTO users (telegram_id, username, first_name, invited_by, accepted_tos, is_premium)
       VALUES ($1, $2, $3, $4, 1, $5)
       ON CONFLICT (telegram_id) DO NOTHING
+      RETURNING telegram_id
     `, [tgUser.id, tgUser.username || null, tgUser.first_name || '', successfulReferrer, isPremium]);
 
-    if (successfulReferrer) {
+    // Только реально вставленная строка может активировать реферальную награду.
+    // Это закрывает гонку двух одновременных /start для одного аккаунта.
+    if (insertRes.rowCount && successfulReferrer) {
       await pool.query('UPDATE users SET referrals_count = referrals_count + 1 WHERE telegram_id = $1', [successfulReferrer]);
       await giveRandomStarterItem(successfulReferrer);
+    } else if (!insertRes.rowCount) {
+      successfulReferrer = null;
     }
 
     res = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [tgUser.id]);
@@ -163,13 +171,47 @@ async function giveRandomStarterItem(userId) {
 }
 
 async function claimSubscriptionItem(userId) {
-  const userRes = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
-  const user = userRes.rows[0];
-  if (!user || user.subscribed_reward_claimed) return null;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
 
-  const item = await giveRandomStarterItem(userId);
-  await pool.query('UPDATE users SET subscribed_reward_claimed = 1 WHERE telegram_id = $1', [userId]);
-  return item;
+    const claimRes = await client.query(`
+      UPDATE users
+      SET subscribed_reward_claimed = 1
+      WHERE telegram_id = $1 AND COALESCE(subscribed_reward_claimed, 0) = 0
+      RETURNING telegram_id
+    `, [userId]);
+
+    if (!claimRes.rowCount) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+
+    const itemRes = await client.query(`
+      SELECT * FROM items
+      WHERE price_stars BETWEEN 5 AND 10
+      ORDER BY RANDOM()
+      LIMIT 1
+    `);
+    const item = itemRes.rows[0];
+    if (!item) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+
+    await client.query(
+      'INSERT INTO user_inventory (user_id, item_id) VALUES ($1, $2)',
+      [userId, item.id]
+    );
+
+    await client.query('COMMIT');
+    return item;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function getUserInventoryCount(userId) {
@@ -330,6 +372,14 @@ async function buyItemWithBalance(userId, itemId) {
   return buyItemsWithBalance(userId, itemId, 1, null);
 }
 
+async function setTutorialCompleted(userId) {
+  const res = await pool.query(
+    'UPDATE users SET tutorial_completed = 1 WHERE telegram_id = $1 RETURNING tutorial_completed',
+    [userId]
+  );
+  return Boolean(res.rows[0]?.tutorial_completed);
+}
+
 async function getReferralProgress(userId) {
   const res = await pool.query(`
     SELECT
@@ -403,8 +453,13 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
       return { error: 'same_price_target' };
     }
 
+    if (!canUpgradeTo(sourceItem, targetItem)) {
+      await client.query('ROLLBACK');
+      return { error: 'target_not_higher' };
+    }
+
     const safeMultiplier = Number(multiplier);
-    if (!Number.isFinite(safeMultiplier) || !Number.isInteger(safeMultiplier * 10) || safeMultiplier < 1 || safeMultiplier > MAX_MULTIPLIER) {
+    if (!Number.isFinite(safeMultiplier) || Math.abs(safeMultiplier * 10 - Math.round(safeMultiplier * 10)) >= 1e-9 || safeMultiplier < 1 || safeMultiplier > MAX_MULTIPLIER) {
       await client.query('ROLLBACK');
       return { error: 'invalid_multiplier' };
     }
@@ -459,10 +514,29 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
 // Продажа предмета: удаляет его из инвентаря и начисляет его цену
 // на внутренний баланс пользователя. Всё в одной транзакции,
 // строка инвентаря блокируется, чтобы предмет нельзя было продать дважды.
-async function sellInventoryItem(userId, inventoryItemId) {
+async function sellInventoryItem(userId, inventoryItemId, operationId = null) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+
+    const normalizedOperationId = operationId ? String(operationId).slice(0, 100) : null;
+    if (normalizedOperationId) {
+      const opRes = await client.query(`
+        INSERT INTO operation_results (user_id, operation_type, operation_id, response)
+        VALUES ($1, 'sell', $2, '{}'::jsonb)
+        ON CONFLICT (user_id, operation_type, operation_id) DO NOTHING
+        RETURNING response
+      `, [userId, normalizedOperationId]);
+
+      if (!opRes.rowCount) {
+        const existing = await client.query(`
+          SELECT response FROM operation_results
+          WHERE user_id = $1 AND operation_type = 'sell' AND operation_id = $2
+        `, [userId, normalizedOperationId]);
+        await client.query('ROLLBACK');
+        return existing.rows[0]?.response || { error: 'operation_in_progress' };
+      }
+    }
 
     const ownedRes = await client.query(`
       SELECT ui.id, i.name, i.price_stars
@@ -485,12 +559,22 @@ async function sellInventoryItem(userId, inventoryItemId) {
       [row.price_stars, userId]
     );
 
-    await client.query('COMMIT');
-    return {
+    const response = {
       soldName: row.name,
       earned: row.price_stars,
       balance: balRes.rows[0]?.balance ?? 0
     };
+
+    if (normalizedOperationId) {
+      await client.query(`
+        UPDATE operation_results
+        SET response = $3::jsonb
+        WHERE user_id = $1 AND operation_type = 'sell' AND operation_id = $2
+      `, [userId, normalizedOperationId, JSON.stringify(response)]);
+    }
+
+    await client.query('COMMIT');
+    return response;
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -506,6 +590,7 @@ module.exports = {
   claimSubscriptionItem,
   getUserInventoryCount,
   getReferralProgress,
+  setTutorialCompleted,
   ensureUserExists,
   getCatalogItems,
   getItemById,

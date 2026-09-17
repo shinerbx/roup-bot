@@ -2540,3 +2540,326 @@ button {
   }
   .upgrade-result-neon { opacity: 1; transform: translate(-50%, -50%) scale(1); }
 }
+
+/* --------------------------------------------------------------------------
+   Interactive first-run tutorial
+   -------------------------------------------------------------------------- */
+.tutorial-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.tutorial-block {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  pointer-events: auto;
+  background: rgba(4, 2, 3, .78);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+
+.tutorial-block--left,
+.tutorial-block--right {
+  right: auto;
+}
+
+.tutorial-block--right {
+  left: auto;
+  right: 0;
+}
+
+.tutorial-target-ring {
+  position: fixed;
+  border: 2px solid rgba(255, 200, 0, .95);
+  border-radius: 14px;
+  box-shadow: 0 0 0 4px rgba(255, 200, 0, .14), 0 0 32px rgba(255, 200, 0, .42);
+  pointer-events: none;
+  animation: tutorial-ring-pulse 1.1s ease-in-out infinite alternate;
+}
+
+@keyframes tutorial-ring-pulse {
+  from { opacity: .72; transform: scale(.985); }
+  to { opacity: 1; transform: scale(1.02); }
+}
+
+.tutorial-click-target {
+  position: fixed;
+  z-index: 1204;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+
+.tutorial-click-target:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+.tutorial-arrow {
+  position: fixed;
+  width: 24px;
+  height: 54px;
+  margin-left: -12px;
+  pointer-events: none;
+  filter: drop-shadow(0 0 8px rgba(255, 200, 0, .45));
+  animation: tutorial-arrow-bounce .9s ease-in-out infinite;
+}
+
+.tutorial-arrow__shaft {
+  position: absolute;
+  left: 10px;
+  top: 0;
+  width: 4px;
+  height: 38px;
+  border-radius: 99px;
+  background: linear-gradient(180deg, rgba(255,255,255,.96), var(--gold));
+}
+
+.tutorial-arrow__head {
+  position: absolute;
+  left: 4px;
+  bottom: 0;
+  width: 0;
+  height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-top: 12px solid var(--gold);
+}
+
+@keyframes tutorial-arrow-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(7px); }
+}
+
+.tutorial-tooltip {
+  position: fixed;
+  transform: translateX(-50%);
+  width: min(360px, calc(100vw - 32px));
+  padding: 13px 15px 12px;
+  border: 1px solid rgba(255, 200, 0, .24);
+  border-radius: 16px;
+  background: linear-gradient(145deg, rgba(31, 17, 8, .97), rgba(16, 8, 10, .97));
+  box-shadow: 0 18px 48px rgba(0,0,0,.5), 0 0 26px rgba(255, 200, 0, .11);
+  text-align: center;
+  pointer-events: none;
+}
+
+.tutorial-tooltip::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -7px;
+  width: 13px;
+  height: 13px;
+  transform: translateX(-50%) rotate(45deg);
+  background: #1b1009;
+  border-right: 1px solid rgba(255, 200, 0, .22);
+  border-bottom: 1px solid rgba(255, 200, 0, .22);
+}
+
+.tutorial-tooltip__step {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--gold);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .12em;
+}
+
+.tutorial-tooltip strong {
+  display: block;
+  color: #fff8d8;
+  font-family: 'Unbounded', sans-serif;
+  font-size: clamp(11px, 3vw, 15px);
+  line-height: 1.32;
+  letter-spacing: -.01em;
+  overflow-wrap: anywhere;
+}
+
+.tutorial-tooltip__hint {
+  display: block;
+  margin-top: 7px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.tutorial-loading {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 2, 3, .8);
+  pointer-events: auto;
+}
+
+.tutorial-overlay--final {
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  pointer-events: auto;
+  background: rgba(4, 2, 3, .84);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  animation: tutorial-final-in .32s ease both;
+}
+
+@keyframes tutorial-final-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.tutorial-final-card {
+  position: relative;
+  width: min(440px, 100%);
+  padding: 28px 24px 24px;
+  overflow: hidden;
+  text-align: center;
+  border: 1px solid rgba(255, 200, 0, .3);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 50% -10%, rgba(255,200,0,.18), transparent 50%),
+    linear-gradient(145deg, #23130c, #14090d 70%);
+  box-shadow: 0 30px 80px rgba(0,0,0,.58), 0 0 44px rgba(255, 200, 0, .12);
+  animation: tutorial-card-pop .48s cubic-bezier(.2,.9,.2,1) both;
+}
+
+@keyframes tutorial-card-pop {
+  from { opacity: 0; transform: translateY(15px) scale(.94); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.tutorial-final-card__shine {
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  top: -50px;
+  height: 90px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,255,255,.34), rgba(255,200,0,.08) 45%, transparent 70%);
+  filter: blur(8px);
+  animation: tutorial-shine 2s ease-in-out infinite alternate;
+}
+
+@keyframes tutorial-shine {
+  from { opacity: .45; transform: translateX(-8%); }
+  to { opacity: .9; transform: translateX(8%); }
+}
+
+.tutorial-final-card__eyebrow {
+  position: relative;
+  z-index: 1;
+  color: var(--gold);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .16em;
+}
+
+.tutorial-final-card h2 {
+  position: relative;
+  z-index: 1;
+  margin: 10px 0 6px;
+  font-family: 'Unbounded', sans-serif;
+  font-size: clamp(19px, 5vw, 28px);
+  line-height: 1.18;
+}
+
+.tutorial-final-card p {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: .03em;
+}
+
+.tutorial-final-card button {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  margin-top: 20px;
+  min-height: 50px;
+  border: 0;
+  border-radius: 14px;
+  color: #160b06;
+  background: linear-gradient(120deg, var(--gold), var(--ember));
+  box-shadow: 0 12px 26px rgba(255, 200, 0, .18);
+  font-family: 'Unbounded', sans-serif;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: .04em;
+}
+
+/* Robust long-name fitting for every item surface. */
+.item-card__name,
+.sheet__item-name,
+.upgrade-slot__name,
+.upgrade-picker-item__name {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  hyphens: auto;
+}
+
+.item-card__name,
+.upgrade-slot__name,
+.upgrade-picker-item__name {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.upgrade-slot__name {
+  font-size: clamp(8px, 2.15vw, 10px);
+  line-height: 1.22;
+  -webkit-line-clamp: 2;
+}
+
+.upgrade-picker-item__name {
+  font-size: clamp(9px, 2.35vw, 11px);
+  line-height: 1.2;
+  -webkit-line-clamp: 2;
+}
+
+.item-card__name {
+  -webkit-line-clamp: 2;
+  line-height: 1.25;
+}
+
+.sheet__item-name {
+  line-height: 1.25;
+  max-height: 2.5em;
+}
+
+@media (max-width: 390px) {
+  .tutorial-tooltip {
+    width: min(320px, calc(100vw - 24px));
+    padding-inline: 12px;
+  }
+
+  .tutorial-final-card {
+    padding: 24px 18px 20px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tutorial-target-ring,
+  .tutorial-arrow,
+  .tutorial-final-card,
+  .tutorial-final-card__shine,
+  .tutorial-overlay--final {
+    animation: none;
+  }
+}

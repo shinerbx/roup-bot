@@ -141,14 +141,14 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
     ? Number(customMultiplier)
     : Number(multiplier);
   const customValid = multiplier !== 'custom' ||
-    (Number.isFinite(selectedMultiplier) && selectedMultiplier >= 1 && selectedMultiplier <= MAX_MULTIPLIER && Number.isInteger(selectedMultiplier * 10));
+    (Number.isFinite(selectedMultiplier) && selectedMultiplier >= 1 && selectedMultiplier <= MAX_MULTIPLIER && Math.abs(selectedMultiplier * 10 - Math.round(selectedMultiplier * 10)) < 1e-9);
 
   const displayChance = serverChance ?? getChance(owned, target, customValid ? selectedMultiplier : 1);
 
   const targetItems = useMemo(() => {
     if (!owned) return catalog;
     const sourcePrice = Number(owned.price_stars);
-    return catalog.filter((item) => Number(item.price_stars) !== sourcePrice);
+    return catalog.filter((item) => Number(item.price_stars) > sourcePrice);
   }, [catalog, owned]);
 
   useEffect(() => () => {
@@ -159,7 +159,7 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
     setOwnedId(item.inventory_id);
     setTargetId((current) => {
       const currentTarget = catalog.find((x) => x.id === current);
-      return currentTarget && Number(currentTarget.price_stars) !== Number(item.price_stars) ? current : null;
+      return currentTarget && Number(currentTarget.price_stars) > Number(item.price_stars) ? current : null;
     });
     setServerChance(null);
     setPicker(null);
@@ -167,7 +167,7 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
   };
 
   const chooseTarget = (item) => {
-    if (!owned || Number(item.price_stars) === Number(owned.price_stars)) return;
+    if (!owned || Number(item.price_stars) <= Number(owned.price_stars)) return;
     setTargetId(item.id);
     setServerChance(null);
     setPicker(null);
@@ -223,7 +223,7 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
 
       hapticNotify(success ? 'success' : 'error');
       setResult({ sourceItem: owned, targetItem: target, success, item: res.item });
-      onUpgraded?.();
+      await onUpgraded?.();
     } catch (err) {
       console.error(err);
       hapticNotify('error');
@@ -231,7 +231,8 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
         same_price_target: 'Предметы одинаковой стоимости нельзя улучшать.',
         item_not_owned: 'Исходный предмет уже недоступен.',
         invalid_multiplier: 'Некорректный множитель.',
-        target_not_found: 'Целевой предмет больше недоступен.'
+        target_not_found: 'Целевой предмет больше недоступен.',
+        target_not_higher: 'Для апгрейда нужен предмет дороже исходного.'
       };
       onError?.(messages[err.code] || 'Не удалось выполнить апгрейд. Попробуйте ещё раз.');
       setNeedleAngle(0);
