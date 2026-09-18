@@ -104,5 +104,12 @@ export const api = {
     request('/sell', {
       method: 'POST',
       body: JSON.stringify({ inventoryItemId, operationId: createOperationId() })
-    }, { retries: 2 })
+    }, { retries: 2 }),
+
+  // ── Вывод ────────────────────────────────────────────────────────
+  getWithdrawMethods: () => request('/withdraw/methods'),
+  createWithdrawRequest: (payload) => request('/withdraw/request', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  }, { retries: 0 }),
 };

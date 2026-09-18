@@ -1,6 +1,7 @@
 const { Pool } = require('pg');
 const catalogItems = require('./catalog');
 const { resolveUpgrade, canUpgradeTo, MAX_MULTIPLIER } = require('./upgrade-logic');
+const { WITHDRAWAL } = require('./house-config');
 
 // ВАЖНО: строка подключения берётся только из переменной окружения.
 // На Render добавьте переменную DATABASE_URL со значением вида:
@@ -82,12 +83,34 @@ async function initDb() {
         UNIQUE (user_id, operation_type, operation_id)
       );
 
+      CREATE TABLE IF NOT EXISTS withdraw_requests (
+        id BIGSERIAL PRIMARY KEY,
+        user_id BIGINT NOT NULL REFERENCES users(telegram_id),
+        method TEXT NOT NULL,
+        amount_stars INTEGER NOT NULL,
+        amount_rub NUMERIC(12,2) NOT NULL,
+        commission_rub NUMERIC(12,2) NOT NULL,
+        payout_rub NUMERIC(12,2) NOT NULL,
+        contact_username TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        operation_id TEXT NOT NULL UNIQUE,
+        admin_message_id BIGINT,
+        admin_note TEXT,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
       CREATE INDEX IF NOT EXISTS idx_inventory_user_created
         ON user_inventory (user_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_referrals_invited_by
         ON users (invited_by);
       CREATE INDEX IF NOT EXISTS idx_operations_created
         ON operation_results (created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_wr_user_status
+        ON withdraw_requests (user_id, status);
+      CREATE INDEX IF NOT EXISTS idx_wr_status_created
+        ON withdraw_requests (status, created_at DESC);
     `);
 
     // Совместимо с уже существующей Supabase БД: добавляем только недостающие поля.
@@ -96,7 +119,6 @@ async function initDb() {
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS tutorial_completed INTEGER DEFAULT 0');
     await pool.query("ALTER TABLE operation_results ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending'");
     await pool.query("ALTER TABLE operation_results ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
-
 
     // Загружаем предметы одним запросом, чтобы не спамить в пул базы
     for (const item of catalogItems) {
@@ -435,7 +457,6 @@ async function getReferralProgress(userId) {
   };
 }
 
-
 async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1, operationId = null) {
   const client = await pool.connect();
   try {
@@ -657,6 +678,169 @@ async function grantDemoCredits(userId, amount = 1000, operationId = null) {
   } catch (err) { await client.query('ROLLBACK'); throw err; } finally { client.release(); }
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// ЗАЯВКИ НА ВЫВОД
+// ─────────────────────────────────────────────────────────────────────
+
+async function createWithdrawRequest(userId, { method, amountStars, contactUsername, operationId }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const opKey = String(operationId).slice(0, 100);
+    const opRes = await client.query(
+      `INSERT INTO operation_results (user_id, operation_type, operation_id, response, status)
+       VALUES ($1, 'withdraw_request', $2, '{}'::jsonb, 'pending')
+       ON CONFLICT (user_id, operation_type, operation_id) DO NOTHING
+       RETURNING id`,
+      [userId, opKey]
+    );
+    if (!opRes.rowCount) {
+      const ex = await client.query(
+        `SELECT response, status FROM operation_results
+         WHERE user_id = $1 AND operation_type = 'withdraw_request' AND operation_id = $2
+         FOR UPDATE`,
+        [userId, opKey]
+      );
+      await client.query('ROLLBACK');
+      return ex.rows[0]?.status === 'completed'
+        ? ex.rows[0].response
+        : { error: 'operation_in_progress' };
+    }
+
+    const openRes = await client.query(
+      `SELECT COUNT(*)::int AS cnt FROM withdraw_requests
+       WHERE user_id = $1 AND status IN ('pending', 'processing')`,
+      [userId]
+    );
+    if ((openRes.rows[0]?.cnt || 0) >= WITHDRAWAL.MAX_OPEN_REQUESTS) {
+      await client.query('ROLLBACK');
+      return { error: 'too_many_open_requests' };
+    }
+
+    const balRes = await client.query(
+      `UPDATE users SET balance = balance - $1
+       WHERE telegram_id = $2 AND balance >= $1
+       RETURNING balance`,
+      [amountStars, userId]
+    );
+    if (!balRes.rowCount) {
+      await client.query('ROLLBACK');
+      return { error: 'insufficient_balance' };
+    }
+
+    const amountRub = +(amountStars * WITHDRAWAL.STAR_TO_RUB).toFixed(2);
+    const commissionRub = +(amountRub * WITHDRAWAL.COMMISSION_PERCENT / 100).toFixed(2);
+    const payoutRub = +(amountRub - commissionRub).toFixed(2);
+
+    const insRes = await client.query(
+      `INSERT INTO withdraw_requests
+         (user_id, method, amount_stars, amount_rub, commission_rub, payout_rub,
+          contact_username, status, operation_id, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9::jsonb)
+       RETURNING id`,
+      [userId, method, amountStars, amountRub, commissionRub, payoutRub,
+       contactUsername, opKey, JSON.stringify({ balanceAfter: balRes.rows[0].balance })]
+    );
+
+    await client.query(
+      `INSERT INTO balance_ledger (user_id, operation_type, operation_id, amount, balance_after, metadata)
+       VALUES ($1, 'withdraw_hold', $2, $3, $4, $5::jsonb)
+       ON CONFLICT (user_id, operation_type, operation_id) DO NOTHING`,
+      [userId, opKey, -amountStars, balRes.rows[0].balance,
+       JSON.stringify({ requestId: insRes.rows[0].id, method })]
+    );
+
+    const response = {
+      success: true,
+      requestId: insRes.rows[0].id,
+      amountStars,
+      amountRub,
+      commissionRub,
+      payoutRub,
+      method,
+      contactUsername,
+      balance: balRes.rows[0].balance,
+    };
+
+    await client.query(
+      `UPDATE operation_results
+       SET response = $3::jsonb, status = 'completed', updated_at = CURRENT_TIMESTAMP
+       WHERE user_id = $1 AND operation_type = 'withdraw_request' AND operation_id = $2`,
+      [userId, opKey, JSON.stringify(response)]
+    );
+
+    await client.query('COMMIT');
+    return response;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function refundWithdrawRequest(requestId, adminNote = '') {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const r = await client.query(
+      `SELECT user_id, amount_stars, status FROM withdraw_requests
+       WHERE id = $1 FOR UPDATE`,
+      [requestId]
+    );
+    if (!r.rowCount) { await client.query('ROLLBACK'); return { error: 'not_found' }; }
+    if (r.rows[0].status !== 'pending' && r.rows[0].status !== 'processing') {
+      await client.query('ROLLBACK');
+      return { error: 'already_final' };
+    }
+
+    const bal = await client.query(
+      `UPDATE users SET balance = balance + $1 WHERE telegram_id = $2 RETURNING balance`,
+      [r.rows[0].amount_stars, r.rows[0].user_id]
+    );
+
+    await client.query(
+      `UPDATE withdraw_requests SET status = 'rejected', admin_note = $2, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1`,
+      [requestId, adminNote]
+    );
+
+    await client.query(
+      `INSERT INTO balance_ledger (user_id, operation_type, operation_id, amount, balance_after, metadata)
+       VALUES ($1, 'withdraw_refund', $2, $3, $4, $5::jsonb)
+       ON CONFLICT (user_id, operation_type, operation_id) DO NOTHING`,
+      [r.rows[0].user_id, `refund_${requestId}`,
+       r.rows[0].amount_stars, bal.rows[0].balance,
+       JSON.stringify({ requestId })]
+    );
+
+    await client.query('COMMIT');
+    return { refunded: true, balance: bal.rows[0].balance };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function markWithdrawPaid(requestId) {
+  const res = await pool.query(
+    `UPDATE withdraw_requests SET status = 'completed', updated_at = CURRENT_TIMESTAMP
+     WHERE id = $1 AND status IN ('pending', 'processing') RETURNING id`,
+    [requestId]
+  );
+  return Boolean(res.rowCount);
+}
+
+async function attachAdminMessage(requestId, adminMessageId) {
+  await pool.query(
+    `UPDATE withdraw_requests SET admin_message_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+    [requestId, adminMessageId]
+  );
+}
+
 module.exports = {
   registerUser,
   getUser,
@@ -674,5 +858,9 @@ module.exports = {
   buyItemWithBalance,
   buyItemsWithBalance,
   upgradeItem,
-  sellInventoryItem
+  sellInventoryItem,
+  createWithdrawRequest,
+  refundWithdrawRequest,
+  markWithdrawPaid,
+  attachAdminMessage,
 };

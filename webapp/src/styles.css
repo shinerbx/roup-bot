@@ -3035,3 +3035,157 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   .topup-soon-card { animation: none; }
 }
+
+/* ==========================================================================
+   WITHDRAW SCREEN
+   ========================================================================== */
+
+.withdraw-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.withdraw-field__label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: .02em;
+}
+
+.withdraw-field__hint {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.withdraw-field__hint b { color: var(--text-primary); }
+
+.withdraw-presets {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 7px;
+  margin-top: 4px;
+}
+.withdraw-presets .topup-chip {
+  padding: 12px 0;
+  font-size: 13px;
+  border-radius: 12px;
+}
+
+.withdraw-calc {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--bg-panel-2);
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+}
+.withdraw-calc__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 13.5px;
+  color: var(--text-muted);
+}
+.withdraw-calc__row b { color: var(--text-primary); font-weight: 800; font-variant-numeric: tabular-nums; }
+.withdraw-calc__fee { color: var(--ember); font-weight: 700; }
+.withdraw-calc__row--total {
+  padding-top: 10px;
+  border-top: 1px dashed var(--hairline);
+  font-size: 14px;
+}
+.withdraw-calc__row--total b {
+  color: var(--gold);
+  font-size: 18px;
+  font-weight: 900;
+  font-family: 'Unbounded', sans-serif;
+}
+
+.withdraw-legal {
+  padding: 13px 15px;
+  border: 1px solid rgba(232, 184, 74, .22);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(232, 184, 74, .05), transparent);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+.withdraw-legal p { margin: 0; }
+.withdraw-legal p + p { margin-top: 8px; }
+.withdraw-legal__note {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.withdraw-error {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(239, 59, 79, .12);
+  border: 1px solid rgba(239, 59, 79, .35);
+  color: var(--crimson-bright);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.withdraw-warning {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(232, 184, 74, .08);
+  border: 1px solid rgba(232, 184, 74, .28);
+  color: var(--gold);
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.withdraw-success {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+  padding: 40px 16px 20px;
+  animation: fade-in .35s ease both;
+}
+.withdraw-success__icon {
+  width: 72px;
+  height: 72px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(48, 255, 143, .12);
+  color: #30ff8f;
+  font-size: 34px;
+  font-weight: 900;
+  box-shadow: 0 0 32px rgba(48, 255, 143, .25);
+  animation: splash-logo-in .5s cubic-bezier(.16, 1.6, .3, 1);
+}
+.withdraw-success__amount {
+  margin: 6px 0 0;
+  font-family: 'Unbounded', sans-serif;
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--gold);
+  letter-spacing: -.02em;
+}
+.withdraw-success__text {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.withdraw-success__text b { color: var(--text-primary); }
+.withdraw-success__note {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  color: var(--text-faint);
+  font-weight: 600;
+}
+
+/* Финальный шрифт внутри метода */
+.payment-method__label small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

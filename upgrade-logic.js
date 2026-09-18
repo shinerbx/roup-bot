@@ -1,21 +1,15 @@
+// upgrade-logic.js — профит-модель шанса. Параметры в house-config.js.
 const crypto = require('crypto');
+const { UPGRADE } = require('./house-config');
 
-/**
- * ЛОГИКА АПГРЕЙДА (SANDBOX)
- * В этом файле высчитывается шанс и определяется успех/неудача.
- */
-
-const MIN_CHANCE = 0;
-const MAX_CHANCE = 100;
-const MAX_MULTIPLIER = 100;
+const MIN_CHANCE = UPGRADE.MIN_CHANCE;
+const MAX_CHANCE = UPGRADE.MAX_CHANCE;
+const MAX_MULTIPLIER = UPGRADE.MAX_MULTIPLIER;
 
 function clampChance(value) {
   return Math.min(MAX_CHANCE, Math.max(MIN_CHANCE, Number(value) || 0));
 }
 
-// 1. Формула базового шанса 
-// TODO: Напиши здесь свою логику расчета между двумя предметами.
-// Пример: шанс зависит от разницы в цене (sourceItem.price_stars / targetItem.price_stars) * 100
 function canUpgradeTo(sourceItem, targetItem) {
   if (!sourceItem || !targetItem) return false;
   const sourcePrice = Number(sourceItem.price_stars);
@@ -23,38 +17,35 @@ function canUpgradeTo(sourceItem, targetItem) {
   return Number.isFinite(sourcePrice) && Number.isFinite(targetPrice) && targetPrice > sourcePrice;
 }
 
+// База: (source/target)^GAMMA × 100 × BASE_CHANCE_MULTIPLIER
 function calculateBaseChance(sourceItem, targetItem) {
   if (!canUpgradeTo(sourceItem, targetItem)) return 0;
   const sourcePrice = Number(sourceItem.price_stars);
   const targetPrice = Number(targetItem.price_stars);
-  return (sourcePrice / targetPrice) * 100;
+  const ratio = Math.pow(sourcePrice / targetPrice, UPGRADE.GAMMA);
+  return clampChance(ratio * 100 * UPGRADE.BASE_CHANCE_MULTIPLIER);
 }
 
-// 2. Влияние множителя 
-// TODO: Напиши логику того, как кнопка "Множитель" меняет шанс.
+// Множитель делит шанс. ×10 → шанс / 10.
 function applyMultiplier(baseChance, multiplier = 1) {
   const safeMultiplier = Number(multiplier) || 1;
-  return clampChance(baseChance / safeMultiplier);
+  return clampChance(Number(baseChance) / safeMultiplier);
 }
 
-// 3. Главная функция принятия решения (срабатывает на сервере)
 function resolveUpgrade(sourceItem, targetItem, multiplier = 1) {
   const safeMultiplier = Number(multiplier);
   if (!Number.isFinite(safeMultiplier) || safeMultiplier < 1 || safeMultiplier > MAX_MULTIPLIER || Math.abs(safeMultiplier * 10 - Math.round(safeMultiplier * 10)) >= 1e-9) {
     throw new Error('invalid_multiplier');
   }
-
   if (!canUpgradeTo(sourceItem, targetItem)) {
     throw new Error('target_not_higher');
   }
-  
-  const baseChance = clampChance(calculateBaseChance(sourceItem, targetItem));
-  const finalChance = clampChance(applyMultiplier(baseChance, safeMultiplier));
-  
-  // Серверный случайный бросок. crypto.randomInt не зависит от Math.random().
+
+  const baseChance = calculateBaseChance(sourceItem, targetItem);
+  const afterMultiplier = applyMultiplier(baseChance, safeMultiplier);
+  const finalChance = clampChance(afterMultiplier * (1 - UPGRADE.HOUSE_EDGE));
+
   const roll = crypto.randomInt(0, 1_000_000) / 10_000;
-  
-  // Успех, если выпавшее число меньше шанса
   const success = roll < finalChance;
 
   return {
@@ -67,10 +58,10 @@ function resolveUpgrade(sourceItem, targetItem, multiplier = 1) {
   };
 }
 
-// 4. Для отображения шанса в React (до нажатия кнопки)
 function displayPercent(sourceItem, targetItem, multiplier = 1) {
   const base = calculateBaseChance(sourceItem, targetItem);
-  return Number(clampChance(applyMultiplier(base, Number(multiplier) || 1)).toFixed(2));
+  const afterMultiplier = applyMultiplier(base, Number(multiplier) || 1);
+  return Number(clampChance(afterMultiplier * (1 - UPGRADE.HOUSE_EDGE)).toFixed(2));
 }
 
 module.exports = {

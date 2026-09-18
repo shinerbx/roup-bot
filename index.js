@@ -8,9 +8,12 @@ const {
   calculateTier,
   claimSubscriptionItem,
   getUserInventoryCount,
-  getReferralProgress
+  getReferralProgress,
+  refundWithdrawRequest,
+  markWithdrawPaid
 } = require('./db');
 const { createWebappRouter } = require('./webapp-api');
+const { registerBot } = require('./admin-notify');
 
 // Telegram Bot API token хранится только в Render Environment Variables.
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -21,8 +24,11 @@ const WEB_APP_URL = process.env.WEB_APP_URL || 'https://roup-bot.onrender.com';
 const CHANNEL_USERNAME = '@ro_upgrade';
 const SHARE_BANNER_URL = 'https://i.ibb.co/Fq6L8G16/7007-D8-FC-C59-A-4-F72-B1-AB-C63-DFAA2-F87-A.png';
 const PRIVACY_POLICY_URL = 'https://telegra.ph/Polzovatelskoe-soglashenie-i-Usloviya-programmy-loyalnosti-RoUP-09-16';
+const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID;
 
 const bot = new Telegraf(BOT_TOKEN);
+registerBot(bot);
+
 const pendingUsers = new Map();
 const userCooldowns = new Map();
 const actionLocks = new Set();
@@ -243,6 +249,30 @@ bot.on('inline_query', async (ctx) => {
 
 bot.hears('🆘 Помощь', (ctx) => ctx.reply(`❓ <b>Техническая поддержка</b>\n\nПо всем вопросам и проблемам с предметами:\n👉 @roup_support`, { parse_mode: 'HTML' }).catch(() => {}));
 
+// ── Callback-кнопки заявок на вывод (только для админа) ──────────────
+bot.action(/^wr:(paid|reject):(\d+)$/, async (ctx) => {
+  const action = ctx.match[1];
+  const requestId = Number(ctx.match[2]);
+
+  if (!ADMIN_CHAT_ID || String(ctx.from.id) !== String(ADMIN_CHAT_ID)) {
+    return ctx.answerCbQuery('Нет доступа', { show_alert: true }).catch(() => {});
+  }
+
+  try {
+    if (action === 'paid') {
+      const ok = await markWithdrawPaid(requestId);
+      await ctx.answerCbQuery(ok ? '✅ Отмечено как выплачено' : 'Заявка уже обработана').catch(() => {});
+    } else if (action === 'reject') {
+      const r = await refundWithdrawRequest(requestId, 'rejected_by_admin');
+      await ctx.answerCbQuery(r.error ? `Ошибка: ${r.error}` : '↩️ Возвращено на баланс').catch(() => {});
+    }
+    await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
+  } catch (err) {
+    console.error('Ошибка обработки wr callback:', err.message);
+    ctx.answerCbQuery('Ошибка сервера').catch(() => {});
+  }
+});
+
 // ---------- Telegram Stars: ТОЛЬКО поддержка проекта ----------
 bot.on('pre_checkout_query', async (ctx) => {
   const payload = String(ctx.preCheckoutQuery?.invoice_payload || '');
@@ -330,6 +360,7 @@ app.use((req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
   console.log(`Render HTTP-сервер активен на порту ${PORT}`);
+  if (!ADMIN_CHAT_ID) console.warn('⚠️ ADMIN_CHAT_ID не задан — заявки на вывод не будут приходить админу.');
   try {
     const fullWebhookUrl = `${WEB_APP_URL}${WEBHOOK_PATH}`;
     await bot.telegram.setWebhook(fullWebhookUrl);

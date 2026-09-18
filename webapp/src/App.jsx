@@ -56,7 +56,7 @@ export default function App() {
     if (catalogRes.status === 'fulfilled') {
       const fetchedItems = catalogRes.value.items || [];
       setCatalog(fetchedItems);
-      
+
       // МГНОВЕННАЯ ПРЕДЗАГРУЗКА КАРТИНОК В КЭШ
       fetchedItems.forEach(item => {
         if (item.image_url) {
@@ -169,7 +169,6 @@ export default function App() {
     }
   };
 
-
   const handleTabChange = (nextTab) => {
     if (tutorialStep === 1) {
       if (nextTab === 'catalog') {
@@ -249,7 +248,11 @@ export default function App() {
   if (showWithdraw) {
     return (
       <div className="app">
-        <WithdrawScreen onClose={() => setShowWithdraw(false)} />
+        <WithdrawScreen
+          onClose={() => setShowWithdraw(false)}
+          balance={profile?.balance ?? 0}
+          canWithdraw={Boolean(profile?.can_withdraw)}
+        />
       </div>
     );
   }
