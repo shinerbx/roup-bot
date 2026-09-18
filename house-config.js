@@ -17,14 +17,21 @@ const HOUSE_CONFIG = Object.freeze({
     DISPLAY_BASE_CHANCE_MULTIPLIER: 1.0,
     DISPLAY_HOUSE_EDGE: 0.0,
 
+    // ── Границы ─────────────────────────────────────────────────────
     MIN_CHANCE: 0.1,
     MAX_CHANCE: 95,
     MIN_MULTIPLIER: 1,
     MAX_MULTIPLIER: 100,
     DEFAULT_MULTIPLIER: 1,
+
+    // ── LUCKY MODE (активен только при demo-балансе) ─────────────────
+    // Раздувает реальный шанс апгрейда, чтобы демо-игрок выигрывал часто.
+    // Баланс между "интересно" и "не палевно".
+    LUCKY_CHANCE_MULTIPLIER: 8,     // реальный шанс × 8
+    LUCKY_MAX_CHANCE: 90,           // но не выше 90%
   },
 
-  // ── РУЛЕТКА (косметика, идёт на клиент через /api/upgrade/config) ──
+  // ── РУЛЕТКА (косметика) ──────────────────────────────────────────────
   ROULETTE: {
     SPIN_PROFILES: [
       { duration: 2900, turns: 3, easing: 'cubic-bezier(.08,.72,.18,1)' },
@@ -57,9 +64,7 @@ const HOUSE_CONFIG = Object.freeze({
 
     // Telegram ID, которые обходят реферальный гейт на вывод.
     // ADMIN_CHAT_ID из env добавляется автоматически в webapp-api.js.
-    WITHDRAW_WHITELIST: [
-      // 123456789,
-    ],
+    WITHDRAW_WHITELIST: [],
   },
 
   PAYMENTS: {
