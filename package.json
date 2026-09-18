@@ -7,7 +7,7 @@
     "build:webapp": "cd webapp && npm install && npm run build"
   },
   "dependencies": {
-    "compression": "^1.7.5"
+    "compression": "^1.7.5",
     "express": "^4.19.2",
     "pg": "^8.11.3",
     "telegraf": "^4.16.3"
