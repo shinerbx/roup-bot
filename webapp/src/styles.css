@@ -3861,3 +3861,38 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   .live-strip__dot { animation: none; }
 }
+/* Дисклеймер-футер на экранах Каталог / Апгрейд / Профиль */
+.app-footer {
+  margin: 24px 16px 12px;
+  padding: 14px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 11px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.45);
+  text-align: center;
+  letter-spacing: 0.1px;
+}
+
+.app-footer__line {
+  display: block;
+}
+
+.app-footer__line + .app-footer__line {
+  margin-top: 4px;
+}
+
+.app-footer__sep {
+  display: inline-block;
+  margin: 0 6px;
+  opacity: 0.4;
+}
+
+.app-footer__link {
+  color: rgba(255, 255, 255, 0.6);
+  text-decoration: none;
+  border-bottom: 1px dotted rgba(255, 255, 255, 0.25);
+}
+
+.app-footer__link:active {
+  color: rgba(255, 255, 255, 0.85);
+}
