@@ -3500,15 +3500,21 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   }
 }
 /* ==========================================================================
-   LIVE FEED + ONLINE + UPGRADE CLEANUP
+   LIVE STRIP + ONLINE + CATALOG TOPROW
    ========================================================================== */
 
-.upgrade-toprow {
+.catalog-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.catalog-toprow {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
-  min-height: 24px;
+  min-height: 26px;
 }
 
 .online-badge {
@@ -3551,99 +3557,120 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   letter-spacing: .08em;
 }
 
-/* Live-лента */
-.live-feed {
+/* ---- Бегущая строка Live drops ---- */
+
+.live-strip {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 8px;
   padding: 10px 12px;
   border-radius: 16px;
-  background: linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,.005));
+  background: linear-gradient(180deg, rgba(255,255,255,.022), rgba(255,255,255,.005));
   border: 1px solid rgba(255,255,255,.06);
+  height: 78px;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
-.live-feed--empty {
+.live-strip--empty {
+  align-items: center;
+  justify-content: center;
   flex-direction: row;
+  gap: 8px;
+  height: 42px;
+}
+
+.live-strip__head {
+  display: flex;
   align-items: center;
   gap: 8px;
-  justify-content: center;
-  padding: 12px;
+  flex: none;
+  height: 14px;
 }
 
-.live-feed__dot {
+.live-strip__dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: var(--crimson-bright);
   box-shadow: 0 0 10px var(--crimson-bright);
   animation: online-pulse 1.4s ease-in-out infinite;
+  flex: none;
 }
 
-.live-feed__head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.live-feed__label {
+.live-strip__label {
   font-size: 10.5px;
   font-weight: 900;
   letter-spacing: .12em;
   text-transform: uppercase;
   color: var(--text-faint);
+  line-height: 1;
 }
 
-.live-feed__empty-text {
+.live-strip__empty-text {
   font-size: 12px;
   color: var(--text-faint);
   font-weight: 600;
 }
 
-.live-feed__track {
+.live-strip__viewport {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  mask-image: linear-gradient(90deg, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%);
+}
+
+.live-strip__track {
+  position: absolute;
+  top: 0;
+  left: 0;
   display: flex;
   gap: 8px;
-  overflow-x: auto;
-  scroll-snap-type: x proximity;
-  padding-bottom: 2px;
-  scrollbar-width: none;
+  height: 100%;
+  align-items: center;
+  animation: live-strip-scroll var(--live-strip-duration, 40s) linear infinite;
+  will-change: transform;
 }
-.live-feed__track::-webkit-scrollbar { display: none; }
 
-.live-feed__card {
+@keyframes live-strip-scroll {
+  from { transform: translate3d(0, 0, 0); }
+  to   { transform: translate3d(-50%, 0, 0); }
+}
+
+.live-strip__card {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 11px 7px 7px;
+  gap: 7px;
+  padding: 6px 10px 6px 6px;
   border-radius: 12px;
-  background: rgba(255,255,255,.025);
+  background: rgba(255,255,255,.028);
   border: 1px solid rgba(255,255,255,.05);
-  scroll-snap-align: start;
-  max-width: 220px;
-  animation: live-feed-in .35s cubic-bezier(.2,.9,.2,1) both;
+  max-width: 200px;
+  height: 40px;
+  box-sizing: border-box;
 }
 
-@keyframes live-feed-in {
-  from { opacity: 0; transform: translateX(10px); }
-  to { opacity: 1; transform: translateX(0); }
-}
-
-.live-feed__img {
-  width: 30px;
-  height: 30px;
+.live-strip__img {
+  width: 26px;
+  height: 26px;
   object-fit: contain;
   filter: drop-shadow(0 2px 4px rgba(0,0,0,.5));
   flex: none;
 }
 
-.live-feed__body {
+.live-strip__body {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 0;
+  line-height: 1.05;
 }
 
-.live-feed__item {
+.live-strip__item {
   font-size: 11.5px;
   font-weight: 800;
   color: var(--text-primary);
@@ -3653,29 +3680,24 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   max-width: 140px;
 }
 
-.live-feed__meta {
-  font-size: 10.5px;
+.live-strip__meta {
+  font-size: 10px;
   color: var(--text-faint);
   font-weight: 600;
   white-space: nowrap;
 }
-.live-feed__meta b {
+.live-strip__meta b {
   color: var(--gold);
   font-weight: 800;
 }
 
-/* Минимализм: чистые границы, без лишнего */
-.upgrade-stage-modern {
-  box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.35);
-}
-
-.upgrade-action-button {
-  transition: transform .14s ease, background .2s ease, box-shadow .2s ease;
-}
-
 @media (max-width: 390px) {
-  .live-feed { padding: 8px 10px; }
-  .live-feed__card { padding: 6px 9px 6px 6px; }
-  .live-feed__img { width: 26px; height: 26px; }
-  .live-feed__item { max-width: 110px; font-size: 11px; }
+  .live-strip { padding: 8px 10px; height: 72px; }
+  .live-strip__card { padding: 5px 8px 5px 5px; height: 38px; }
+  .live-strip__img { width: 22px; height: 22px; }
+  .live-strip__item { max-width: 110px; font-size: 11px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-strip__track { animation: none; transform: translate3d(0, 0, 0); }
 }
