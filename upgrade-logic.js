@@ -1,6 +1,6 @@
 // upgrade-logic.js
 // Сервер держит два независимых расчёта:
-//   realChance    — против него катается RNG, с маржой. НИКОГДА не покидает сервер.
+//   realChance    — против него катается RNG, с маржой + джиттером. НИКОГДА не покидает сервер.
 //   displayChance — честная формула, уходит клиенту для UI.
 const crypto = require('crypto');
 const { UPGRADE } = require('./house-config');
@@ -20,7 +20,6 @@ function canUpgradeTo(sourceItem, targetItem) {
   return Number.isFinite(s) && Number.isFinite(t) && t > s;
 }
 
-// Базовая формула под произвольный набор параметров.
 function _calcWithParams(sourceItem, targetItem, multiplier, gamma, baseMult, edge) {
   if (!canUpgradeTo(sourceItem, targetItem)) return 0;
   const s = Number(sourceItem.price_stars);
@@ -34,8 +33,7 @@ function _calcWithParams(sourceItem, targetItem, multiplier, gamma, baseMult, ed
   return clampChance(withEdge);
 }
 
-// ── РЕАЛЬНЫЙ шанс (с маржой). Только для внутреннего RNG. ────────────
-function calculateRealChance(sourceItem, targetItem, multiplier = 1) {
+function calculateRealBaseChance(sourceItem, targetItem, multiplier = 1) {
   return _calcWithParams(
     sourceItem, targetItem, multiplier,
     UPGRADE.GAMMA,
@@ -44,7 +42,18 @@ function calculateRealChance(sourceItem, targetItem, multiplier = 1) {
   );
 }
 
-// ── ОТОБРАЖАЕМЫЙ шанс (честный). Уходит клиенту. ─────────────────────
+function calculateRealChance(sourceItem, targetItem, multiplier = 1) {
+  const base = calculateRealBaseChance(sourceItem, targetItem, multiplier);
+  return applyRollNoise(base);
+}
+
+function applyRollNoise(baseChance) {
+  const noise = Number(UPGRADE.ROLL_NOISE) || 0;
+  if (noise <= 0) return baseChance;
+  const factor = 1 + (Math.random() * 2 - 1) * noise;
+  return clampChance(baseChance * factor);
+}
+
 function calculateDisplayChance(sourceItem, targetItem, multiplier = 1) {
   return _calcWithParams(
     sourceItem, targetItem, multiplier,
@@ -54,7 +63,6 @@ function calculateDisplayChance(sourceItem, targetItem, multiplier = 1) {
   );
 }
 
-// Хелперы для обратной совместимости
 function calculateBaseChance(sourceItem, targetItem) {
   return calculateDisplayChance(sourceItem, targetItem, 1);
 }
@@ -69,14 +77,6 @@ function displayPercent(sourceItem, targetItem, multiplier = 1) {
   return Number(calculateDisplayChance(sourceItem, targetItem, multiplier).toFixed(1));
 }
 
-/**
- * resolveUpgrade — главная точка входа.
- *
- * Возвращает ТОЛЬКО публичные поля. Реальный шанс и roll остаются
- * в замыкании и НЕ попадают в возвращаемый объект.
- * Если тебе когда-нибудь понадобится реальный шанс (для аналитики, логов),
- * оборачивай вызов в отдельную функцию-обёртку и не смешивай с response.
- */
 function resolveUpgrade(sourceItem, targetItem, multiplier = 1) {
   const safeMultiplier = Number(multiplier);
   if (!Number.isFinite(safeMultiplier) || safeMultiplier < 1 || safeMultiplier > MAX_MULTIPLIER
@@ -87,24 +87,18 @@ function resolveUpgrade(sourceItem, targetItem, multiplier = 1) {
     throw new Error('target_not_higher');
   }
 
-  // Внутренние переменные — не покидают функцию
   const realChance = calculateRealChance(sourceItem, targetItem, safeMultiplier);
-
-  // Серверный RNG. crypto.randomInt — криптостойкий источник.
-  const roll = crypto.randomInt(0, 1_000_000) / 10_000; // 0..100, шаг 0.01
+  const roll = crypto.randomInt(0, 1_000_000) / 10_000;
   const success = roll < realChance;
 
-  // Публичный шанс — честная формула, только для UI
   const displayChance = calculateDisplayChance(sourceItem, targetItem, safeMultiplier);
 
   return {
     success,
     resultItemId: success ? targetItem.id : null,
-    chance: Number(displayChance.toFixed(1)),   // 1 знак после запятой
+    chance: Number(displayChance.toFixed(1)),
     baseChance: Number(displayChance.toFixed(2)),
     multiplier: safeMultiplier,
-    // realChance и roll умышленно НЕ возвращаются.
-    // Если нужны для аудита — пиши в отдельный лог-канал внутри этой функции.
   };
 }
 
@@ -112,8 +106,10 @@ module.exports = {
   MIN_CHANCE,
   MAX_CHANCE,
   MAX_MULTIPLIER,
+  calculateRealBaseChance,
   calculateRealChance,
   calculateDisplayChance,
+  applyRollNoise,
   calculateBaseChance,
   applyMultiplier,
   applyHouseEdge,
