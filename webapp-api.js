@@ -57,11 +57,50 @@ function verifyInitData(initData, botToken) {
   }
 }
 
+/**
+ * Собираем вайтлист из всех возможных источников.
+ * Поддерживаем:
+ *   - ADMIN_CHAT_ID как одиночный ID или список через запятую
+ *   - USER_LIMITS.WITHDRAW_WHITELIST (массив)
+ * Все значения нормализуем как строки без пробелов.
+ */
 function buildWithdrawWhitelist() {
-  const envId = String(process.env.ADMIN_CHAT_ID || '').trim();
-  const fromConfig = (USER_LIMITS.WITHDRAW_WHITELIST || []).map((v) => String(v).trim());
-  const set = new Set([envId, ...fromConfig].filter(Boolean));
+  const set = new Set();
+
+  // ADMIN_CHAT_ID из env — может быть "6043384033" или "6043384033,123456"
+  const envRaw = String(process.env.ADMIN_CHAT_ID || '');
+  if (envRaw) {
+    envRaw.split(',').forEach((part) => {
+      const v = String(part).trim();
+      if (v) set.add(v);
+    });
+  }
+
+  // WITHDRAW_WHITELIST из конфига
+  const cfgList = Array.isArray(USER_LIMITS.WITHDRAW_WHITELIST) ? USER_LIMITS.WITHDRAW_WHITELIST : [];
+  cfgList.forEach((v) => {
+    const s = String(v).trim();
+    if (s) set.add(s);
+  });
+
   return set;
+}
+
+/**
+ * Надёжная проверка: сравниваем и как строку, и как число.
+ * Срабатывает даже если где-то есть пробелы/переносы/разный тип.
+ */
+function isWhitelisted(userId, whitelist) {
+  const asStr = String(userId).trim();
+  const asNum = Number(userId);
+
+  if (whitelist.has(asStr)) return true;
+
+  // Резерв: сравнить по числу (на случай "  6043384033  " в env)
+  for (const entry of whitelist) {
+    if (Number(entry) === asNum && Number.isFinite(asNum)) return true;
+  }
+  return false;
 }
 
 function createWebappRouter(bot, botToken) {
@@ -69,7 +108,9 @@ function createWebappRouter(bot, botToken) {
 
   // Лог вайтлиста при старте
   const startWhitelist = [...buildWithdrawWhitelist()];
-  console.log('[withdraw] whitelist loaded:', startWhitelist.length ? startWhitelist : '(empty)');
+  console.log('[withdraw] ADMIN_CHAT_ID env =', JSON.stringify(process.env.ADMIN_CHAT_ID || null));
+  console.log('[withdraw] WITHDRAW_WHITELIST config =', JSON.stringify(USER_LIMITS.WITHDRAW_WHITELIST || []));
+  console.log('[withdraw] resolved whitelist =', startWhitelist.length ? startWhitelist : '(empty)');
 
   router.use(async (req, res, next) => {
     const initData = req.header('X-Telegram-Init-Data') || req.header('x-telegram-init-data') || '';
@@ -106,7 +147,7 @@ function createWebappRouter(bot, botToken) {
       const referralProgress = await getReferralProgress(req.tgUser.id);
 
       const whitelist = buildWithdrawWhitelist();
-      const isWhitelisted = whitelist.has(String(req.tgUser.id));
+      const whitelisted = isWhitelisted(req.tgUser.id, whitelist);
 
       res.json({
         telegram_id: String(user.telegram_id),
@@ -116,8 +157,8 @@ function createWebappRouter(bot, botToken) {
         upgrades_count: user.upgrades_count || 0,
         referrals_count: user.referrals_count || 0,
         referral_progress: referralProgress,
-        can_withdraw: isWhitelisted || referralProgress.canWithdraw,
-        is_whitelisted: isWhitelisted,
+        can_withdraw: whitelisted || referralProgress.canWithdraw,
+        is_whitelisted: whitelisted,
         balance: user.balance || 0,
         items_count: itemsCount || 0,
         tutorial_completed: Boolean(user.tutorial_completed),
@@ -273,7 +314,6 @@ function createWebappRouter(bot, botToken) {
     }
   });
 
-  // Продажа одного конкретного инвентарного слота (оставлен для совместимости)
   router.post('/sell', async (req, res) => {
     try {
       const inventoryItemId = Number(req.body.inventoryItemId);
@@ -297,7 +337,6 @@ function createWebappRouter(bot, botToken) {
     }
   });
 
-  // Продажа N одинаковых предметов (партия)
   router.post('/sell-many', async (req, res) => {
     try {
       const itemId = Number(req.body?.itemId);
@@ -341,6 +380,15 @@ function createWebappRouter(bot, botToken) {
     });
   });
 
+  /**
+   * Создание заявки на вывод.
+   *
+   * Логика:
+   *   1. Вайтлист (админ / WITHDRAW_WHITELIST) → пропускаем сразу.
+   *   2. Иначе если REQUIRE_REFERRAL_FOR_WITHDRAW → проверяем рефералов,
+   *      при неудаче возвращаем 403 referral_gate.
+   *   3. Иначе создаём заявку.
+   */
   router.post('/withdraw/request', async (req, res) => {
     try {
       const method = String(req.body?.method || '').trim();
@@ -370,13 +418,16 @@ function createWebappRouter(bot, botToken) {
       }
 
       const whitelist = buildWithdrawWhitelist();
-      const isWhitelisted = whitelist.has(String(req.tgUser.id));
-      console.log('[withdraw/request] whitelist check: id=%s whitelisted=%s',
-        req.tgUser.id, isWhitelisted);
+      const whitelisted = isWhitelisted(req.tgUser.id, whitelist);
 
-      if (!isWhitelisted && USER_LIMITS.REQUIRE_REFERRAL_FOR_WITHDRAW) {
+      console.log('[withdraw/request] whitelist check: userId=%s whitelist=[%s] match=%s',
+        req.tgUser.id, [...whitelist].join(','), whitelisted);
+
+      if (!whitelisted && USER_LIMITS.REQUIRE_REFERRAL_FOR_WITHDRAW) {
         const progress = await getReferralProgress(req.tgUser.id);
         if (!progress.canWithdraw) {
+          console.log('[withdraw/request] BLOCKED by referral gate: user=%s premium=%s/%s regular=%s/%s',
+            req.tgUser.id, progress.premium, 5, progress.regular, 10);
           return res.status(403).json({ error: 'referral_gate', progress });
         }
       }
