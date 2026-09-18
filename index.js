@@ -10,7 +10,10 @@ const {
   getUserInventoryCount,
   getReferralProgress,
   refundWithdrawRequest,
-  markWithdrawPaid
+  markWithdrawPaid,
+  grantDemo,
+  revokeDemo,
+  getDemoStatus
 } = require('./db');
 const { createWebappRouter } = require('./webapp-api');
 const { registerBot } = require('./admin-notify');
@@ -26,7 +29,10 @@ const SHARE_BANNER_URL = 'https://i.ibb.co/Fq6L8G16/7007-D8-FC-C59-A-4-F72-B1-AB
 const PRIVACY_POLICY_URL = 'https://telegra.ph/Polzovatelskoe-soglashenie-i-Usloviya-programmy-loyalnosti-RoUP-09-16';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID;
 
-// ── Хелпер для диагностики ──────────────────────────────────────────
+function isAdmin(ctx) {
+  return ADMIN_CHAT_ID && String(ctx.from?.id) === String(ADMIN_CHAT_ID);
+}
+
 function buildWhitelistForDiag() {
   const set = new Set();
   const envRaw = String(process.env.ADMIN_CHAT_ID || '');
@@ -53,6 +59,9 @@ const pendingUsers = new Map();
 const userCooldowns = new Map();
 const actionLocks = new Set();
 
+// Состояние админ-флоу: adminId → { action, targetId? }
+const adminState = new Map();
+
 const EMOJIS = [
   { name: 'пиццу 🍕', icon: '🍕' },
   { name: 'ракету 🚀', icon: '🚀' },
@@ -61,12 +70,25 @@ const EMOJIS = [
   { name: 'алмаз 💎', icon: '💎' }
 ];
 
-const getMainMenu = () => Markup.keyboard([
-  [Markup.button.webApp('🎮 Играть', WEB_APP_URL)],
-  ['👤 Профиль', '👥 Друзья'],
-  ['🎁 Подарок', '🆘 Помощь']
-]).resize();
+function getMainMenu(ctx) {
+  const rows = [
+    [Markup.button.webApp('🎮 Играть', WEB_APP_URL)],
+    ['👤 Профиль', '👥 Друзья'],
+    ['🎁 Подарок', '🆘 Помощь']
+  ];
+  if (isAdmin(ctx)) rows.push(['⚙️ Админ-панель']);
+  return Markup.keyboard(rows).resize();
+}
 
+function getAdminPanel() {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback('🎁 Выдать demo-баланс', 'admin_demo_grant')],
+    [Markup.button.callback('🚫 Отключить demo', 'admin_demo_revoke')],
+    [Markup.button.callback('📊 Статус demo игрока', 'admin_demo_status')],
+  ]);
+}
+
+// ── Anti-spam middleware ─────────────────────────────────────────────
 bot.use(async (ctx, next) => {
   const isPaymentUpdate = Boolean(ctx.preCheckoutQuery || ctx.shippingQuery || ctx.message?.successful_payment);
   if (isPaymentUpdate) return next();
@@ -86,11 +108,300 @@ bot.use(async (ctx, next) => {
   return next();
 });
 
+// ═══════════════════════════════════════════════════════════════════════
+// АДМИН-ПАНЕЛЬ
+// ═══════════════════════════════════════════════════════════════════════
+
+bot.hears('⚙️ Админ-панель', async (ctx) => {
+  if (!isAdmin(ctx)) return;
+  adminState.delete(ctx.from.id);
+
+  await ctx.reply(
+    `⚙️ <b>Админ-панель</b>\n\n` +
+    `Управление demo-режимом игроков.\n` +
+    `Demo автоматически включает lucky mode.`,
+    { parse_mode: 'HTML', ...getAdminPanel() }
+  ).catch(() => {});
+});
+
+bot.action('admin_panel', async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.answerCbQuery('Нет доступа', { show_alert: true }).catch(() => {});
+  adminState.delete(ctx.from.id);
+  await ctx.editMessageText(
+    `⚙️ <b>Админ-панель</b>\n\n` +
+    `Управление demo-режимом игроков.\n` +
+    `Demo автоматически включает lucky mode.`,
+    { parse_mode: 'HTML', ...getAdminPanel() }
+  ).catch(() => {});
+  ctx.answerCbQuery().catch(() => {});
+});
+
+bot.action('admin_cancel', async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.answerCbQuery().catch(() => {});
+  adminState.delete(ctx.from.id);
+  await ctx.editMessageText(
+    `⚙️ <b>Админ-панель</b>\n\nОперация отменена.`,
+    { parse_mode: 'HTML', ...getAdminPanel() }
+  ).catch(() => {});
+  ctx.answerCbQuery('Отменено').catch(() => {});
+});
+
+bot.action('admin_demo_grant', async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.answerCbQuery('Нет доступа', { show_alert: true }).catch(() => {});
+  adminState.set(ctx.from.id, { action: 'demo_id' });
+
+  await ctx.editMessageText(
+    `🎁 <b>Выдача demo-баланса</b>\n\n` +
+    `Шаг 1/2. Введи <b>ID игрока</b> (число).\n\n` +
+    `Чтобы отменить, отправь <code>/cancel</code> или нажми кнопку.`,
+    {
+      parse_mode: 'HTML',
+      ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Отмена', 'admin_cancel')]])
+    }
+  ).catch(() => {});
+  ctx.answerCbQuery().catch(() => {});
+});
+
+bot.action('admin_demo_revoke', async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.answerCbQuery('Нет доступа', { show_alert: true }).catch(() => {});
+  adminState.set(ctx.from.id, { action: 'demo_off_id' });
+
+  await ctx.editMessageText(
+    `🚫 <b>Отключение demo</b>\n\n` +
+    `Введи <b>ID игрока</b>, у которого нужно откатить demo-баланс и удалить demo-предметы.\n\n` +
+    `Чтобы отменить, отправь <code>/cancel</code> или нажми кнопку.`,
+    {
+      parse_mode: 'HTML',
+      ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Отмена', 'admin_cancel')]])
+    }
+  ).catch(() => {});
+  ctx.answerCbQuery().catch(() => {});
+});
+
+bot.action('admin_demo_status', async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.answerCbQuery('Нет доступа', { show_alert: true }).catch(() => {});
+  adminState.set(ctx.from.id, { action: 'demo_status_id' });
+
+  await ctx.editMessageText(
+    `📊 <b>Статус demo</b>\n\n` +
+    `Введи <b>ID игрока</b> для проверки.`,
+    {
+      parse_mode: 'HTML',
+      ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Отмена', 'admin_cancel')]])
+    }
+  ).catch(() => {});
+  ctx.answerCbQuery().catch(() => {});
+});
+
+bot.hears('/cancel', async (ctx) => {
+  if (!isAdmin(ctx)) return;
+  if (!adminState.has(ctx.from.id)) return;
+  adminState.delete(ctx.from.id);
+  await ctx.reply('❌ Операция отменена.', getAdminPanel()).catch(() => {});
+});
+
+// Текстовый обработчик шагов админ-флоу
+bot.on('text', async (ctx, next) => {
+  const uid = ctx.from?.id;
+  if (!uid || !isAdmin(ctx)) return next();
+  const state = adminState.get(uid);
+  if (!state) return next();
+
+  const text = String(ctx.message?.text || '').trim();
+  if (!text || text.startsWith('/')) return next();
+
+  if (state.action === 'demo_id') {
+    const targetId = Number(text);
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+      return ctx.reply('❌ ID должен быть целым положительным числом. Попробуй снова или отправь /cancel.').catch(() => {});
+    }
+    adminState.set(uid, { action: 'demo_amount', targetId });
+
+    const target = await getUser(targetId);
+    const balanceInfo = target ? `\nТекущий баланс: <b>${target.balance || 0} ⭐</b>` : '\n<i>Игрок ещё не открывал бота — запись появится при выдаче.</i>';
+
+    return ctx.reply(
+      `🎁 <b>Выдача demo-баланса</b>\n\n` +
+      `Шаг 2/2. Игрок: <code>${targetId}</code>${balanceInfo}\n\n` +
+      `Теперь введи <b>сумму</b> demo-баланса (целое, 1 — 1 000 000).\n` +
+      `Lucky mode включится автоматически.`,
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Отмена', 'admin_cancel')]])
+      }
+    ).catch(() => {});
+  }
+
+  if (state.action === 'demo_amount') {
+    const amount = Number(text);
+    if (!Number.isInteger(amount) || amount < 1 || amount > 1_000_000) {
+      return ctx.reply('❌ Сумма должна быть целым числом от 1 до 1 000 000. Попробуй снова или /cancel.').catch(() => {});
+    }
+
+    const result = await grantDemo(state.targetId, amount);
+    adminState.delete(uid);
+
+    if (result.error) {
+      return ctx.reply(
+        `❌ Ошибка выдачи: <b>${result.error}</b>`,
+        { parse_mode: 'HTML', ...getAdminPanel() }
+      ).catch(() => {});
+    }
+
+    return ctx.reply(
+      `✅ <b>Demo-баланс выдан</b>\n\n` +
+      `Игрок: <code>${result.userId}</code>\n` +
+      `Начислено: <b>+${result.granted} ⭐</b>\n` +
+      `Баланс до выдачи: ${result.preDemoBalance} ⭐\n` +
+      `Баланс сейчас: <b>${result.newBalance} ⭐</b>\n` +
+      `Lucky mode: <b>ON</b>\n` +
+      `Вывод: <b>заблокирован</b>\n\n` +
+      `Когда нужно будет откатить — используй «Отключить demo» в админ-панели.`,
+      { parse_mode: 'HTML', ...getAdminPanel() }
+    ).catch(() => {});
+  }
+
+  if (state.action === 'demo_off_id') {
+    const targetId = Number(text);
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+      return ctx.reply('❌ ID должен быть целым положительным числом. Попробуй снова или /cancel.').catch(() => {});
+    }
+
+    const result = await revokeDemo(targetId);
+    adminState.delete(uid);
+
+    if (result.error) {
+      return ctx.reply(
+        `❌ Ошибка отключения: <b>${result.error}</b>`,
+        { parse_mode: 'HTML', ...getAdminPanel() }
+      ).catch(() => {});
+    }
+
+    return ctx.reply(
+      `✅ <b>Demo-режим отключён</b>\n\n` +
+      `Игрок: <code>${result.userId}</code>\n` +
+      `Был активен: ${result.wasActive ? 'да' : 'нет'}\n` +
+      `Баланс откачен к: <b>${result.restoredBalance} ⭐</b>\n` +
+      `Удалено demo-предметов: <b>${result.removedItems}</b>\n` +
+      `Lucky mode: <b>OFF</b>\n` +
+      `Вывод: <b>разблокирован</b>`,
+      { parse_mode: 'HTML', ...getAdminPanel() }
+    ).catch(() => {});
+  }
+
+  if (state.action === 'demo_status_id') {
+    const targetId = Number(text);
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+      return ctx.reply('❌ ID должен быть целым положительным числом. Попробуй снова или /cancel.').catch(() => {});
+    }
+
+    const s = await getDemoStatus(targetId);
+    adminState.delete(uid);
+
+    if (s.error) {
+      return ctx.reply(
+        `❌ Ошибка: <b>${s.error}</b>`,
+        { parse_mode: 'HTML', ...getAdminPanel() }
+      ).catch(() => {});
+    }
+
+    return ctx.reply(
+      `📊 <b>Demo-статус игрока</b>\n\n` +
+      `ID: <code>${s.userId}</code>\n` +
+      `Demo активно: <b>${s.active ? 'ДА' : 'нет'}</b>\n` +
+      `Lucky mode: <b>${s.luckyMode ? 'ON' : 'OFF'}</b>\n` +
+      `Баланс сейчас: <b>${s.balance} ⭐</b>\n` +
+      `Снапшот до demo: ${s.preDemoBalance != null ? `${s.preDemoBalance} ⭐` : '—'}`,
+      { parse_mode: 'HTML', ...getAdminPanel() }
+    ).catch(() => {});
+  }
+
+  return next();
+});
+
+// ── Быстрые команды ─────────────────────────────────────────────────
+bot.command('demo', async (ctx) => {
+  if (!isAdmin(ctx)) return;
+  const args = (ctx.message.text || '').split(/\s+/).slice(1);
+  let targetId = null;
+  let amount = null;
+
+  if (ctx.message.reply_to_message?.from?.id) {
+    targetId = ctx.message.reply_to_message.from.id;
+    amount = Number(args[0]);
+  } else if (args.length === 2) {
+    targetId = Number(args[0]);
+    amount = Number(args[1]);
+  } else if (args.length === 1) {
+    targetId = ctx.from.id;
+    amount = Number(args[0]);
+  }
+
+  if (!Number.isInteger(targetId) || targetId <= 0 || !Number.isInteger(amount) || amount < 1 || amount > 1_000_000) {
+    return ctx.reply('❌ Формат: /demo <userId> <amount>, либо ответом: /demo <amount>').catch(() => {});
+  }
+
+  const result = await grantDemo(targetId, amount);
+  if (result.error) return ctx.reply(`❌ Ошибка: ${result.error}`).catch(() => {});
+
+  ctx.reply(
+    `✅ Demo выдан игроку <code>${result.userId}</code>\n` +
+    `+${result.granted} ⭐ · Итог: <b>${result.newBalance} ⭐</b> · Lucky ON`,
+    { parse_mode: 'HTML' }
+  ).catch(() => {});
+});
+
+bot.command('demo_off', async (ctx) => {
+  if (!isAdmin(ctx)) return;
+  const args = (ctx.message.text || '').split(/\s+/).slice(1);
+  let targetId = ctx.message.reply_to_message?.from?.id || (args.length === 1 ? Number(args[0]) : ctx.from.id);
+
+  if (!Number.isInteger(targetId) || targetId <= 0) {
+    return ctx.reply('❌ Формат: /demo_off <userId> или ответом на сообщение.').catch(() => {});
+  }
+
+  const r = await revokeDemo(targetId);
+  if (r.error) return ctx.reply(`❌ Ошибка: ${r.error}`).catch(() => {});
+
+  ctx.reply(
+    `✅ Demo отключён у <code>${r.userId}</code>\n` +
+    `Баланс откачен к <b>${r.restoredBalance} ⭐</b> · Удалено предметов: ${r.removedItems}`,
+    { parse_mode: 'HTML' }
+  ).catch(() => {});
+});
+
+bot.command('demo_status', async (ctx) => {
+  if (!isAdmin(ctx)) return;
+  const args = (ctx.message.text || '').split(/\s+/).slice(1);
+  let targetId = ctx.message.reply_to_message?.from?.id || (args.length === 1 ? Number(args[0]) : ctx.from.id);
+
+  if (!Number.isInteger(targetId) || targetId <= 0) {
+    return ctx.reply('❌ Формат: /demo_status <userId>').catch(() => {});
+  }
+
+  const s = await getDemoStatus(targetId);
+  if (s.error) return ctx.reply(`❌ Ошибка: ${s.error}`).catch(() => {});
+
+  ctx.reply(
+    `📊 <b>Demo-статус</b>\n\n` +
+    `ID: <code>${s.userId}</code>\n` +
+    `Активно: <b>${s.active ? 'ДА' : 'нет'}</b>\n` +
+    `Lucky mode: <b>${s.luckyMode ? 'ON' : 'OFF'}</b>\n` +
+    `Баланс: <b>${s.balance} ⭐</b>\n` +
+    `Снапшот до demo: ${s.preDemoBalance != null ? `${s.preDemoBalance} ⭐` : '—'}`,
+    { parse_mode: 'HTML' }
+  ).catch(() => {});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// ОБЫЧНЫЕ ХЕНДЛЕРЫ
+// ═══════════════════════════════════════════════════════════════════════
+
 bot.start(async (ctx) => {
   try {
     const existingUser = await getUser(ctx.from.id);
     if (existingUser && existingUser.accepted_tos) {
-      return ctx.reply('С возвращением в <b>RoUP</b>! ⚡️', { parse_mode: 'HTML', ...getMainMenu() });
+      return ctx.reply('С возвращением в <b>RoUP</b>! ⚡️', { parse_mode: 'HTML', ...getMainMenu(ctx) });
     }
 
     let referrerId = null;
@@ -164,7 +475,7 @@ bot.action('accept_tos', async (ctx) => {
 
     await ctx.deleteMessage().catch(() => {});
     ctx.reply('Привет 👋\nЭто <b>RoUP</b> — тот самый роблокс апгрейдер ⚡️\n\n👇 Выбери кнопку в меню 👇', {
-      parse_mode: 'HTML', ...getMainMenu()
+      parse_mode: 'HTML', ...getMainMenu(ctx)
     }).catch(() => {});
   } catch (err) { console.error('Ошибка в accept_tos:', err.message); }
   finally { actionLocks.delete(lockKey); }
@@ -267,7 +578,7 @@ bot.on('inline_query', async (ctx) => {
 
 bot.hears('🆘 Помощь', (ctx) => ctx.reply(`❓ <b>Техническая поддержка</b>\n\nПо всем вопросам и проблемам с предметами:\n👉 @roup_support`, { parse_mode: 'HTML' }).catch(() => {}));
 
-// ── Callback-кнопки заявок на вывод (только для админа) ──────────────
+// ── Callback-кнопки заявок на вывод ─────────────────────────────────
 bot.action(/^wr:(paid|reject):(\d+)$/, async (ctx) => {
   const action = ctx.match[1];
   const requestId = Number(ctx.match[2]);
@@ -291,7 +602,6 @@ bot.action(/^wr:(paid|reject):(\d+)$/, async (ctx) => {
   }
 });
 
-// ---------- Telegram Stars: ТОЛЬКО поддержка проекта ----------
 bot.on('pre_checkout_query', async (ctx) => {
   const payload = String(ctx.preCheckoutQuery?.invoice_payload || '');
   console.log('💳 pre_checkout_query от', ctx.from?.id, payload);
@@ -331,6 +641,10 @@ bot.catch((err, ctx) => console.error(`Ошибка у пользователя 
 process.on('uncaughtException', (err) => console.error('Критическая ошибка (UncaughtException):', err.message));
 process.on('unhandledRejection', (reason) => console.error('Необработанный промис (UnhandledRejection):', reason));
 
+// ═══════════════════════════════════════════════════════════════════════
+// HTTP-СЕРВЕР
+// ═══════════════════════════════════════════════════════════════════════
+
 const app = express();
 app.disable('x-powered-by');
 app.use((req, res, next) => {
@@ -348,27 +662,21 @@ app.use((req, res, next) => {
 });
 app.use(express.json({ limit: '64kb' }));
 
-// ═════════════════════════════════════════════════════════════════════
-// ДИАГНОСТИКА — регистрируется ДО webapp-роутера, поэтому публичная.
-// Открывать: https://roup-bot.onrender.com/api/diag
-// Опционально: ?userId=6043384033 — проверить конкретного пользователя
-// ═════════════════════════════════════════════════════════════════════
+app.use('/api', (req, res, next) => {
+  const hasInit = Boolean(req.header('X-Telegram-Init-Data'));
+  const body = req.method === 'POST' ? JSON.stringify(req.body || {}).slice(0, 200) : '';
+  console.log(`[api] ${req.method} ${req.originalUrl} init=${hasInit} body=${body}`);
+  next();
+});
+
 app.get('/api/diag', (req, res) => {
   const whitelist = buildWhitelistForDiag();
   const userId = req.query.userId ? String(req.query.userId).trim() : null;
-
   res.json({
     adminChatIdRaw: process.env.ADMIN_CHAT_ID || null,
     adminChatIdTrimmed: String(process.env.ADMIN_CHAT_ID || '').trim(),
-    adminChatIdType: typeof process.env.ADMIN_CHAT_ID,
     whitelist,
     requireReferral: USER_LIMITS.REQUIRE_REFERRAL_FOR_WITHDRAW,
-    configWhitelist: USER_LIMITS.WITHDRAW_WHITELIST || [],
-    nodeEnv: process.env.NODE_ENV || null,
-    botTokenPresent: Boolean(process.env.BOT_TOKEN),
-    dbUrlPresent: Boolean(process.env.DATABASE_URL),
-    webAppUrl: process.env.WEB_APP_URL || null,
-    // Если передан ?userId=... — показываем, попал ли он в вайтлист
     checkedUserId: userId,
     checkedUserInWhitelist: userId ? isWhitelistedId(userId, whitelist) : null,
   });
@@ -377,8 +685,6 @@ app.get('/api/diag', (req, res) => {
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || crypto.createHash('sha256').update(BOT_TOKEN || 'missing-token').digest('hex');
 const WEBHOOK_PATH = `/telegraf/${encodeURIComponent(WEBHOOK_SECRET)}`;
 app.use(bot.webhookCallback(WEBHOOK_PATH));
-
-// Webapp-роутер монтируем ПОСЛЕ diag.
 app.use('/api', createWebappRouter(bot, BOT_TOKEN));
 
 app.get('/ping', (req, res) => res.status(200).send('pong'));
@@ -389,9 +695,7 @@ const webappDist = path.join(__dirname, 'webapp', 'dist');
 app.use(express.static(webappDist, {
   maxAge: '30d',
   setHeaders: (res, path) => {
-    if (path.endsWith('.html')) {
-      res.setHeader('Cache-Control', 'no-cache');
-    }
+    if (path.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache');
   }
 }));
 
@@ -403,9 +707,7 @@ app.use((req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
   console.log(`Render HTTP-сервер активен на порту ${PORT}`);
-  console.log('[boot] ADMIN_CHAT_ID raw =', JSON.stringify(process.env.ADMIN_CHAT_ID || null));
-  console.log('[boot] resolved whitelist =', JSON.stringify(buildWhitelistForDiag()));
-  if (!ADMIN_CHAT_ID) console.warn('⚠️ ADMIN_CHAT_ID не задан — заявки на вывод не будут приходить админу.');
+  if (!ADMIN_CHAT_ID) console.warn('⚠️ ADMIN_CHAT_ID не задан — заявки на вывод и админ-панель недоступны.');
   try {
     const fullWebhookUrl = `${WEB_APP_URL}${WEBHOOK_PATH}`;
     await bot.telegram.setWebhook(fullWebhookUrl);
