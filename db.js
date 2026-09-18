@@ -1,7 +1,7 @@
 const { Pool } = require('pg');
 const catalogItems = require('./catalog');
 const { resolveUpgrade, canUpgradeTo, MAX_MULTIPLIER } = require('./upgrade-logic');
-const { WITHDRAWAL } = require('./house-config');
+const { WITHDRAWAL, UPGRADE } = require('./house-config');
 
 const connectionString = process.env.DATABASE_URL;
 
@@ -16,12 +16,25 @@ const pool = new Pool({
   idleTimeoutMillis: 10000,
   connectionTimeoutMillis: 5000,
   keepAlive: true,
-  keepAliveInitialDelayMillis: 10000
+  keepAliveInitialDelayMillis: 10000,
 });
 
 pool.on('error', (err) => {
   console.error('Непредвиденный сброс сокета PostgreSQL pooler:', err.message);
 });
+
+// ── In-memory кэш последних дропов (для live-ленты) ──────────────────
+const LIVE_FEED_MAX = 50;
+const recentDrops = []; // { id, userId, userName, itemName, itemImageUrl, priceStars, chance, success, ts }
+
+function pushDrop(drop) {
+  recentDrops.unshift(drop);
+  if (recentDrops.length > LIVE_FEED_MAX) recentDrops.length = LIVE_FEED_MAX;
+}
+
+function getRecentDrops(limit = 20) {
+  return recentDrops.slice(0, limit);
+}
 
 async function initDb() {
   try {
@@ -106,6 +119,8 @@ async function initDb() {
         ON users (invited_by);
       CREATE INDEX IF NOT EXISTS idx_operations_created
         ON operation_results (created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_operations_pending
+        ON operation_results (user_id, operation_type, status, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_wr_user_status
         ON withdraw_requests (user_id, status);
       CREATE INDEX IF NOT EXISTS idx_wr_status_created
@@ -130,6 +145,40 @@ async function initDb() {
           image_url = EXCLUDED.image_url
       `, [item.name, item.category, item.price_stars, item.image_url]);
     }
+
+    // Прогреваем кэш дропов из БД последними успешными апгрейдами
+    try {
+      const warm = await pool.query(`
+        SELECT o.user_id, o.response, u.username, u.first_name, o.created_at
+        FROM operation_results o
+        LEFT JOIN users u ON u.telegram_id = o.user_id
+        WHERE o.operation_type = 'upgrade'
+          AND o.status = 'completed'
+          AND (o.response->>'success')::boolean = true
+          AND o.created_at > NOW() - INTERVAL '2 hours'
+        ORDER BY o.created_at DESC
+        LIMIT 30
+      `);
+      for (const row of warm.rows) {
+        const item = row.response?.item;
+        if (!item) continue;
+        pushDrop({
+          id: `warm_${row.user_id}_${new Date(row.created_at).getTime()}`,
+          userId: String(row.user_id),
+          userName: row.username || row.first_name || 'игрок',
+          itemName: item.name,
+          itemImageUrl: item.image_url,
+          priceStars: Number(item.price_stars) || 0,
+          chance: Number(row.response?.chance) || 0,
+          success: true,
+          ts: new Date(row.created_at).getTime(),
+        });
+      }
+      console.log(`✅ Live-кэш прогрет: ${recentDrops.length} дропов`);
+    } catch (e) {
+      console.warn('Прогрев live-кэша пропущен:', e.message);
+    }
+
     console.log('✅ База данных Supabase подключена и синхронизирована!');
   } catch (err) {
     console.error('Ошибка инициализации таблиц Supabase:', err.message);
@@ -137,6 +186,10 @@ async function initDb() {
 }
 
 initDb();
+
+// ═══════════════════════════════════════════════════════════════════
+// USERS
+// ═══════════════════════════════════════════════════════════════════
 
 async function registerUser(tgUser, referrerId = null) {
   let res = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [tgUser.id]);
@@ -168,7 +221,8 @@ async function registerUser(tgUser, referrerId = null) {
     user = res.rows[0];
   }
 
-  await pool.query('UPDATE users SET is_premium = $1, username = $2, first_name = $3 WHERE telegram_id = $4', [isPremium, tgUser.username || null, tgUser.first_name || '', tgUser.id]);
+  await pool.query('UPDATE users SET is_premium = $1, username = $2, first_name = $3 WHERE telegram_id = $4',
+    [isPremium, tgUser.username || null, tgUser.first_name || '', tgUser.id]);
   return { user: (await getUser(tgUser.id)), rewardedReferrerId: successfulReferrer };
 }
 
@@ -197,13 +251,9 @@ async function ensureUserExists(tgUser) {
 
 async function giveRandomStarterItem(userId) {
   const itemRes = await pool.query(`
-    SELECT * FROM items 
-    WHERE price_stars BETWEEN 5 AND 10 
-    ORDER BY RANDOM() 
-    LIMIT 1
+    SELECT * FROM items WHERE price_stars BETWEEN 5 AND 10 ORDER BY RANDOM() LIMIT 1
   `);
   const item = itemRes.rows[0];
-
   if (item) {
     await pool.query('INSERT INTO user_inventory (user_id, item_id, is_demo) VALUES ($1, $2, 0)', [userId, item.id]);
   }
@@ -214,44 +264,24 @@ async function claimSubscriptionItem(userId) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-
     const claimRes = await client.query(`
-      UPDATE users
-      SET subscribed_reward_claimed = 1
+      UPDATE users SET subscribed_reward_claimed = 1
       WHERE telegram_id = $1 AND COALESCE(subscribed_reward_claimed, 0) = 0
       RETURNING telegram_id
     `, [userId]);
-
-    if (!claimRes.rowCount) {
-      await client.query('ROLLBACK');
-      return null;
-    }
+    if (!claimRes.rowCount) { await client.query('ROLLBACK'); return null; }
 
     const itemRes = await client.query(`
-      SELECT * FROM items
-      WHERE price_stars BETWEEN 5 AND 10
-      ORDER BY RANDOM()
-      LIMIT 1
+      SELECT * FROM items WHERE price_stars BETWEEN 5 AND 10 ORDER BY RANDOM() LIMIT 1
     `);
     const item = itemRes.rows[0];
-    if (!item) {
-      await client.query('ROLLBACK');
-      return null;
-    }
+    if (!item) { await client.query('ROLLBACK'); return null; }
 
-    await client.query(
-      'INSERT INTO user_inventory (user_id, item_id, is_demo) VALUES ($1, $2, 0)',
-      [userId, item.id]
-    );
-
+    await client.query('INSERT INTO user_inventory (user_id, item_id, is_demo) VALUES ($1, $2, 0)', [userId, item.id]);
     await client.query('COMMIT');
     return item;
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
+  } catch (err) { await client.query('ROLLBACK'); throw err; }
+  finally { client.release(); }
 }
 
 async function getUserInventoryCount(userId) {
@@ -270,6 +300,10 @@ function calculateTier(user) {
   if (user.upgrades_count >= 10000) return '🔥 Pro';
   return '🥉 Базовый';
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// ITEMS / INVENTORY
+// ═══════════════════════════════════════════════════════════════════
 
 async function getCatalogItems() {
   const res = await pool.query(
@@ -298,6 +332,10 @@ async function getUserInventory(userId) {
 async function addInventoryItem(userId, itemId) {
   await pool.query('INSERT INTO user_inventory (user_id, item_id, is_demo) VALUES ($1, $2, 0)', [userId, itemId]);
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// BUY
+// ═══════════════════════════════════════════════════════════════════
 
 async function buyItemsWithBalance(userId, itemId, quantity = 1, operationId = null) {
   const safeQuantity = Number(quantity);
@@ -336,46 +374,27 @@ async function buyItemsWithBalance(userId, itemId, quantity = 1, operationId = n
       [userId]
     );
     const user = userRes.rows[0];
-    if (!user) {
-      await client.query('ROLLBACK');
-      return { error: 'user_not_found' };
-    }
+    if (!user) { await client.query('ROLLBACK'); return { error: 'user_not_found' }; }
 
     const itemRes = await client.query(
       'SELECT id, name, category, price_stars, image_url FROM items WHERE id = $1',
       [itemId]
     );
     const item = itemRes.rows[0];
-    if (!item) {
-      await client.query('ROLLBACK');
-      return { error: 'item_not_found' };
-    }
+    if (!item) { await client.query('ROLLBACK'); return { error: 'item_not_found' }; }
 
     const unitPrice = Number(item.price_stars);
-    if (!Number.isInteger(unitPrice) || unitPrice < 0) {
-      await client.query('ROLLBACK');
-      return { error: 'invalid_item_price' };
-    }
+    if (!Number.isInteger(unitPrice) || unitPrice < 0) { await client.query('ROLLBACK'); return { error: 'invalid_item_price' }; }
 
     const total = unitPrice * safeQuantity;
-    if (!Number.isSafeInteger(total)) {
-      await client.query('ROLLBACK');
-      return { error: 'invalid_quantity' };
-    }
-
-    if (user.balance < total) {
-      await client.query('ROLLBACK');
-      return { error: 'insufficient_balance' };
-    }
+    if (!Number.isSafeInteger(total)) { await client.query('ROLLBACK'); return { error: 'invalid_quantity' }; }
+    if (user.balance < total) { await client.query('ROLLBACK'); return { error: 'insufficient_balance' }; }
 
     const balRes = await client.query(
       'UPDATE users SET balance = balance - $1 WHERE telegram_id = $2 AND balance >= $1 RETURNING balance',
       [total, userId]
     );
-    if (!balRes.rowCount) {
-      await client.query('ROLLBACK');
-      return { error: 'insufficient_balance' };
-    }
+    if (!balRes.rowCount) { await client.query('ROLLBACK'); return { error: 'insufficient_balance' }; }
 
     const isDemo = user.lucky_mode ? 1 : 0;
 
@@ -384,12 +403,7 @@ async function buyItemsWithBalance(userId, itemId, quantity = 1, operationId = n
       SELECT $1, $2, $3 FROM generate_series(1, $4)
     `, [userId, item.id, isDemo, safeQuantity]);
 
-    const response = {
-      item,
-      quantity: safeQuantity,
-      total,
-      balance: balRes.rows[0].balance
-    };
+    const response = { item, quantity: safeQuantity, total, balance: balRes.rows[0].balance };
 
     if (operationId) {
       const opKey = String(operationId).slice(0, 100);
@@ -407,12 +421,8 @@ async function buyItemsWithBalance(userId, itemId, quantity = 1, operationId = n
 
     await client.query('COMMIT');
     return response;
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
+  } catch (err) { await client.query('ROLLBACK'); throw err; }
+  finally { client.release(); }
 }
 
 async function buyItemWithBalance(userId, itemId) {
@@ -433,8 +443,7 @@ async function getReferralProgress(userId) {
       COUNT(*)::int AS total,
       COUNT(*) FILTER (WHERE is_premium = 1)::int AS premium,
       COUNT(*) FILTER (WHERE COALESCE(is_premium, 0) = 0)::int AS regular
-    FROM users
-    WHERE invited_by = $1
+    FROM users WHERE invited_by = $1
   `, [userId]);
 
   const row = res.rows[0] || { total: 0, premium: 0, regular: 0 };
@@ -446,18 +455,40 @@ async function getReferralProgress(userId) {
     regular,
     premiumRemaining: Math.max(0, 5 - premium),
     regularRemaining: Math.max(0, 10 - regular),
-    canWithdraw: premium >= 5 || regular >= 10
+    canWithdraw: premium >= 5 || regular >= 10,
   };
 }
 
-// ═══════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
 // UPGRADE
-// ═══════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+
+async function countPendingUpgrades(userId) {
+  const res = await pool.query(
+    `SELECT COUNT(*)::int AS cnt FROM operation_results
+     WHERE user_id = $1 AND operation_type = 'upgrade' AND status = 'pending'
+       AND created_at > NOW() - ($2 || ' seconds')::interval`,
+    [userId, String(UPGRADE.PENDING_WINDOW_SEC || 15)]
+  );
+  return Number(res.rows[0]?.cnt) || 0;
+}
 
 async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1, operationId = null) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+
+    // Anti-flood: одна pending-операция за окно
+    const pendingRes = await client.query(
+      `SELECT COUNT(*)::int AS cnt FROM operation_results
+       WHERE user_id = $1 AND operation_type = 'upgrade' AND status = 'pending'
+         AND created_at > NOW() - ($2 || ' seconds')::interval`,
+      [userId, String(UPGRADE.PENDING_WINDOW_SEC || 15)]
+    );
+    if ((Number(pendingRes.rows[0]?.cnt) || 0) > 0) {
+      await client.query('ROLLBACK');
+      return { error: 'pending_upgrade' };
+    }
 
     if (operationId) {
       const opKey = String(operationId).slice(0, 100);
@@ -481,12 +512,12 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
       }
     }
 
-    // Читаем lucky_mode
     const userRow = await client.query(
-      'SELECT lucky_mode FROM users WHERE telegram_id = $1',
+      'SELECT lucky_mode, username, first_name FROM users WHERE telegram_id = $1',
       [userId]
     );
     const luckyMode = Number(userRow.rows[0]?.lucky_mode) === 1;
+    const userName = userRow.rows[0]?.username || userRow.rows[0]?.first_name || 'игрок';
 
     const ownedRes = await client.query(`
       SELECT ui.id, ui.is_demo, i.id AS item_id, i.name, i.price_stars
@@ -497,23 +528,16 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
     `, [inventoryItemId, userId]);
 
     const sourceItem = ownedRes.rows[0];
-    if (!sourceItem) {
-      await client.query('ROLLBACK');
-      return { error: 'item_not_owned' };
-    }
+    if (!sourceItem) { await client.query('ROLLBACK'); return { error: 'item_not_owned' }; }
 
     const targetRes = await client.query('SELECT * FROM items WHERE id = $1', [targetItemId]);
     const targetItem = targetRes.rows[0];
-    if (!targetItem) {
-      await client.query('ROLLBACK');
-      return { error: 'target_not_found' };
-    }
+    if (!targetItem) { await client.query('ROLLBACK'); return { error: 'target_not_found' }; }
 
     if (Number(sourceItem.price_stars) === Number(targetItem.price_stars)) {
       await client.query('ROLLBACK');
       return { error: 'same_price_target' };
     }
-
     if (!canUpgradeTo(sourceItem, targetItem)) {
       await client.query('ROLLBACK');
       return { error: 'target_not_higher' };
@@ -527,7 +551,6 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
       return { error: 'invalid_multiplier' };
     }
 
-    // Единственный вызов — с явным luckyMode
     const decision = resolveUpgrade(
       { id: sourceItem.item_id, name: sourceItem.name, price_stars: sourceItem.price_stars },
       targetItem,
@@ -535,9 +558,9 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
       { luckyMode }
     );
 
-    // Диагностика в лог
-    console.log('[upgrade] user=%s lucky=%s realBase=%s realFinal=%s roll=%s success=%s display=%s',
-      userId, luckyMode, decision._realBase, decision._realFinal, decision._roll, decision.success, decision.chance);
+    console.log('[upgrade] user=%s lucky=%s realBase=%s realFinal=%s roll=%s success=%s display=%s angle=%s',
+      userId, luckyMode, decision._realBase, decision._realFinal, decision._roll,
+      decision.success, decision.chance, decision.landingAngle);
 
     await client.query('DELETE FROM user_inventory WHERE id = $1', [inventoryItemId]);
     await client.query('UPDATE users SET upgrades_count = upgrades_count + 1 WHERE telegram_id = $1', [userId]);
@@ -546,20 +569,20 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
     if (decision.success) {
       const resultRes = await client.query('SELECT * FROM items WHERE id = $1', [decision.resultItemId]);
       resultItem = resultRes.rows[0];
-      if (!resultItem) {
-        await client.query('ROLLBACK');
-        return { error: 'result_not_found' };
-      }
+      if (!resultItem) { await client.query('ROLLBACK'); return { error: 'result_not_found' }; }
       const isDemo = sourceItem.is_demo ? 1 : 0;
-      await client.query('INSERT INTO user_inventory (user_id, item_id, is_demo) VALUES ($1, $2, $3)', [userId, resultItem.id, isDemo]);
+      await client.query(
+        'INSERT INTO user_inventory (user_id, item_id, is_demo) VALUES ($1, $2, $3)',
+        [userId, resultItem.id, isDemo]
+      );
     }
 
-    // В response идут ТОЛЬКО публичные поля
     const response = {
       success: Boolean(decision.success),
       item: resultItem,
       chance: decision.chance,
       multiplier: decision.multiplier,
+      landingAngle: decision.landingAngle,
     };
 
     if (operationId) {
@@ -571,26 +594,37 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
       `, [userId, opKey, JSON.stringify(response)]);
     }
 
+    // Логируем в live-ленту только успех и не в демо-режиме
+    if (decision.success && resultItem && !luckyMode) {
+      pushDrop({
+        id: `drop_${userId}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        userId: String(userId),
+        userName,
+        itemName: resultItem.name,
+        itemImageUrl: resultItem.image_url,
+        priceStars: Number(resultItem.price_stars) || 0,
+        chance: decision.chance,
+        success: true,
+        ts: Date.now(),
+      });
+    }
+
     await client.query('COMMIT');
     return response;
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
+  } catch (err) { await client.query('ROLLBACK'); throw err; }
+  finally { client.release(); }
 }
 
-// ═══════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
 // SELL
-// ═══════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
 
 async function sellInventoryItem(userId, inventoryItemId, operationId = null) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-
     const normalizedOperationId = operationId ? String(operationId).slice(0, 100) : null;
+
     if (normalizedOperationId) {
       const opRes = await client.query(`
         INSERT INTO operation_results (user_id, operation_type, operation_id, response, status)
@@ -598,7 +632,6 @@ async function sellInventoryItem(userId, inventoryItemId, operationId = null) {
         ON CONFLICT (user_id, operation_type, operation_id) DO NOTHING
         RETURNING response, status
       `, [userId, normalizedOperationId]);
-
       if (!opRes.rowCount) {
         const existing = await client.query(`
           SELECT response, status FROM operation_results
@@ -621,23 +654,15 @@ async function sellInventoryItem(userId, inventoryItemId, operationId = null) {
     `, [inventoryItemId, userId]);
 
     const row = ownedRes.rows[0];
-    if (!row) {
-      await client.query('ROLLBACK');
-      return { error: 'item_not_owned' };
-    }
+    if (!row) { await client.query('ROLLBACK'); return { error: 'item_not_owned' }; }
 
     await client.query('DELETE FROM user_inventory WHERE id = $1', [inventoryItemId]);
-
     const balRes = await client.query(
       'UPDATE users SET balance = balance + $1 WHERE telegram_id = $2 RETURNING balance',
       [row.price_stars, userId]
     );
 
-    const response = {
-      soldName: row.name,
-      earned: row.price_stars,
-      balance: balRes.rows[0]?.balance ?? 0
-    };
+    const response = { soldName: row.name, earned: row.price_stars, balance: balRes.rows[0]?.balance ?? 0 };
 
     if (normalizedOperationId) {
       await client.query(`
@@ -654,29 +679,21 @@ async function sellInventoryItem(userId, inventoryItemId, operationId = null) {
 
     await client.query('COMMIT');
     return response;
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
+  } catch (err) { await client.query('ROLLBACK'); throw err; }
+  finally { client.release(); }
 }
 
 async function sellInventoryItemsBatch(userId, itemId, quantity, operationId = null) {
   const safeQuantity = Number(quantity);
-  if (!Number.isInteger(safeQuantity) || safeQuantity < 1 || safeQuantity > 9999) {
-    return { error: 'invalid_quantity' };
-  }
+  if (!Number.isInteger(safeQuantity) || safeQuantity < 1 || safeQuantity > 9999) return { error: 'invalid_quantity' };
   const safeItemId = Number(itemId);
-  if (!Number.isInteger(safeItemId) || safeItemId <= 0) {
-    return { error: 'invalid_item' };
-  }
+  if (!Number.isInteger(safeItemId) || safeItemId <= 0) return { error: 'invalid_item' };
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-
     const normalizedOperationId = operationId ? String(operationId).slice(0, 100) : null;
+
     if (normalizedOperationId) {
       const opRes = await client.query(`
         INSERT INTO operation_results (user_id, operation_type, operation_id, response, status)
@@ -684,7 +701,6 @@ async function sellInventoryItemsBatch(userId, itemId, quantity, operationId = n
         ON CONFLICT (user_id, operation_type, operation_id) DO NOTHING
         RETURNING response, status
       `, [userId, normalizedOperationId]);
-
       if (!opRes.rowCount) {
         const existing = await client.query(`
           SELECT response, status FROM operation_results
@@ -703,8 +719,7 @@ async function sellInventoryItemsBatch(userId, itemId, quantity, operationId = n
       FROM user_inventory ui
       JOIN items i ON i.id = ui.item_id
       WHERE ui.user_id = $1 AND ui.item_id = $2
-      ORDER BY ui.created_at ASC
-      LIMIT $3
+      ORDER BY ui.created_at ASC LIMIT $3
       FOR UPDATE OF ui
     `, [userId, safeItemId, safeQuantity]);
 
@@ -719,19 +734,14 @@ async function sellInventoryItemsBatch(userId, itemId, quantity, operationId = n
     const totalEarned = unitPrice * safeQuantity;
 
     await client.query('DELETE FROM user_inventory WHERE id = ANY($1::int[])', [ids]);
-
     const balRes = await client.query(
       'UPDATE users SET balance = balance + $1 WHERE telegram_id = $2 RETURNING balance',
       [totalEarned, userId]
     );
 
     const response = {
-      itemId: safeItemId,
-      soldName: itemName,
-      quantity: safeQuantity,
-      unitPrice,
-      earned: totalEarned,
-      balance: balRes.rows[0]?.balance ?? 0,
+      itemId: safeItemId, soldName: itemName, quantity: safeQuantity,
+      unitPrice, earned: totalEarned, balance: balRes.rows[0]?.balance ?? 0,
     };
 
     if (normalizedOperationId) {
@@ -749,17 +759,13 @@ async function sellInventoryItemsBatch(userId, itemId, quantity, operationId = n
 
     await client.query('COMMIT');
     return response;
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
+  } catch (err) { await client.query('ROLLBACK'); throw err; }
+  finally { client.release(); }
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// DEMO CREDITS (старая)
-// ═══════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+// DEMO
+// ═══════════════════════════════════════════════════════════════════
 
 async function grantDemoCredits(userId, amount = 1000, operationId = null) {
   const safeAmount = Number(amount);
@@ -786,12 +792,9 @@ async function grantDemoCredits(userId, amount = 1000, operationId = null) {
     await client.query(`UPDATE operation_results SET response=$3::jsonb,status='completed',updated_at=CURRENT_TIMESTAMP WHERE user_id=$1 AND operation_type='demo_topup' AND operation_id=$2`, [userId, opKey, JSON.stringify(response)]);
     await client.query('COMMIT');
     return response;
-  } catch (err) { await client.query('ROLLBACK'); throw err; } finally { client.release(); }
+  } catch (err) { await client.query('ROLLBACK'); throw err; }
+  finally { client.release(); }
 }
-
-// ═══════════════════════════════════════════════════════════════════════
-// DEMO / LUCKY MODE
-// ═══════════════════════════════════════════════════════════════════════
 
 async function grantDemo(userId, amount) {
   const safeAmount = Number(amount);
@@ -806,29 +809,44 @@ async function grantDemo(userId, amount) {
     ? Number(user.pre_demo_balance)
     : Number(user.balance);
 
-  const result = await pool.query(
-    `UPDATE users
-     SET pre_demo_balance = $1,
-         balance = balance + $2,
-         lucky_mode = 1
-     WHERE telegram_id = $3
-     RETURNING balance, pre_demo_balance, lucky_mode`,
-    [preBalance, safeAmount, userId]
-  );
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
 
-  if (!result.rowCount) return { error: 'user_not_found' };
+    // Стираем старые demo-предметы перед новой выдачей (чистим мусор)
+    const delRes = await client.query(
+      'DELETE FROM user_inventory WHERE user_id = $1 AND is_demo = 1',
+      [userId]
+    );
 
-  console.log('[grantDemo] user=%s amount=%s newBalance=%s lucky_mode=%s',
-    userId, safeAmount, result.rows[0].balance, result.rows[0].lucky_mode);
+    const result = await client.query(
+      `UPDATE users
+       SET pre_demo_balance = $1,
+           balance = balance + $2,
+           lucky_mode = 1
+       WHERE telegram_id = $3
+       RETURNING balance, pre_demo_balance, lucky_mode`,
+      [preBalance, safeAmount, userId]
+    );
 
-  return {
-    success: true,
-    userId: String(userId),
-    granted: safeAmount,
-    preDemoBalance: Number(result.rows[0].pre_demo_balance),
-    newBalance: Number(result.rows[0].balance),
-    luckyMode: Number(result.rows[0].lucky_mode) === 1,
-  };
+    if (!result.rowCount) { await client.query('ROLLBACK'); return { error: 'user_not_found' }; }
+
+    await client.query('COMMIT');
+
+    console.log('[grantDemo] user=%s amount=%s newBalance=%s lucky_mode=%s cleanedPrevDemoItems=%s',
+      userId, safeAmount, result.rows[0].balance, result.rows[0].lucky_mode, delRes.rowCount);
+
+    return {
+      success: true,
+      userId: String(userId),
+      granted: safeAmount,
+      preDemoBalance: Number(result.rows[0].pre_demo_balance),
+      newBalance: Number(result.rows[0].balance),
+      luckyMode: Number(result.rows[0].lucky_mode) === 1,
+      cleanedPrevDemoItems: delRes.rowCount,
+    };
+  } catch (err) { await client.query('ROLLBACK'); throw err; }
+  finally { client.release(); }
 }
 
 async function revokeDemo(userId) {
@@ -840,10 +858,7 @@ async function revokeDemo(userId) {
       'SELECT balance, pre_demo_balance, lucky_mode FROM users WHERE telegram_id = $1 FOR UPDATE',
       [userId]
     );
-    if (!userRes.rowCount) {
-      await client.query('ROLLBACK');
-      return { error: 'user_not_found' };
-    }
+    if (!userRes.rowCount) { await client.query('ROLLBACK'); return { error: 'user_not_found' }; }
 
     const user = userRes.rows[0];
     const wasActive = user.pre_demo_balance != null || Number(user.lucky_mode) > 0;
@@ -855,11 +870,7 @@ async function revokeDemo(userId) {
     );
 
     await client.query(
-      `UPDATE users
-       SET balance = $1,
-           pre_demo_balance = NULL,
-           lucky_mode = 0
-       WHERE telegram_id = $2`,
+      `UPDATE users SET balance = $1, pre_demo_balance = NULL, lucky_mode = 0 WHERE telegram_id = $2`,
       [rollbackTo, userId]
     );
 
@@ -868,19 +879,9 @@ async function revokeDemo(userId) {
     console.log('[revokeDemo] user=%s wasActive=%s restored=%s removedItems=%s',
       userId, wasActive, rollbackTo, delRes.rowCount);
 
-    return {
-      success: true,
-      userId: String(userId),
-      wasActive,
-      restoredBalance: rollbackTo,
-      removedItems: delRes.rowCount,
-    };
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
+    return { success: true, userId: String(userId), wasActive, restoredBalance: rollbackTo, removedItems: delRes.rowCount };
+  } catch (err) { await client.query('ROLLBACK'); throw err; }
+  finally { client.release(); }
 }
 
 async function getDemoStatus(userId) {
@@ -895,16 +896,16 @@ async function getDemoStatus(userId) {
   };
 }
 
-// ═══════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
 // WITHDRAW
-// ═══════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
 
 async function createWithdrawRequest(userId, { method, amountStars, contactUsername, operationId }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-
     const opKey = String(operationId).slice(0, 100);
+
     const opRes = await client.query(
       `INSERT INTO operation_results (user_id, operation_type, operation_id, response, status)
        VALUES ($1, 'withdraw_request', $2, '{}'::jsonb, 'pending')
@@ -920,9 +921,7 @@ async function createWithdrawRequest(userId, { method, amountStars, contactUsern
         [userId, opKey]
       );
       await client.query('ROLLBACK');
-      return ex.rows[0]?.status === 'completed'
-        ? ex.rows[0].response
-        : { error: 'operation_in_progress' };
+      return ex.rows[0]?.status === 'completed' ? ex.rows[0].response : { error: 'operation_in_progress' };
     }
 
     const demoCheck = await client.query(
@@ -951,10 +950,7 @@ async function createWithdrawRequest(userId, { method, amountStars, contactUsern
        RETURNING balance`,
       [amountStars, userId]
     );
-    if (!balRes.rowCount) {
-      await client.query('ROLLBACK');
-      return { error: 'insufficient_balance' };
-    }
+    if (!balRes.rowCount) { await client.query('ROLLBACK'); return { error: 'insufficient_balance' }; }
 
     const amountRub = +(amountStars * WITHDRAWAL.STAR_TO_RUB).toFixed(2);
     const commissionRub = +(amountRub * WITHDRAWAL.COMMISSION_PERCENT / 100).toFixed(2);
@@ -979,15 +975,9 @@ async function createWithdrawRequest(userId, { method, amountStars, contactUsern
     );
 
     const response = {
-      success: true,
-      requestId: insRes.rows[0].id,
-      amountStars,
-      amountRub,
-      commissionRub,
-      payoutRub,
-      method,
-      contactUsername,
-      balance: balRes.rows[0].balance,
+      success: true, requestId: insRes.rows[0].id,
+      amountStars, amountRub, commissionRub, payoutRub,
+      method, contactUsername, balance: balRes.rows[0].balance,
     };
 
     await client.query(
@@ -999,12 +989,8 @@ async function createWithdrawRequest(userId, { method, amountStars, contactUsern
 
     await client.query('COMMIT');
     return response;
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
+  } catch (err) { await client.query('ROLLBACK'); throw err; }
+  finally { client.release(); }
 }
 
 async function refundWithdrawRequest(requestId, adminNote = '') {
@@ -1012,8 +998,7 @@ async function refundWithdrawRequest(requestId, adminNote = '') {
   try {
     await client.query('BEGIN');
     const r = await client.query(
-      `SELECT user_id, amount_stars, status FROM withdraw_requests
-       WHERE id = $1 FOR UPDATE`,
+      `SELECT user_id, amount_stars, status FROM withdraw_requests WHERE id = $1 FOR UPDATE`,
       [requestId]
     );
     if (!r.rowCount) { await client.query('ROLLBACK'); return { error: 'not_found' }; }
@@ -1028,8 +1013,7 @@ async function refundWithdrawRequest(requestId, adminNote = '') {
     );
 
     await client.query(
-      `UPDATE withdraw_requests SET status = 'rejected', admin_note = $2, updated_at = CURRENT_TIMESTAMP
-       WHERE id = $1`,
+      `UPDATE withdraw_requests SET status = 'rejected', admin_note = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
       [requestId, adminNote]
     );
 
@@ -1037,19 +1021,13 @@ async function refundWithdrawRequest(requestId, adminNote = '') {
       `INSERT INTO balance_ledger (user_id, operation_type, operation_id, amount, balance_after, metadata)
        VALUES ($1, 'withdraw_refund', $2, $3, $4, $5::jsonb)
        ON CONFLICT (user_id, operation_type, operation_id) DO NOTHING`,
-      [r.rows[0].user_id, `refund_${requestId}`,
-       r.rows[0].amount_stars, bal.rows[0].balance,
-       JSON.stringify({ requestId })]
+      [r.rows[0].user_id, `refund_${requestId}`, r.rows[0].amount_stars, bal.rows[0].balance, JSON.stringify({ requestId })]
     );
 
     await client.query('COMMIT');
     return { refunded: true, balance: bal.rows[0].balance };
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
+  } catch (err) { await client.query('ROLLBACK'); throw err; }
+  finally { client.release(); }
 }
 
 async function markWithdrawPaid(requestId) {
@@ -1069,29 +1047,12 @@ async function attachAdminMessage(requestId, adminMessageId) {
 }
 
 module.exports = {
-  registerUser,
-  getUser,
-  calculateTier,
-  claimSubscriptionItem,
-  getUserInventoryCount,
-  getReferralProgress,
-  setTutorialCompleted,
-  grantDemoCredits,
-  ensureUserExists,
-  getCatalogItems,
-  getItemById,
-  getUserInventory,
-  addInventoryItem,
-  buyItemWithBalance,
-  buyItemsWithBalance,
-  upgradeItem,
-  sellInventoryItem,
-  sellInventoryItemsBatch,
-  createWithdrawRequest,
-  refundWithdrawRequest,
-  markWithdrawPaid,
-  attachAdminMessage,
-  grantDemo,
-  revokeDemo,
-  getDemoStatus,
+  registerUser, getUser, calculateTier, claimSubscriptionItem, getUserInventoryCount,
+  getReferralProgress, setTutorialCompleted, grantDemoCredits, ensureUserExists,
+  getCatalogItems, getItemById, getUserInventory, addInventoryItem,
+  buyItemWithBalance, buyItemsWithBalance, upgradeItem,
+  sellInventoryItem, sellInventoryItemsBatch,
+  createWithdrawRequest, refundWithdrawRequest, markWithdrawPaid, attachAdminMessage,
+  grantDemo, revokeDemo, getDemoStatus,
+  getRecentDrops, countPendingUpgrades,
 };
