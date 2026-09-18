@@ -1,23 +1,12 @@
 const express = require('express');
 const crypto = require('crypto');
 const {
-  getCatalogItems,
-  getUserInventory,
-  getUser,
-  calculateTier,
-  getUserInventoryCount,
-  ensureUserExists,
-  upgradeItem,
-  sellInventoryItem,
-  sellInventoryItemsBatch,
-  buyItemsWithBalance,
-  getReferralProgress,
-  setTutorialCompleted,
-  grantDemoCredits,
-  createWithdrawRequest,
-  attachAdminMessage,
+  getCatalogItems, getUserInventory, getUser, calculateTier, getUserInventoryCount,
+  ensureUserExists, upgradeItem, sellInventoryItem, sellInventoryItemsBatch,
+  buyItemsWithBalance, getReferralProgress, setTutorialCompleted, grantDemoCredits,
+  createWithdrawRequest, attachAdminMessage, getRecentDrops,
 } = require('./db');
-const { WITHDRAWAL, USER_LIMITS, UPGRADE, ROULETTE } = require('./house-config');
+const { WITHDRAWAL, USER_LIMITS, UPGRADE, ROULETTE, LIVE_FEED } = require('./house-config');
 const { notifyWithdrawRequest } = require('./admin-notify');
 
 function verifyInitData(initData, botToken) {
@@ -72,15 +61,63 @@ function isWhitelisted(userId, whitelist) {
   return false;
 }
 
+// ── Онлайн (in-memory) ──────────────────────────────────────────────
+const onlineMap = new Map(); // userId → ts
+const ONLINE_WINDOW_MS = (LIVE_FEED.ONLINE_WINDOW_SEC || 300) * 1000;
+
+function touchOnline(userId) {
+  onlineMap.set(String(userId), Date.now());
+  if (onlineMap.size > 5000) {
+    const cutoff = Date.now() - ONLINE_WINDOW_MS;
+    for (const [id, ts] of onlineMap.entries()) if (ts < cutoff) onlineMap.delete(id);
+  }
+}
+
+function getRealOnline() {
+  const cutoff = Date.now() - ONLINE_WINDOW_MS;
+  let count = 0;
+  for (const ts of onlineMap.values()) if (ts >= cutoff) count++;
+  return count;
+}
+
+// ── Фейковые дропы ──────────────────────────────────────────────────
+const FAKE_NAMES = [
+  'Артём', 'kirill_228', 'Данил', 'vlad_mlbb', 'Соня', 'max_power',
+  'Никита', 'gamer_pro', 'Егор', 'Tima', 'Костя', 'zxc_player',
+  'Илья', 'roman_x', 'Ден', 'slava', 'Ваня', 'ghost_777',
+  'Лёша', 'pro_skill', 'Матвей', 'ded_inside', 'Марк', 'kid_luck',
+];
+
+function makeFakeDrop(catalog) {
+  if (!catalog.length) return null;
+  const item = catalog[Math.floor(Math.random() * catalog.length)];
+  const name = FAKE_NAMES[Math.floor(Math.random() * FAKE_NAMES.length)];
+  return {
+    id: `fake_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    userId: null,
+    userName: name,
+    itemName: item.name,
+    itemImageUrl: item.image_url,
+    priceStars: Number(item.price_stars) || 0,
+    chance: Number((Math.random() * 40 + 3).toFixed(1)),
+    success: true,
+    isFake: true,
+    ts: Date.now() - Math.floor(Math.random() * 120000),
+  };
+}
+
 function createWebappRouter(bot, botToken) {
   const router = express.Router();
 
+  // Middleware: auth + touchOnline
   router.use(async (req, res, next) => {
     const initData = req.header('X-Telegram-Init-Data') || req.header('x-telegram-init-data') || '';
     const tgUser = verifyInitData(initData, botToken);
     if (!tgUser) return res.status(401).json({ error: 'invalid_init_data' });
 
     req.tgUser = tgUser;
+    touchOnline(tgUser.id);
+
     try {
       req.dbUser = await ensureUserExists(tgUser);
       next();
@@ -90,6 +127,7 @@ function createWebappRouter(bot, botToken) {
     }
   });
 
+  // ── Каталог ─────────────────────────────────────────────────────
   router.get('/catalog', async (req, res) => {
     try {
       const items = await getCatalogItems();
@@ -100,6 +138,7 @@ function createWebappRouter(bot, botToken) {
     }
   });
 
+  // ── Профиль ─────────────────────────────────────────────────────
   router.get('/profile', async (req, res) => {
     try {
       const user = await getUser(req.tgUser.id) || req.dbUser;
@@ -126,7 +165,7 @@ function createWebappRouter(bot, botToken) {
         balance: user.balance || 0,
         items_count: itemsCount || 0,
         tutorial_completed: Boolean(user.tutorial_completed),
-        created_at: user.created_at
+        created_at: user.created_at,
       });
     } catch (err) {
       console.error('Ошибка /api/profile:', err.message);
@@ -199,10 +238,8 @@ function createWebappRouter(bot, botToken) {
       const invoiceLink = await bot.telegram.createInvoiceLink({
         title: 'Поддержка проекта RoUP',
         description: 'Добровольная поддержка проекта. Игровой баланс за эту операцию не начисляется.',
-        payload,
-        provider_token: '',
-        currency: 'XTR',
-        prices: [{ label: `${amount} Telegram Stars`, amount }]
+        payload, provider_token: '', currency: 'XTR',
+        prices: [{ label: `${amount} Telegram Stars`, amount }],
       });
       res.json({ invoiceLink });
     } catch (err) {
@@ -212,6 +249,7 @@ function createWebappRouter(bot, botToken) {
     }
   });
 
+  // ── Конфиг апгрейда ─────────────────────────────────────────────
   router.get('/upgrade/config', (_req, res) => {
     res.json({
       displayGamma: UPGRADE.DISPLAY_GAMMA,
@@ -227,6 +265,43 @@ function createWebappRouter(bot, botToken) {
     });
   });
 
+  // ── Live-лента дропов ───────────────────────────────────────────
+  router.get('/upgrade/feed', async (req, res) => {
+    try {
+      const catalog = await getCatalogItems();
+      const real = getRecentDrops(20);
+
+      const [minFake, maxFake] = LIVE_FEED.FAKE_PER_REQUEST || [6, 14];
+      const fakeCount = minFake + Math.floor(Math.random() * (maxFake - minFake + 1));
+      const fake = [];
+      for (let i = 0; i < fakeCount; i++) {
+        const f = makeFakeDrop(catalog);
+        if (f) fake.push(f);
+      }
+
+      // Смешиваем: все реальные + фейки, сортируем по ts desc
+      const mixed = [...real.map((d) => ({ ...d, isFake: false })), ...fake]
+        .sort((a, b) => (b.ts || 0) - (a.ts || 0))
+        .slice(0, 30);
+
+      res.json({ drops: mixed });
+    } catch (err) {
+      console.error('Ошибка /api/upgrade/feed:', err.message);
+      res.status(500).json({ drops: [], error: 'server_error' });
+    }
+  });
+
+  // ── Онлайн ──────────────────────────────────────────────────────
+  router.get('/online', (_req, res) => {
+    const real = getRealOnline();
+    const mult = Number(LIVE_FEED.ONLINE_MULTIPLIER) || 100;
+    const fake = Math.max(real * mult, 1);
+    // Джиттер ±5% чтобы не было ровно круглого числа
+    const jitter = Math.floor(fake * (Math.random() * 0.1 - 0.05));
+    res.json({ online: Math.max(1, fake + jitter) });
+  });
+
+  // ── Апгрейд ─────────────────────────────────────────────────────
   router.post('/upgrade', async (req, res) => {
     try {
       const inventoryItemId = Number(req.body?.inventoryItemId);
@@ -238,21 +313,29 @@ function createWebappRouter(bot, botToken) {
           !Number.isInteger(targetItemId) || targetItemId <= 0) {
         return res.status(400).json({ error: 'missing_fields' });
       }
-      if (!Number.isFinite(multiplier) || Math.abs(multiplier * 10 - Math.round(multiplier * 10)) >= 1e-9 || multiplier < 1 || multiplier > 100) {
+      if (!Number.isFinite(multiplier) || Math.abs(multiplier * 10 - Math.round(multiplier * 10)) >= 1e-9
+          || multiplier < 1 || multiplier > 100) {
         return res.status(400).json({ error: 'invalid_multiplier' });
       }
-      if (!operationId || operationId.length > 100) return res.status(400).json({ error: 'missing_operation_id' });
+      if (!operationId || operationId.length > 100) {
+        return res.status(400).json({ error: 'missing_operation_id' });
+      }
 
       const result = await upgradeItem(req.tgUser.id, inventoryItemId, targetItemId, multiplier, operationId);
       if (result.error) {
+        if (result.error === 'pending_upgrade') {
+          return res.status(429).json({ error: 'pending_upgrade', message: 'Дождитесь завершения предыдущего апгрейда.' });
+        }
         const status = result.error === 'same_price_target' ? 409 : 400;
         return res.status(status).json({ error: result.error });
       }
+
       res.json({
         success: result.success,
         item: result.item,
         chance: result.chance,
         multiplier: result.multiplier,
+        landingAngle: result.landingAngle,
       });
     } catch (err) {
       console.error('Ошибка /api/upgrade:', err.message);
@@ -295,6 +378,7 @@ function createWebappRouter(bot, botToken) {
     }
   });
 
+  // ── Вывод ───────────────────────────────────────────────────────
   router.get('/withdraw/methods', (_req, res) => {
     const methods = Object.entries(WITHDRAWAL.METHODS)
       .filter(([, cfg]) => cfg.enabled)
