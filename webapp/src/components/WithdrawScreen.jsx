@@ -1,6 +1,42 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { api } from '../api.js';
-import { haptic, hapticNotify } from '../telegram.js';
+import { getInitData, haptic, hapticNotify } from '../telegram.js';
+
+const BUILD_VERSION = 'W-2025-11-02';
+
+async function waitForInitData(maxMs = 5000) {
+  const start = Date.now();
+  let d = getInitData();
+  while (!d && Date.now() - start < maxMs) {
+    await new Promise((r) => setTimeout(r, 100));
+    d = getInitData();
+  }
+  return d;
+}
+
+async function rawRequest(path, options = {}) {
+  const initData = await waitForInitData();
+  const res = await fetch(`/api${path}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Telegram-Init-Data': initData || '',
+      ...(options.headers || {}),
+    },
+  });
+
+  const text = await res.text();
+  let body = {};
+  try { body = JSON.parse(text); } catch { body = { raw: text }; }
+
+  if (!res.ok) {
+    const err = new Error(body.error || `http_${res.status}`);
+    err.code = body.error;
+    err.status = res.status;
+    err.details = body;
+    throw err;
+  }
+  return body;
+}
 
 const FALLBACK_METHODS = [
   { key: 'crypto', label: 'Криптовалюта', icon: '₿', hint: 'USDT TRC20 · до 48ч' },
@@ -17,23 +53,22 @@ function mapError(code, details) {
   const map = {
     insufficient_balance: 'Недостаточно средств на балансе.',
     amount_below_min: `Минимальная сумма — ${details?.min || 100} ⭐.`,
-    amount_above_max: `Максимум за одну заявку — ${Number(details?.max || 100000).toLocaleString('ru-RU')} ⭐.`,
-    invalid_username: 'Проверьте формат юзернейма — @username.',
+    amount_above_max: `Максимум — ${Number(details?.max || 100000).toLocaleString('ru-RU')} ⭐.`,
+    invalid_username: 'Проверьте формат — @username (4-32 символа, латиница/цифры/_).',
     too_many_open_requests: 'У вас уже есть открытые заявки. Дождитесь их обработки.',
-    referral_gate: 'Условия по приглашениям ещё не выполнены.',
+    referral_gate: 'Вывод пока недоступен. Пригласите нужное количество друзей, чтобы разблокировать.',
     operation_in_progress: 'Заявка уже создаётся, подождите.',
     method_not_available: 'Этот способ вывода временно недоступен.',
-    missing_operation_id: 'Ошибка сессии. Обновите страницу и попробуйте снова.',
-    invalid_amount: 'Некорректная сумма.',
+    missing_operation_id: 'Ошибка сессии. Обновите страницу.',
+    invalid_init_data: 'Сессия Telegram не определилась. Закрой и открой Mini App заново.',
     server_error: 'Ошибка на сервере. Попробуйте позже.',
   };
   return map[code] || 'Не удалось создать заявку. Попробуйте позже.';
 }
 
-export default function WithdrawScreen({ onClose, balance = 0, canWithdraw = true }) {
+export default function WithdrawScreen({ onClose, balance = 0, canWithdraw = false, referralProgress = null }) {
   const [step, setStep] = useState('method');
   const [methods, setMethods] = useState(FALLBACK_METHODS);
-  const [methodsLoading, setMethodsLoading] = useState(true);
   const [rate, setRate] = useState(0.2);
   const [commissionPct, setCommissionPct] = useState(20);
   const [minStars, setMinStars] = useState(100);
@@ -44,13 +79,14 @@ export default function WithdrawScreen({ onClose, balance = 0, canWithdraw = tru
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
+  const [initDataMissing, setInitDataMissing] = useState(false);
 
   const operationIdRef = useRef(null);
   const submittingRef = useRef(false);
 
   useEffect(() => {
     let alive = true;
-    api.getWithdrawMethods?.()
+    rawRequest('/withdraw/methods')
       .then((r) => {
         if (!alive) return;
         if (Array.isArray(r?.methods) && r.methods.length) setMethods(r.methods);
@@ -59,8 +95,9 @@ export default function WithdrawScreen({ onClose, balance = 0, canWithdraw = tru
         if (typeof r?.min === 'number') setMinStars(r.min);
         if (typeof r?.max === 'number') setMaxStars(r.max);
       })
-      .catch(() => {})
-      .finally(() => { if (alive) setMethodsLoading(false); });
+      .catch((e) => {
+        if (e?.code === 'invalid_init_data') setInitDataMissing(true);
+      });
     return () => { alive = false; };
   }, []);
 
@@ -74,7 +111,6 @@ export default function WithdrawScreen({ onClose, balance = 0, canWithdraw = tru
 
   const usernameOk = /^@?[A-Za-z0-9_]{4,32}$/.test(username.trim());
   const amountOk = calc.stars >= minStars && calc.stars <= maxStars && calc.stars <= balance;
-  const canSubmit = amountOk && usernameOk && !loading;
 
   const chooseMethod = (key) => {
     haptic('light');
@@ -93,7 +129,30 @@ export default function WithdrawScreen({ onClose, balance = 0, canWithdraw = tru
   };
 
   const submit = async () => {
-    if (!canSubmit || submittingRef.current) return;
+    if (submittingRef.current) return;
+
+    // Гейт по рефералам на клиенте — мгновенная подсказка без запроса
+    if (!canWithdraw) {
+      setError('Вывод пока недоступен. Пригласите нужное количество друзей, чтобы разблокировать.');
+      hapticNotify('error');
+      return;
+    }
+
+    if (!amountOk) {
+      setError(calc.stars < minStars
+        ? `Минимальная сумма — ${minStars} ⭐.`
+        : calc.stars > balance
+          ? `Недостаточно средств. Доступно: ${balance.toLocaleString('ru-RU')} ⭐.`
+          : `Максимум за заявку — ${maxStars.toLocaleString('ru-RU')} ⭐.`);
+      hapticNotify('error');
+      return;
+    }
+    if (!usernameOk) {
+      setError('Проверьте формат юзернейма — @username.');
+      hapticNotify('error');
+      return;
+    }
+
     submittingRef.current = true;
     setLoading(true);
     setError(null);
@@ -101,21 +160,18 @@ export default function WithdrawScreen({ onClose, balance = 0, canWithdraw = tru
 
     try {
       const normalized = username.trim().startsWith('@') ? username.trim() : `@${username.trim()}`;
-      const res = await api.createWithdrawRequest({
-        method: 'crypto',
-        amountStars: calc.stars,
-        contactUsername: normalized,
-        operationId: operationIdRef.current || createOperationId(),
+      const res = await rawRequest('/withdraw/request', {
+        method: 'POST',
+        body: JSON.stringify({
+          method: 'crypto',
+          amountStars: calc.stars,
+          contactUsername: normalized,
+          operationId: operationIdRef.current || createOperationId(),
+        }),
       });
-
-      if (res?.error) {
-        setError(mapError(res.error, res.details));
-        hapticNotify('error');
-      } else {
-        setResult(res);
-        setStep('success');
-        hapticNotify('success');
-      }
+      setResult(res);
+      setStep('success');
+      hapticNotify('success');
     } catch (e) {
       const code = e?.code || e?.message;
       setError(mapError(code, e?.details));
@@ -132,6 +188,7 @@ export default function WithdrawScreen({ onClose, balance = 0, canWithdraw = tru
     setError(null);
   };
 
+  // ═══ УСПЕХ ══════════════════════════════════════════════════════════
   if (step === 'success') {
     return (
       <div className="topup-overlay">
@@ -156,13 +213,14 @@ export default function WithdrawScreen({ onClose, balance = 0, canWithdraw = tru
     );
   }
 
+  // ═══ ФОРМА ═════════════════════════════════════════════════════════
   if (step === 'form') {
     return (
       <div className="topup-overlay">
         <div className="topup-header">
           <button className="topup-back" onClick={goBack} aria-label="Назад">‹</button>
           <h2 className="screen-title">Вывод · Криптовалюта</h2>
-          <span style={{ width: 28 }} />
+          <span style={{ width: 28, fontSize: 9, opacity: .4, textAlign: 'right' }}>{BUILD_VERSION}</span>
         </div>
 
         <p className="topup-rate">USDT TRC20 · обработка до 48 часов</p>
@@ -265,7 +323,7 @@ export default function WithdrawScreen({ onClose, balance = 0, canWithdraw = tru
           type="button"
           className="sheet__confirm"
           onClick={submit}
-          disabled={!canSubmit}
+          disabled={loading}
           style={{ width: '100%', minHeight: 52 }}
         >
           {loading ? 'Создание заявки…' : 'Создать заявку'}
@@ -274,41 +332,49 @@ export default function WithdrawScreen({ onClose, balance = 0, canWithdraw = tru
     );
   }
 
+  // ═══ МЕТОД ═════════════════════════════════════════════════════════
   return (
     <div className="topup-overlay">
       <div className="topup-header">
         <button className="topup-back" onClick={onClose} aria-label="Назад">‹</button>
         <h2 className="screen-title">Вывод средств</h2>
-        <span style={{ width: 28 }} />
+        <span style={{ width: 28, fontSize: 9, opacity: .4, textAlign: 'right' }}>{BUILD_VERSION}</span>
       </div>
+
+      {initDataMissing && (
+        <div className="withdraw-error">
+          Telegram-сессия не определилась. Закрой Mini App и открой заново из бота.
+        </div>
+      )}
 
       {!canWithdraw && (
         <div className="withdraw-warning">
-          Условия по приглашениям ещё не выполнены, но заявку создать можно —
-          менеджер проверит её вручную.
+          <b>Вывод пока недоступен.</b>{' '}
+          {referralProgress
+            ? `Пригласи ещё ${referralProgress.premiumRemaining} Premium или ${referralProgress.regularRemaining} обычных — тогда кнопка разблокируется.`
+            : 'Пригласи друзей по реферальной ссылке, чтобы разблокировать.'}
         </div>
       )}
 
       <p className="topup-rate">Выберите способ вывода</p>
 
       <div className="payment-methods">
-        {methodsLoading
-          ? <div className="skeleton" style={{ height: 56, borderRadius: 14 }} />
-          : methods.map((m) => (
-              <button
-                key={m.key}
-                type="button"
-                className="payment-method"
-                onClick={() => chooseMethod(m.key)}
-              >
-                <span className="payment-method__icon">{m.icon}</span>
-                <span className="payment-method__label">
-                  {m.label}
-                  {m.hint && <small style={{ display: 'block', opacity: .6, fontWeight: 500, fontSize: 11 }}>{m.hint}</small>}
-                </span>
-                <span className="payment-method__badge">›</span>
-              </button>
-            ))}
+        {methods.map((m) => (
+          <button
+            key={m.key}
+            type="button"
+            className={`payment-method${!canWithdraw ? ' disabled' : ''}`}
+            disabled={!canWithdraw}
+            onClick={() => chooseMethod(m.key)}
+          >
+            <span className="payment-method__icon">{m.icon}</span>
+            <span className="payment-method__label">
+              {m.label}
+              {m.hint && <small style={{ display: 'block', opacity: .6, fontWeight: 500, fontSize: 11 }}>{m.hint}</small>}
+            </span>
+            <span className="payment-method__badge">›</span>
+          </button>
+        ))}
       </div>
     </div>
   );
