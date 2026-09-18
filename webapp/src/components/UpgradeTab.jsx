@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { haptic, hapticNotify } from '../telegram.js';
-import LiveFeedStrip from './LiveFeedStrip.jsx';
-import OnlineBadge from './OnlineBadge.jsx';
 
 const RADIUS = 74;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
@@ -68,7 +66,6 @@ function pickSpinProfile(profiles, jitter) {
   return { duration: Math.round(base.duration * jf), turns: base.turns + extra, easing: base.easing };
 }
 
-// ── Slot ────────────────────────────────────────────────────────────
 function Slot({ item, placeholder, onOpen, spinning, side, title, resultStatus }) {
   const failedTarget = side === 'target' && resultStatus === 'fail';
   return (
@@ -100,7 +97,6 @@ function Slot({ item, placeholder, onOpen, spinning, side, title, resultStatus }
   );
 }
 
-// ── Picker ──────────────────────────────────────────────────────────
 function PickerSheet({ title, items, selectedId, getId, onSelect, onClose, disabledReason }) {
   return (
     <>
@@ -146,7 +142,6 @@ function PickerSheet({ title, items, selectedId, getId, onSelect, onClose, disab
   );
 }
 
-// ── Main ────────────────────────────────────────────────────────────
 export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, onError }) {
   const [ownedId, setOwnedId] = useState(null);
   const [targetId, setTargetId] = useState(null);
@@ -255,12 +250,7 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
     try {
       const res = await api.upgrade(owned.inventory_id, target.id, selectedMultiplier);
       const success = Boolean(res.success);
-
-      // Угол приземления — с СЕРВЕРА. Стрелка всегда отражает реальный исход.
-      const landing = Number.isFinite(Number(res.landingAngle))
-        ? Number(res.landingAngle)
-        : 0;
-
+      const landing = Number.isFinite(Number(res.landingAngle)) ? Number(res.landingAngle) : 0;
       const profile = pickSpinProfile(config.spinProfiles, config.spinJitter);
 
       setSpinProfile(profile);
@@ -302,19 +292,10 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
 
   const sourceStatus = result ? (result.success ? 'success' : 'fail-source') : null;
   const targetStatus = result ? (result.success ? 'success' : 'fail') : null;
-
   const canUpgrade = owned && target && customValid && !spinning && !busy && !result;
 
   return (
     <div className="upgrade-screen">
-      {/* Верхняя полоса: онлайн + live-лента */}
-      <div className="upgrade-toprow">
-        <OnlineBadge />
-      </div>
-
-      <LiveFeedStrip />
-
-      {/* Основная сцена */}
       <section className={`upgrade-stage-modern ${spinning ? 'upgrade-stage--spinning' : ''} ${result ? (result.success ? 'upgrade-stage--success' : 'upgrade-stage--failure') : ''}`}>
         {result && (
           <div
@@ -390,7 +371,6 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
         />
       </section>
 
-      {/* Множители */}
       <section className="upgrade-multiplier-bar">
         <div className="upgrade-multiplier-bar__head">
           <span>Множитель</span>
