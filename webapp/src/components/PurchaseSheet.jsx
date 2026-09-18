@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 
-const MAX_QUANTITY = 9999;
+const MAX_QUANTITY = 100;
 
 function clampQuantity(value) {
   const n = Number(value);
   return Number.isInteger(n) ? Math.min(MAX_QUANTITY, Math.max(1, n)) : 1;
 }
 
-export default function PurchaseSheet({ item, initialQuantity = 1, pending, balance, onCancel, onConfirm, onTopUp }) {
+export default function PurchaseSheet({ item, initialQuantity = 1, pending, balance, onCancel, onConfirm }) {
   const [quantity, setQuantity] = useState(1);
   const [inputValue, setInputValue] = useState('1');
 
@@ -87,13 +87,13 @@ export default function PurchaseSheet({ item, initialQuantity = 1, pending, bala
 
         <div className="sheet__actions">
           <button className="sheet__cancel" onClick={onCancel} disabled={pending}>Отмена</button>
-          {insufficient ? (
-            <button className="sheet__confirm" onClick={onTopUp} disabled={pending}>Пополнить ⭐</button>
-          ) : (
-            <button className="sheet__confirm" onClick={() => onConfirm(quantity)} disabled={pending || !Number.isInteger(quantity) || quantity < 1}>
-              {pending ? 'Покупаем…' : `Купить ×${quantity}`}
-            </button>
-          )}
+          <button
+            className="sheet__confirm"
+            onClick={() => onConfirm(quantity)}
+            disabled={pending || insufficient || !Number.isInteger(quantity) || quantity < 1}
+          >
+            {pending ? 'Покупаем…' : insufficient ? 'Недостаточно ⭐' : `Купить ×${quantity}`}
+          </button>
         </div>
       </div>
     </>

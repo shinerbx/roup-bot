@@ -31,18 +31,15 @@ function randomAngleForResult(success, chance) {
 }
 
 function ResultBurst({ success }) {
-  const particles = Array.from({ length: 22 });
+  const particles = useMemo(() => Array.from({ length: 22 }, (_, index) => ({
+    angle: index * (360 / 22) + Math.random() * 8,
+    distance: 70 + Math.random() * 100,
+    delay: Math.random() * 100
+  })), []);
   return (
     <div className={`result-burst ${success ? 'result-burst--success' : 'result-burst--failure'}`} aria-hidden="true">
-      {particles.map((_, index) => (
-        <span
-          key={index}
-          style={{
-            '--angle': `${index * (360 / particles.length) + Math.random() * 8}deg`,
-            '--distance': `${70 + Math.random() * 100}px`,
-            '--delay': `${Math.random() * 100}ms`
-          }}
-        />
+      {particles.map((particle, index) => (
+        <span key={index} style={{ '--angle': `${particle.angle}deg`, '--distance': `${particle.distance}px`, '--delay': `${particle.delay}ms` }} />
       ))}
     </div>
   );

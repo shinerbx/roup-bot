@@ -60,7 +60,7 @@ export default function ItemCard({
             <div className="item-card__quick-quantity" aria-label="Количество для покупки">
               <button type="button" onClick={() => setQuickQuantity((value) => Math.max(1, value - 1))} aria-label="Уменьшить количество">−</button>
               <span>×{quickQuantity}</span>
-              <button type="button" onClick={() => setQuickQuantity((value) => Math.min(9999, value + 1))} aria-label="Увеличить количество">+</button>
+              <button type="button" onClick={() => setQuickQuantity((value) => Math.min(100, value + 1))} aria-label="Увеличить количество">+</button>
             </div>
             <button type="button" className="item-card__buy" onClick={() => onBuy(item, quickQuantity)}>
               Купить <span>×{quickQuantity}</span>
