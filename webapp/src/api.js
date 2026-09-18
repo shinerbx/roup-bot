@@ -53,6 +53,7 @@ async function request(path, options = {}, { retries = 5, baseDelayMs = 1200, ti
         const err = new Error(body.error || `Ошибка запроса: ${res.status}`);
         err.status = res.status;
         err.code = body.error;
+        err.details = body;
         err.fatal = true;
         throw err;
       }
@@ -66,10 +67,7 @@ async function request(path, options = {}, { retries = 5, baseDelayMs = 1200, ti
     } catch (err) {
       lastError = err;
       if (err.fatal) throw err;
-
-      if (attempt < retries) {
-        await sleep(baseDelayMs * 2 ** (attempt - 1));
-      }
+      if (attempt < retries) await sleep(baseDelayMs * 2 ** (attempt - 1));
     }
   }
 
@@ -103,6 +101,12 @@ export const api = {
     request('/sell', {
       method: 'POST',
       body: JSON.stringify({ inventoryItemId, operationId: createOperationId() })
+    }, { retries: 2 }),
+
+  sellMany: (itemId, quantity) =>
+    request('/sell-many', {
+      method: 'POST',
+      body: JSON.stringify({ itemId, quantity, operationId: createOperationId() })
     }, { retries: 2 }),
 
   getWithdrawMethods: () => request('/withdraw/methods'),
