@@ -36,6 +36,12 @@ function calcDisplayChance(source, target, config) {
   return clamp(base * (1 - config.displayHouseEdge), config.minChance, config.maxChance);
 }
 
+function calculateExpectedChance(multiplier) {
+  const m = Number(multiplier);
+  if (!Number.isFinite(m) || m < 1) return 0;
+  return Math.min(100, 100 / m);
+}
+
 function formatChance(c) {
   const n = Number(c);
   if (!Number.isFinite(n)) return '0.0%';
@@ -157,7 +163,6 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
   const [totalAngle, setTotalAngle] = useState(0);
   const [spinProfile, setSpinProfile] = useState(DEFAULT_CONFIG.spinProfiles[0]);
   const [spinKey, setSpinKey] = useState(0);
-  const [spinChance, setSpinChance] = useState(null);
   const [config, setConfig] = useState(DEFAULT_CONFIG);
   const timerRef = useRef(null);
 
@@ -189,17 +194,15 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
      selectedMultiplier <= config.maxMultiplier &&
      Math.abs(selectedMultiplier * 10 - Math.round(selectedMultiplier * 10)) < 1e-9);
 
-  const displayChance = useMemo(
-    () => calcDisplayChance(owned, target, config),
-    [owned, target, config]
+  const expectedChance = useMemo(
+    () => calculateExpectedChance(selectedMultiplier),
+    [selectedMultiplier]
   );
 
-  // While spinning/result is shown, use the exact server-side chance that
-  // was used for this upgrade. This keeps the visual wheel and outcome aligned,
-  // especially in Demo/Lucky mode where the real chance is boosted server-side.
-  const wheelChance = result
-    ? Number(result.chance) || 0
-    : (spinning && Number.isFinite(spinChance) ? spinChance : displayChance);
+  // The UI/roulette intentionally shows the expected chance implied by the
+  // selected multiplier (x2 = 50%, x4 = 25%, ...). The server's real chance
+  // is used only to resolve the outcome and is never displayed here.
+  const wheelChance = Number.isFinite(expectedChance) ? expectedChance : 0;
 
   const targetItems = useMemo(() => {
     if (!owned) return catalog;
@@ -262,7 +265,6 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
       setTargetId(null);
       setNeedleAngle(0);
       setTotalAngle(0);
-      setSpinChance(null);
       return;
     }
 
@@ -275,12 +277,11 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
     try {
       const res = await api.upgrade(owned.inventory_id, target.id, selectedMultiplier);
       const success = Boolean(res.success);
-      const serverChance = Number(res.chance);
+      const serverExpectedChance = Number(res.expectedChance);
       const landing = Number.isFinite(Number(res.landingAngle)) ? Number(res.landingAngle) : 0;
       const profile = pickSpinProfile(config.spinProfiles, config.spinJitter);
 
       setSpinProfile(profile);
-      setSpinChance(Number.isFinite(serverChance) ? serverChance : displayChance);
       setNeedleAngle(landing);
       setTotalAngle(landing + profile.turns * 360);
       setSpinKey((v) => v + 1);
@@ -292,7 +293,7 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
       });
 
       hapticNotify(success ? 'success' : 'error');
-      setResult({ sourceItem: owned, targetItem: target, success, item: res.item, chance: Number.isFinite(serverChance) ? serverChance : displayChance });
+      setResult({ sourceItem: owned, targetItem: target, success, item: res.item, expectedChance: Number.isFinite(serverExpectedChance) ? serverExpectedChance : expectedChance });
       await onUpgraded?.();
     } catch (err) {
       console.error(err);
@@ -312,7 +313,6 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
       onError?.(messages[err.code] || 'Не удалось выполнить апгрейд. Попробуйте ещё раз.');
       setNeedleAngle(0);
       setTotalAngle(0);
-      setSpinChance(null);
     } finally {
       setBusy(false);
       setSpinning(false);

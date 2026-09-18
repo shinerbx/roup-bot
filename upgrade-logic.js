@@ -51,6 +51,13 @@ function calculateDisplayChance(sourceItem, targetItem, multiplier = 1) {
     UPGRADE.DISPLAY_GAMMA, UPGRADE.DISPLAY_BASE_CHANCE_MULTIPLIER, UPGRADE.DISPLAY_HOUSE_EDGE);
 }
 
+// User-facing expected chance is derived only from the selected multiplier.
+// It intentionally does not expose the server's real/effective odds.
+function calculateExpectedChance(multiplier = 1) {
+  const safeMult = Math.max(1, Number(multiplier) || 1);
+  return Math.min(100, Math.max(MIN_CHANCE, 100 / safeMult));
+}
+
 function applyLucky(realChance, luckyMode) {
   if (!luckyMode) return realChance;
   const mult = Number(UPGRADE.LUCKY_CHANCE_MULTIPLIER) || 10;
@@ -61,12 +68,9 @@ function applyLucky(realChance, luckyMode) {
 
 /**
  * Угол приземления стрелки (0–360°), рисуется по часовой от верха.
- * Сектор выигрыша на колесе = displayChance × 3.6°.
- *
- * success=true  → угол ВНУТРИ сектора.
- * success=false → угол ЗА сектором, с разбросом близости (байт-эффект).
- *
- * Тем самым визуал всегда соответствует реальному исходу.
+ * Визуальный сектор выигрыша = expectedChance × 3.6°.
+ * Реальный серверный шанс не используется для отрисовки и не раскрывается клиенту как
+ * пользовательский шанс. При этом визуальный исход всегда совпадает с success.
  */
 function pickLandingAngle(success, displayChance) {
   const zone = Math.max(0.5, clampChance(displayChance) * 3.6);
@@ -117,13 +121,18 @@ function resolveUpgrade(sourceItem, targetItem, multiplier = 1, opts = {}) {
   const success = roll < realFinal;
 
   const displayChance = calculateDisplayChance(sourceItem, targetItem, safeMultiplier);
-  const effectiveChance = luckyMode ? realFinal : displayChance;
-  const landingAngle = pickLandingAngle(success, effectiveChance);
+  const expectedChance = calculateExpectedChance(safeMultiplier);
+  // Visual-only landing uses the expected multiplier-based chance.
+  // The actual success decision above remains based on realFinal.
+  const landingAngle = pickLandingAngle(success, expectedChance);
 
   return {
     success,
     resultItemId: success ? targetItem.id : null,
-    chance: Number(effectiveChance.toFixed(1)),
+    // Keep chance for backwards compatibility/server diagnostics, but expose
+    // a separate explicit expectedChance for the client-facing UI.
+    chance: Number((luckyMode ? realFinal : displayChance).toFixed(1)),
+    expectedChance: Number(expectedChance.toFixed(1)),
     multiplier: safeMultiplier,
     landingAngle,
     _realBase: Number(realBase.toFixed(2)),
@@ -154,6 +163,7 @@ module.exports = {
   calculateRealBaseChance,
   calculateRealChance,
   calculateDisplayChance,
+  calculateExpectedChance,
   applyRollNoise,
   applyLucky,
   calculateBaseChance,

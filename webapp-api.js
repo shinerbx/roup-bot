@@ -437,6 +437,7 @@ function createWebappRouter(bot, botToken) {
         success: result.success,
         item: result.item,
         chance: result.chance,
+        expectedChance: result.expectedChance,
         multiplier: result.multiplier,
         landingAngle: result.landingAngle,
       });
