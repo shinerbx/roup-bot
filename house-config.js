@@ -26,7 +26,6 @@ const HOUSE_CONFIG = Object.freeze({
 
   // ── РУЛЕТКА (косметика, идёт на клиент через /api/upgrade/config) ──
   ROULETTE: {
-    // Базовые профили кручения. На клиенте к каждому добавляется джиттер.
     SPIN_PROFILES: [
       { duration: 2900, turns: 3, easing: 'cubic-bezier(.08,.72,.18,1)' },
       { duration: 3400, turns: 4, easing: 'cubic-bezier(.15,.55,.35,1)' },
@@ -34,17 +33,11 @@ const HOUSE_CONFIG = Object.freeze({
       { duration: 4700, turns: 6, easing: 'cubic-bezier(.12,.7,.2,1)' },
       { duration: 5300, turns: 7, easing: 'cubic-bezier(.1,.75,.22,1)' },
     ],
-
-    // Разброс на каждый спин, чтобы ни один не был похож на другой.
     SPIN_JITTER: {
-      DURATION_MIN: 0.85,   // 0.85 × базовая длительность
-      DURATION_MAX: 1.20,   // 1.20 ×
-      EXTRA_TURNS_MAX: 1,   // +0 или +1 оборот сверху
+      DURATION_MIN: 0.85,
+      DURATION_MAX: 1.20,
+      EXTRA_TURNS_MAX: 1,
     },
-
-    // Распределение промахов. Сумма = 1.0.
-    // MILLIMETER — прямо у границы зоны (самое «палевное»).
-    // FAR — в стороне, выглядит как честный промах.
     NEAR_MISS: {
       MILLIMETER: 0.20,
       CLOSE: 0.30,
@@ -52,6 +45,7 @@ const HOUSE_CONFIG = Object.freeze({
     },
   },
 
+  // ── ЛИМИТЫ ──────────────────────────────────────────────────────────
   USER_LIMITS: {
     MAX_RECEIVED_VALUE_MULTIPLIER: 1.5,
     MAX_WITHDRAW_VALUE_MULTIPLIER: 1.0,
@@ -63,10 +57,8 @@ const HOUSE_CONFIG = Object.freeze({
 
     // Telegram ID, которые обходят реферальный гейт на вывод.
     // ADMIN_CHAT_ID из env добавляется автоматически в webapp-api.js.
-    // Сюда добавляй свои тестовые аккаунты по одному в строке.
     WITHDRAW_WHITELIST: [
-         6043384033,
-      // 987654321,
+      // 123456789,
     ],
   },
 
