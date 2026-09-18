@@ -4,27 +4,59 @@ export default function ProfileTab({ profile, loading }) {
   }
 
   return (
-    <div className="balance-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
-      <p className="hero__subtitle" style={{ marginBottom: 10 }}>
-        {profile.first_name} {profile.username ? `· @${profile.username}` : ''}
-      </p>
+    <>
+      <div className="balance-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
+        <p className="hero__subtitle" style={{ marginBottom: 10 }}>
+          {profile.first_name} {profile.username ? `· @${profile.username}` : ''}
+        </p>
 
-      <div className="stat-row">
-        <span className="stat-row__label">Уровень</span>
-        <span className="stat-row__value">{profile.tier}</span>
+        <div className="stat-row">
+          <span className="stat-row__label">Уровень</span>
+          <span className="stat-row__value">{profile.tier}</span>
+        </div>
+        <div className="stat-row">
+          <span className="stat-row__label">Предметов в инвентаре</span>
+          <span className="stat-row__value">{profile.items_count}</span>
+        </div>
+        <div className="stat-row">
+          <span className="stat-row__label">Приглашено друзей</span>
+          <span className="stat-row__value">{profile.referrals_count}</span>
+        </div>
+        <div className="stat-row">
+          <span className="stat-row__label">Апгрейдов</span>
+          <span className="stat-row__value">{profile.upgrades_count}</span>
+        </div>
       </div>
-      <div className="stat-row">
-        <span className="stat-row__label">Предметов в инвентаре</span>
-        <span className="stat-row__value">{profile.items_count}</span>
-      </div>
-      <div className="stat-row">
-        <span className="stat-row__label">Приглашено друзей</span>
-        <span className="stat-row__value">{profile.referrals_count}</span>
-      </div>
-      <div className="stat-row">
-        <span className="stat-row__label">Апгрейдов</span>
-        <span className="stat-row__value">{profile.upgrades_count}</span>
-      </div>
-    </div>
+
+      <footer className="app-footer">
+        <span className="app-footer__line">
+          ⭐ — внутренняя учётная единица, не деньги и не платёжное средство.
+        </span>
+        <span className="app-footer__line">
+          Вывод обрабатывается вручную и может быть ограничен.
+          <span className="app-footer__sep">·</span>
+          Сервис <b>18+</b>.
+        </span>
+        <span className="app-footer__line">
+          <a
+            className="app-footer__link"
+            href="https://telegra.ph/Polzovatelskoe-soglashenie-i-Usloviya-ispolzovaniya-RoUP-09-18"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Правила и соглашение
+          </a>
+          <span className="app-footer__sep">·</span>
+          <a
+            className="app-footer__link"
+            href="https://t.me/roup_support"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Поддержка
+          </a>
+        </span>
+      </footer>
+    </>
   );
 }
