@@ -14,6 +14,7 @@ const {
 } = require('./db');
 const { createWebappRouter } = require('./webapp-api');
 const { registerBot } = require('./admin-notify');
+const { USER_LIMITS } = require('./house-config');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 if (!BOT_TOKEN) console.error('❌ Не задана переменная окружения BOT_TOKEN — бот не запустится.');
@@ -24,6 +25,16 @@ const CHANNEL_USERNAME = '@ro_upgrade';
 const SHARE_BANNER_URL = 'https://i.ibb.co/Fq6L8G16/7007-D8-FC-C59-A-4-F72-B1-AB-C63-DFAA2-F87-A.png';
 const PRIVACY_POLICY_URL = 'https://telegra.ph/Polzovatelskoe-soglashenie-i-Usloviya-programmy-loyalnosti-RoUP-09-16';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID;
+
+// Диагностический хелпер для /api/diag
+function buildWhitelistForDiag() {
+  const set = new Set();
+  const envRaw = String(process.env.ADMIN_CHAT_ID || '');
+  if (envRaw) envRaw.split(',').forEach((p) => { const v = String(p).trim(); if (v) set.add(v); });
+  const cfgList = Array.isArray(USER_LIMITS.WITHDRAW_WHITELIST) ? USER_LIMITS.WITHDRAW_WHITELIST : [];
+  cfgList.forEach((v) => { const s = String(v).trim(); if (s) set.add(s); });
+  return [...set];
+}
 
 const bot = new Telegraf(BOT_TOKEN);
 registerBot(bot);
@@ -334,6 +345,22 @@ app.use('/api', createWebappRouter(bot, BOT_TOKEN));
 app.get('/ping', (req, res) => res.status(200).send('pong'));
 app.get('/health', (req, res) => res.json({ ok: true, service: 'roup' }));
 
+// Диагностика вайтлиста. Открывать: https://roup-bot.onrender.com/api/diag
+app.get('/api/diag', (_req, res) => {
+  res.json({
+    adminChatIdRaw: process.env.ADMIN_CHAT_ID || null,
+    adminChatIdTrimmed: String(process.env.ADMIN_CHAT_ID || '').trim(),
+    adminChatIdType: typeof process.env.ADMIN_CHAT_ID,
+    whitelist: buildWhitelistForDiag(),
+    requireReferral: USER_LIMITS.REQUIRE_REFERRAL_FOR_WITHDRAW,
+    configWhitelist: USER_LIMITS.WITHDRAW_WHITELIST || [],
+    nodeEnv: process.env.NODE_ENV || null,
+    botTokenPresent: Boolean(process.env.BOT_TOKEN),
+    dbUrlPresent: Boolean(process.env.DATABASE_URL),
+    webAppUrl: process.env.WEB_APP_URL || null,
+  });
+});
+
 const webappDist = path.join(__dirname, 'webapp', 'dist');
 
 app.use(express.static(webappDist, {
@@ -353,6 +380,8 @@ app.use((req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
   console.log(`Render HTTP-сервер активен на порту ${PORT}`);
+  console.log('[boot] ADMIN_CHAT_ID raw =', JSON.stringify(process.env.ADMIN_CHAT_ID || null));
+  console.log('[boot] resolved whitelist =', JSON.stringify(buildWhitelistForDiag()));
   if (!ADMIN_CHAT_ID) console.warn('⚠️ ADMIN_CHAT_ID не задан — заявки на вывод не будут приходить админу.');
   try {
     const fullWebhookUrl = `${WEB_APP_URL}${WEBHOOK_PATH}`;
