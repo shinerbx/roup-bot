@@ -9,9 +9,6 @@ const createOperationId = () => {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// Скрипт telegram-web-app.js иногда инициализируется чуть позже,
-// чем монтируется React. Если запрос уйдёт с пустым initData,
-// сервер вернёт 401 и данные не загрузятся — поэтому ждём.
 async function waitForInitData(maxWaitMs = 3000) {
   const started = Date.now();
   let data = getInitData();
@@ -32,9 +29,6 @@ async function fetchWithTimeout(url, options, timeoutMs) {
   }
 }
 
-// Render на бесплатном тарифе «засыпает», и первый запрос после простоя
-// может подниматься 30–60 секунд. Поэтому попыток больше, задержка растёт,
-// а таймаут на попытку — щедрый.
 async function request(path, options = {}, { retries = 5, baseDelayMs = 1200, timeoutMs = 20000 } = {}) {
   const initData = await waitForInitData();
   let lastError;
@@ -74,7 +68,6 @@ async function request(path, options = {}, { retries = 5, baseDelayMs = 1200, ti
       if (err.fatal) throw err;
 
       if (attempt < retries) {
-        // 1.2s, 2.4s, 4.8s, 9.6s — успеваем пережить холодный старт Render
         await sleep(baseDelayMs * 2 ** (attempt - 1));
       }
     }
@@ -88,25 +81,30 @@ export const api = {
   getProfile: () => request('/profile'),
   getInventory: () => request('/inventory'),
   completeTutorial: () => request('/tutorial/complete', { method: 'POST', body: JSON.stringify({}) }, { retries: 2 }),
+
   buy: (itemId, quantity = 1) => request('/buy', {
     method: 'POST',
     body: JSON.stringify({ itemId, quantity, operationId: createOperationId() })
   }, { retries: 2 }),
+
   createSupportInvoice: (amount) =>
     request('/support/create-invoice', { method: 'POST', body: JSON.stringify({ amount }) }, { retries: 2 }),
+
+  getUpgradeConfig: () => request('/upgrade/config'),
+
   upgrade: (inventoryItemId, targetItemId, multiplier = 1) =>
     request(
       '/upgrade',
       { method: 'POST', body: JSON.stringify({ inventoryItemId, targetItemId, multiplier, operationId: createOperationId() }) },
       { retries: 2 }
     ),
+
   sell: (inventoryItemId) =>
     request('/sell', {
       method: 'POST',
       body: JSON.stringify({ inventoryItemId, operationId: createOperationId() })
     }, { retries: 2 }),
 
-  // ── Вывод ────────────────────────────────────────────────────────
   getWithdrawMethods: () => request('/withdraw/methods'),
   createWithdrawRequest: (payload) => request('/withdraw/request', {
     method: 'POST',
