@@ -29,22 +29,35 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+/**
+ * ЕДИНСТВЕННАЯ ФОРМУЛА ОТОБРАЖЕНИЯ ШАНСА.
+ * Чистая математика: (source/target) × 100 / multiplier.
+ * 10⭐ → 75⭐, ×1 = 13.3%
+ * 10⭐ → 75⭐, ×2 = 6.7%
+ * Никаких house edge, никакого гамма-штрафа — только честный расчёт.
+ * serverChance НЕ используется для отображения.
+ */
 function calcDisplayChance(source, target, multiplier, config) {
   if (!source || !target) return 0;
-  const sourcePrice = Number(source.price_stars);
-  const targetPrice = Number(target.price_stars);
-  if (!Number.isFinite(sourcePrice) || !Number.isFinite(targetPrice) || targetPrice <= sourcePrice) return 0;
+  const s = Number(source.price_stars);
+  const t = Number(target.price_stars);
+  if (!Number.isFinite(s) || !Number.isFinite(t) || t <= s) return 0;
 
-  const safeMultiplier = Math.max(1, Number(multiplier) || 1);
-  const ratio = Math.pow(sourcePrice / targetPrice, config.displayGamma);
+  const m = Math.max(1, Number(multiplier) || 1);
+
+  // Прямая честная формула. displayGamma = 1.0 → Math.pow(x,1) = x.
+  const ratio = Math.pow(s / t, config.displayGamma);
   const base = ratio * 100 * config.displayBaseChanceMultiplier;
-  const withMult = base / safeMultiplier;
+  const withMult = base / m;
   const withEdge = withMult * (1 - config.displayHouseEdge);
+
   return clamp(withEdge, config.minChance, config.maxChance);
 }
 
 function formatChance(chance) {
-  return `${Number(chance).toFixed(1)}%`;
+  const n = Number(chance);
+  if (!Number.isFinite(n)) return '0.0%';
+  return `${n.toFixed(1)}%`;
 }
 
 function findClosestTarget(catalog, desiredPrice, sourceItem) {
@@ -71,11 +84,11 @@ function pickSpinProfile(profiles, jitter) {
   const list = Array.isArray(profiles) && profiles.length ? profiles : DEFAULT_CONFIG.spinProfiles;
   const j = jitter || DEFAULT_CONFIG.spinJitter;
   const base = list[Math.floor(Math.random() * list.length)];
-  const jitterFactor = (j.DURATION_MIN || 0.85) + Math.random() * ((j.DURATION_MAX || 1.2) - (j.DURATION_MIN || 0.85));
-  const extraTurns = Math.floor(Math.random() * ((j.EXTRA_TURNS_MAX || 1) + 1));
+  const jf = (j.DURATION_MIN || 0.85) + Math.random() * ((j.DURATION_MAX || 1.2) - (j.DURATION_MIN || 0.85));
+  const extra = Math.floor(Math.random() * ((j.EXTRA_TURNS_MAX || 1) + 1));
   return {
-    duration: Math.round(base.duration * jitterFactor),
-    turns: base.turns + extraTurns,
+    duration: Math.round(base.duration * jf),
+    turns: base.turns + extra,
     easing: base.easing,
   };
 }
@@ -216,14 +229,13 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
   const [totalAngle, setTotalAngle] = useState(0);
   const [spinProfile, setSpinProfile] = useState(DEFAULT_CONFIG.spinProfiles[0]);
   const [spinKey, setSpinKey] = useState(0);
-  const [serverChance, setServerChance] = useState(null);
   const [config, setConfig] = useState(DEFAULT_CONFIG);
   const timerRef = useRef(null);
 
   useEffect(() => {
     let alive = true;
     api.getUpgradeConfig?.()
-      .then((r) => { if (alive && r) setConfig({ ...DEFAULT_CONFIG, ...r }); })
+      .then((r) => { if (alive && r) setConfig((prev) => ({ ...prev, ...r })); })
       .catch(() => {});
     return () => { alive = false; };
   }, []);
@@ -239,7 +251,13 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
      selectedMultiplier <= config.maxMultiplier &&
      Math.abs(selectedMultiplier * 10 - Math.round(selectedMultiplier * 10)) < 1e-9);
 
-  const displayChance = serverChance ?? calcDisplayChance(owned, target, customValid ? selectedMultiplier : 1, config);
+  // ВСЕГДА считаем локально. Никаких serverChance.
+  const displayChance = calcDisplayChance(
+    owned,
+    target,
+    customValid ? selectedMultiplier : 1,
+    config
+  );
 
   const targetItems = useMemo(() => {
     if (!owned) return catalog;
@@ -257,7 +275,6 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
       const currentTarget = catalog.find((x) => x.id === current);
       return currentTarget && Number(currentTarget.price_stars) > Number(item.price_stars) ? current : null;
     });
-    setServerChance(null);
     setPicker(null);
     haptic('light');
   };
@@ -265,7 +282,6 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
   const chooseTarget = (item) => {
     if (!owned || Number(item.price_stars) <= Number(owned.price_stars)) return;
     setTargetId(item.id);
-    setServerChance(null);
     setPicker(null);
     haptic('light');
   };
@@ -273,7 +289,6 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
   const chooseMultiplier = useCallback((value) => {
     if (spinning || busy || result) return;
     setMultiplier(value);
-    setServerChance(null);
     haptic('light');
 
     if (!owned || value === 'custom') return;
@@ -288,13 +303,11 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
   const handleCustom = () => {
     if (spinning || busy || result) return;
     setMultiplier('custom');
-    setServerChance(null);
     haptic('light');
   };
 
   const handleCustomChange = (val) => {
     setCustomMultiplier(val);
-    setServerChance(null);
     if (!owned) return;
     const m = Number(val);
     if (!Number.isFinite(m) || m < 1 || m > config.maxMultiplier) return;
@@ -310,7 +323,6 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
       setTargetId(null);
       setNeedleAngle(0);
       setTotalAngle(0);
-      setServerChance(null);
       return;
     }
 
@@ -318,20 +330,18 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
 
     setBusy(true);
     setResult(null);
-    setServerChance(null);
     haptic('medium');
 
     try {
       const res = await api.upgrade(owned.inventory_id, target.id, selectedMultiplier);
       const success = Boolean(res.success);
-      const display = Number.isFinite(Number(res.chance))
-        ? Number(res.chance)
-        : calcDisplayChance(owned, target, selectedMultiplier, config);
+
+      // Для визуала используем ту же локальную честную формулу
+      const display = calcDisplayChance(owned, target, selectedMultiplier, config);
 
       const landing = computeLandingAngle(success, display, config.nearMiss);
       const profile = pickSpinProfile(config.spinProfiles, config.spinJitter);
 
-      setServerChance(display);
       setSpinProfile(profile);
       setNeedleAngle(landing);
       setTotalAngle(landing + profile.turns * 360);
@@ -401,7 +411,6 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
                 '--spin-easing': spinProfile.easing,
                 '--needle-angle': `${needleAngle}deg`,
                 '--spin-total-angle': `${totalAngle}deg`,
-                '--chance': `${displayChance}`,
               }}
             >
               <svg viewBox="0 0 168 168" aria-hidden="true">
