@@ -485,6 +485,27 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
           disabledReason="Предметы одинаковой стоимости нельзя выбрать."
         />
       )}
+
+      <footer className="app-footer">
+        <span className="app-footer__line">
+          Апгрейд — игровая механика, а не ставка и не казино.
+        </span>
+        <span className="app-footer__line">
+          Шанс успеха показан честно. При неудаче исходный предмет сгорает.
+        </span>
+        <span className="app-footer__line">
+          Сервис <b>18+</b>.
+          <span className="app-footer__sep">·</span>
+          <a
+            className="app-footer__link"
+            href="https://telegra.ph/Polzovatelskoe-soglashenie-i-Usloviya-ispolzovaniya-RoUP-09-18"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Правила
+          </a>
+        </span>
+      </footer>
     </div>
   );
 }
