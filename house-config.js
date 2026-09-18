@@ -1,37 +1,32 @@
 // house-config.js — единая экономика RoUP.
-// Внутренние значения (REAL) — против чего играет RNG. Игрок не видит.
-// Внешние значения (DISPLAY) — то, что показывается в UI. Честная формула.
 
 const HOUSE_CONFIG = Object.freeze({
 
-  // ── UPGRADE ──────────────────────────────────────────────────────────
   UPGRADE: {
-    // ── РЕАЛЬНЫЙ расчёт (RNG против этого). НЕ показывается игроку ──
+    // Реальный расчёт
     GAMMA: 1.12,
     BASE_CHANCE_MULTIPLIER: 0.90,
     HOUSE_EDGE: 0.25,
     ROLL_NOISE: 0.12,
 
-    // ── ОТОБРАЖАЕМЫЙ расчёт (для UI). Честная математика ─────────────
+    // Отображаемый (честный) расчёт для UI
     DISPLAY_GAMMA: 1.0,
     DISPLAY_BASE_CHANCE_MULTIPLIER: 1.0,
     DISPLAY_HOUSE_EDGE: 0.0,
 
-    // ── Границы ─────────────────────────────────────────────────────
     MIN_CHANCE: 0.1,
     MAX_CHANCE: 95,
     MIN_MULTIPLIER: 1,
     MAX_MULTIPLIER: 100,
     DEFAULT_MULTIPLIER: 1,
 
-    // ── LUCKY MODE (активен только при demo-балансе) ─────────────────
-    // Раздувает реальный шанс апгрейда, чтобы демо-игрок выигрывал часто.
-    // Баланс между "интересно" и "не палевно".
-    LUCKY_CHANCE_MULTIPLIER: 8,     // реальный шанс × 8
-    LUCKY_MAX_CHANCE: 90,           // но не выше 90%
+    // Lucky mode (demo)
+    // realFinal = min(LUCKY_MAX_CHANCE, realBase × LUCKY_CHANCE_MULTIPLIER + LUCKY_FLAT_BOOST)
+    LUCKY_CHANCE_MULTIPLIER: 10,
+    LUCKY_FLAT_BOOST: 50,        // +50 п.п. к шансу
+    LUCKY_MAX_CHANCE: 92,
   },
 
-  // ── РУЛЕТКА (косметика) ──────────────────────────────────────────────
   ROULETTE: {
     SPIN_PROFILES: [
       { duration: 2900, turns: 3, easing: 'cubic-bezier(.08,.72,.18,1)' },
@@ -52,7 +47,6 @@ const HOUSE_CONFIG = Object.freeze({
     },
   },
 
-  // ── ЛИМИТЫ ──────────────────────────────────────────────────────────
   USER_LIMITS: {
     MAX_RECEIVED_VALUE_MULTIPLIER: 1.5,
     MAX_WITHDRAW_VALUE_MULTIPLIER: 1.0,
@@ -61,9 +55,6 @@ const HOUSE_CONFIG = Object.freeze({
     MAX_DAILY_WITHDRAWALS: 10,
     REQUIRE_REFERRAL_FOR_WITHDRAW: true,
     ALLOW_FREE_ITEM_ISSUANCE: true,
-
-    // Telegram ID, которые обходят реферальный гейт на вывод.
-    // ADMIN_CHAT_ID из env добавляется автоматически в webapp-api.js.
     WITHDRAW_WHITELIST: [],
   },
 
