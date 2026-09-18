@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { haptic, hapticNotify } from '../telegram.js';
+import LiveFeedStrip from './LiveFeedStrip.jsx';
+import OnlineBadge from './OnlineBadge.jsx';
 
 const RADIUS = 74;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
@@ -22,64 +24,37 @@ const DEFAULT_CONFIG = {
     { duration: 5300, turns: 7, easing: 'cubic-bezier(.1,.75,.22,1)' },
   ],
   spinJitter: { DURATION_MIN: 0.85, DURATION_MAX: 1.20, EXTRA_TURNS_MAX: 1 },
-  nearMiss: { MILLIMETER: 0.20, CLOSE: 0.30, FAR: 0.50 },
 };
 
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value));
-}
+function clamp(v, min, max) { return Math.min(max, Math.max(min, v)); }
 
-/**
- * Визуальный (честный) шанс.
- * Формула: source / target × 100.
- *
- * Множитель НЕ участвует в формуле. Он только подбирает цель (source × multiplier).
- *
- * 5⭐ → 10⭐        = 50.0%
- * 10⭐ → 75⭐       = 13.3%
- * 10⭐ → 100⭐      = 10.0%
- * 100⭐ → 150⭐     = 66.7%
- */
 function calcDisplayChance(source, target, config) {
   if (!source || !target) return 0;
   const s = Number(source.price_stars);
   const t = Number(target.price_stars);
   if (!Number.isFinite(s) || !Number.isFinite(t) || t <= s) return 0;
-
   const ratio = Math.pow(s / t, config.displayGamma);
   const base = ratio * 100 * config.displayBaseChanceMultiplier;
-  const withEdge = base * (1 - config.displayHouseEdge);
-
-  return clamp(withEdge, config.minChance, config.maxChance);
+  return clamp(base * (1 - config.displayHouseEdge), config.minChance, config.maxChance);
 }
 
-function formatChance(chance) {
-  const n = Number(chance);
+function formatChance(c) {
+  const n = Number(c);
   if (!Number.isFinite(n)) return '0.0%';
   return `${n.toFixed(1)}%`;
 }
 
-/**
- * Ищем в каталоге предмет с ценой, ближайшей к desiredPrice.
- * Из равноудалённых — рандом.
- * Только предметы дороже source.
- */
 function findClosestTarget(catalog, desiredPrice, sourceItem) {
   if (!sourceItem) return null;
-  const sourcePrice = Number(sourceItem.price_stars);
-  const candidates = catalog.filter((i) => Number(i.price_stars) > sourcePrice);
-  if (!candidates.length) return null;
-
-  let minDiff = Infinity;
+  const sp = Number(sourceItem.price_stars);
+  const list = catalog.filter((i) => Number(i.price_stars) > sp);
+  if (!list.length) return null;
+  let min = Infinity;
   let winners = [];
-  for (const item of candidates) {
-    const diff = Math.abs(Number(item.price_stars) - desiredPrice);
-    if (diff < minDiff - 1e-6) {
-      minDiff = diff;
-      winners = [item];
-    } else if (Math.abs(diff - minDiff) <= 1e-6) {
-      winners.push(item);
-    }
+  for (const item of list) {
+    const d = Math.abs(Number(item.price_stars) - desiredPrice);
+    if (d < min - 1e-6) { min = d; winners = [item]; }
+    else if (Math.abs(d - min) <= 1e-6) winners.push(item);
   }
   return winners[Math.floor(Math.random() * winners.length)];
 }
@@ -90,62 +65,10 @@ function pickSpinProfile(profiles, jitter) {
   const base = list[Math.floor(Math.random() * list.length)];
   const jf = (j.DURATION_MIN || 0.85) + Math.random() * ((j.DURATION_MAX || 1.2) - (j.DURATION_MIN || 0.85));
   const extra = Math.floor(Math.random() * ((j.EXTRA_TURNS_MAX || 1) + 1));
-  return {
-    duration: Math.round(base.duration * jf),
-    turns: base.turns + extra,
-    easing: base.easing,
-  };
+  return { duration: Math.round(base.duration * jf), turns: base.turns + extra, easing: base.easing };
 }
 
-function computeLandingAngle(success, displayChance, nearMiss) {
-  const zone = clamp(displayChance, 0, 100) * 3.6;
-
-  if (zone < 0.5) return Math.random() * 360;
-
-  if (success) {
-    return zone * (0.08 + Math.random() * 0.84);
-  }
-
-  const missArc = 360 - zone;
-  const weights = nearMiss || DEFAULT_CONFIG.nearMiss;
-  const r = Math.random();
-  let offset;
-
-  if (r < (weights.MILLIMETER || 0)) {
-    const before = Math.random() < 0.5;
-    const gap = 0.4 + Math.random() * 1.8;
-    offset = before ? (missArc - gap) : gap;
-  } else if (r < ((weights.MILLIMETER || 0) + (weights.CLOSE || 0))) {
-    const before = Math.random() < 0.5;
-    const gap = 2 + Math.random() * 8;
-    offset = before ? (missArc - gap) : gap;
-  } else {
-    offset = missArc * (0.15 + Math.random() * 0.7);
-  }
-
-  const safeOffset = clamp(offset, 0.2, missArc - 0.2);
-  return (zone + safeOffset) % 360;
-}
-
-function ResultBurst({ success }) {
-  const particles = useMemo(() => Array.from({ length: 22 }, (_, index) => ({
-    angle: index * (360 / 22) + Math.random() * 8,
-    distance: 70 + Math.random() * 100,
-    delay: Math.random() * 100
-  })), []);
-  return (
-    <div className={`result-burst ${success ? 'result-burst--success' : 'result-burst--failure'}`} aria-hidden="true">
-      {particles.map((particle, index) => (
-        <span key={index} style={{
-          '--angle': `${particle.angle}deg`,
-          '--distance': `${particle.distance}px`,
-          '--delay': `${particle.delay}ms`
-        }} />
-      ))}
-    </div>
-  );
-}
-
+// ── Slot ────────────────────────────────────────────────────────────
 function Slot({ item, placeholder, onOpen, spinning, side, title, resultStatus }) {
   const failedTarget = side === 'target' && resultStatus === 'fail';
   return (
@@ -177,6 +100,7 @@ function Slot({ item, placeholder, onOpen, spinning, side, title, resultStatus }
   );
 }
 
+// ── Picker ──────────────────────────────────────────────────────────
 function PickerSheet({ title, items, selectedId, getId, onSelect, onClose, disabledReason }) {
   return (
     <>
@@ -207,7 +131,9 @@ function PickerSheet({ title, items, selectedId, getId, onSelect, onClose, disab
                   className={`upgrade-picker-item ${selectedId === id ? 'selected' : ''}`}
                   onClick={() => onSelect(item)}
                 >
-                  <span className="upgrade-picker-item__image-wrap"><img src={item.image_url} alt="" /></span>
+                  <span className="upgrade-picker-item__image-wrap">
+                    <img src={item.image_url} alt="" />
+                  </span>
                   <span className="upgrade-picker-item__name" title={item.name}>{item.name}</span>
                   <small>★ {Number(item.price_stars).toLocaleString('ru-RU')}</small>
                 </button>
@@ -220,6 +146,7 @@ function PickerSheet({ title, items, selectedId, getId, onSelect, onClose, disab
   );
 }
 
+// ── Main ────────────────────────────────────────────────────────────
 export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, onError }) {
   const [ownedId, setOwnedId] = useState(null);
   const [targetId, setTargetId] = useState(null);
@@ -246,33 +173,28 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
 
   const owned = inventory.find((i) => i.inventory_id === ownedId) || null;
   const target = catalog.find((i) => i.id === targetId) || null;
-  const selectedMultiplier = multiplier === 'custom'
-    ? Number(customMultiplier)
-    : Number(multiplier);
+  const selectedMultiplier = multiplier === 'custom' ? Number(customMultiplier) : Number(multiplier);
 
   const customValid = multiplier !== 'custom' ||
     (Number.isFinite(selectedMultiplier) && selectedMultiplier >= config.minMultiplier &&
      selectedMultiplier <= config.maxMultiplier &&
      Math.abs(selectedMultiplier * 10 - Math.round(selectedMultiplier * 10)) < 1e-9);
 
-  // Визуальный шанс. Только source/target, без множителя в формуле.
   const displayChance = calcDisplayChance(owned, target, config);
 
   const targetItems = useMemo(() => {
     if (!owned) return catalog;
-    const sourcePrice = Number(owned.price_stars);
-    return catalog.filter((item) => Number(item.price_stars) > sourcePrice);
+    const sp = Number(owned.price_stars);
+    return catalog.filter((item) => Number(item.price_stars) > sp);
   }, [catalog, owned]);
 
-  useEffect(() => () => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-  }, []);
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
 
   const chooseOwned = (item) => {
     setOwnedId(item.inventory_id);
     setTargetId((current) => {
-      const currentTarget = catalog.find((x) => x.id === current);
-      return currentTarget && Number(currentTarget.price_stars) > Number(item.price_stars) ? current : null;
+      const ct = catalog.find((x) => x.id === current);
+      return ct && Number(ct.price_stars) > Number(item.price_stars) ? current : null;
     });
     setPicker(null);
     haptic('light');
@@ -285,13 +207,6 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
     haptic('light');
   };
 
-  /**
-   * Кнопка множителя:
-   * 1) желаемая цена = source × multiplier
-   * 2) ищем ближайшую цель в каталоге
-   * 3) ставим её как target
-   * Шанс потом считается формулой source/target — без деления на множитель.
-   */
   const chooseMultiplier = useCallback((value) => {
     if (spinning || busy || result) return;
     setMultiplier(value);
@@ -300,7 +215,6 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
     if (!owned || value === 'custom') return;
     const m = Number(value);
     if (!Number.isFinite(m) || m < 1) return;
-
     const desired = Number(owned.price_stars) * m;
     const pick = findClosestTarget(catalog, desired, owned);
     if (pick) setTargetId(pick.id);
@@ -342,10 +256,11 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
       const res = await api.upgrade(owned.inventory_id, target.id, selectedMultiplier);
       const success = Boolean(res.success);
 
-      // Визуал по той же честной формуле, что и в шапке
-      const display = calcDisplayChance(owned, target, config);
+      // Угол приземления — с СЕРВЕРА. Стрелка всегда отражает реальный исход.
+      const landing = Number.isFinite(Number(res.landingAngle))
+        ? Number(res.landingAngle)
+        : 0;
 
-      const landing = computeLandingAngle(success, display, config.nearMiss);
       const profile = pickSpinProfile(config.spinProfiles, config.spinJitter);
 
       setSpinProfile(profile);
@@ -372,6 +287,7 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
         target_not_found: 'Целевой предмет больше недоступен.',
         target_not_higher: 'Для апгрейда нужен предмет дороже исходного.',
         operation_in_progress: 'Апгрейд уже выполняется.',
+        pending_upgrade: 'Подождите — предыдущий апгрейд ещё обрабатывается.',
       };
       onError?.(messages[err.code] || 'Не удалось выполнить апгрейд. Попробуйте ещё раз.');
       setNeedleAngle(0);
@@ -387,16 +303,28 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
   const sourceStatus = result ? (result.success ? 'success' : 'fail-source') : null;
   const targetStatus = result ? (result.success ? 'success' : 'fail') : null;
 
+  const canUpgrade = owned && target && customValid && !spinning && !busy && !result;
+
   return (
     <div className="upgrade-screen">
-      {result && <ResultBurst success={result.success} />}
+      {/* Верхняя полоса: онлайн + live-лента */}
+      <div className="upgrade-toprow">
+        <OnlineBadge />
+      </div>
 
+      <LiveFeedStrip />
+
+      {/* Основная сцена */}
       <section className={`upgrade-stage-modern ${spinning ? 'upgrade-stage--spinning' : ''} ${result ? (result.success ? 'upgrade-stage--success' : 'upgrade-stage--failure') : ''}`}>
         {result && (
-          <div className={`upgrade-result-neon ${result.success ? 'upgrade-result-neon--success' : 'upgrade-result-neon--failure'}`} role="status" aria-live="polite">
+          <div
+            className={`upgrade-result-neon ${result.success ? 'upgrade-result-neon--success' : 'upgrade-result-neon--failure'}`}
+            role="status" aria-live="polite"
+          >
             {result.success ? 'УСПЕХ!' : 'НЕУДАЧА!'}
           </div>
         )}
+
         <Slot
           title="У тебя есть"
           item={result?.sourceItem || owned}
@@ -439,10 +367,11 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
                 <strong>{result ? (result.success ? 'УСПЕХ' : 'НЕУДАЧА') : formatChance(displayChance)}</strong>
               </div>
             </div>
+
             <button
               type="button"
               className="upgrade-action-button"
-              disabled={result ? false : (!owned || !target || !customValid || spinning || busy)}
+              disabled={result ? false : !canUpgrade}
               onClick={handleAction}
             >
               {busy || spinning ? 'АПГРЕЙДИМ…' : result ? 'ПРОДОЛЖИТЬ' : 'УЛУЧШИТЬ'}
@@ -461,10 +390,13 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
         />
       </section>
 
+      {/* Множители */}
       <section className="upgrade-multiplier-bar">
         <div className="upgrade-multiplier-bar__head">
           <span>Множитель</span>
-          {owned && target && <span className="upgrade-multiplier-bar__chance">Шанс {formatChance(displayChance)}</span>}
+          {owned && target && (
+            <span className="upgrade-multiplier-bar__chance">Шанс {formatChance(displayChance)}</span>
+          )}
         </div>
         <div className="upgrade-multiplier-row">
           {PRESETS.map((value) => (
