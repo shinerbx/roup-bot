@@ -109,7 +109,6 @@ function createWebappRouter(bot, botToken) {
       const whitelist = buildWithdrawWhitelist();
       const whitelisted = isWhitelisted(req.tgUser.id, whitelist);
 
-      // Demo блокирует вывод, но игрок этого не видит — просто can_withdraw=false
       const demoActive = user.pre_demo_balance != null || Number(user.lucky_mode) > 0;
       const canWithdraw = (whitelisted || referralProgress.canWithdraw) && !demoActive;
 
@@ -123,6 +122,7 @@ function createWebappRouter(bot, botToken) {
         referral_progress: referralProgress,
         can_withdraw: canWithdraw,
         is_whitelisted: whitelisted,
+        demo_active: demoActive,
         balance: user.balance || 0,
         items_count: itemsCount || 0,
         tutorial_completed: Boolean(user.tutorial_completed),
@@ -295,8 +295,6 @@ function createWebappRouter(bot, botToken) {
     }
   });
 
-  // ── ВЫВОД ────────────────────────────────────────────────────────────
-
   router.get('/withdraw/methods', (_req, res) => {
     const methods = Object.entries(WITHDRAWAL.METHODS)
       .filter(([, cfg]) => cfg.enabled)
@@ -329,10 +327,9 @@ function createWebappRouter(bot, botToken) {
       if (!/^@[A-Za-z0-9_]{4,32}$/.test(username)) return res.status(400).json({ error: 'invalid_username' });
       if (!operationId || operationId.length > 100) return res.status(400).json({ error: 'missing_operation_id' });
 
-      // Demo-режим блокирует вывод. Игрок получает общий отказ без деталей.
       const u = req.dbUser;
       if (u && (u.pre_demo_balance != null || Number(u.lucky_mode) > 0)) {
-        return res.status(403).json({ error: 'withdraw_unavailable' });
+        return res.status(403).json({ error: 'demo_active' });
       }
 
       const whitelist = buildWithdrawWhitelist();
