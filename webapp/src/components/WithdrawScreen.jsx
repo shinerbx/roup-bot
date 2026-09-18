@@ -30,7 +30,7 @@ function mapError(code) {
 }
 
 export default function WithdrawScreen({ onClose, balance = 0, canWithdraw = false }) {
-  const [step, setStep] = useState('method'); // method | form | success
+  const [step, setStep] = useState('method');
   const [methods, setMethods] = useState(FALLBACK_METHODS);
   const [methodsLoading, setMethodsLoading] = useState(true);
   const [rate, setRate] = useState(0.2);
@@ -131,7 +131,6 @@ export default function WithdrawScreen({ onClose, balance = 0, canWithdraw = fal
     setError(null);
   };
 
-  // ═══ УСПЕХ ══════════════════════════════════════════════════════════
   if (step === 'success') {
     return (
       <div className="topup-overlay">
@@ -156,7 +155,6 @@ export default function WithdrawScreen({ onClose, balance = 0, canWithdraw = fal
     );
   }
 
-  // ═══ ФОРМА КРИПТЫ ═══════════════════════════════════════════════════
   if (step === 'form') {
     return (
       <div className="topup-overlay">
@@ -275,7 +273,6 @@ export default function WithdrawScreen({ onClose, balance = 0, canWithdraw = fal
     );
   }
 
-  // ═══ ВЫБОР МЕТОДА ═══════════════════════════════════════════════════
   return (
     <div className="topup-overlay">
       <div className="topup-header">
