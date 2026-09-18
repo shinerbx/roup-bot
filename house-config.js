@@ -1,40 +1,32 @@
-// language: JavaScript, file: house-config.js, target: Node.js
-// *Единая конфигурация экономики. Всё, что тюнится — здесь. Заморожен.*
-
-'use strict';
-
 const HOUSE_CONFIG = Object.freeze({
-  // ═══════════════════════════════════════════════════════════════════
-  // АПГРЕЙД
-  // ═══════════════════════════════════════════════════════════════════
-  UPGRADE: Object.freeze({
-    // ── Реальный расчёт (идёт в RNG, видит только сервер) ──
-    GAMMA: 1.35,
-    BASE_CHANCE_MULTIPLIER: 0.95,
-    HOUSE_EDGE: 0.12,
-    ROLL_NOISE: 0.05,
 
-    // ── Отображаемый расчёт (честный, видит клиент) ──
-    DISPLAY_GAMMA: 1.25,
+  UPGRADE: {
+    GAMMA: 1.12,
+    BASE_CHANCE_MULTIPLIER: 0.90,
+    HOUSE_EDGE: 0.25,
+    ROLL_NOISE: 0.12,
+
+    DISPLAY_GAMMA: 1.0,
     DISPLAY_BASE_CHANCE_MULTIPLIER: 1.0,
     DISPLAY_HOUSE_EDGE: 0.0,
 
-    MIN_CHANCE: 0.5,
+    MIN_CHANCE: 0.1,
     MAX_CHANCE: 95,
-
-    MIN_MULTIPLIER: 1.5,
+    MIN_MULTIPLIER: 1,
     MAX_MULTIPLIER: 100,
+    DEFAULT_MULTIPLIER: 1,
 
-    // ── Lucky / demo ──
-    LUCKY_CHANCE_MULTIPLIER: 8,
-    LUCKY_FLAT_BOOST: 25,
-    LUCKY_MAX_CHANCE: 85,
-  }),
+    // Lucky — только для server-side demo-режима; клиент не задаёт эти значения.
+    LUCKY_CHANCE_MULTIPLIER: 10,
+    LUCKY_FLAT_BOOST: 50,
+    LUCKY_MAX_CHANCE: 92,
 
-  // ═══════════════════════════════════════════════════════════════════
-  // РУЛЕТКА
-  // ═══════════════════════════════════════════════════════════════════
-  ROULETTE: Object.freeze({
+    // Anti-flood
+    PENDING_WINDOW_SEC: 15,       // окно, в котором висит pending-запрос
+    MIN_INTERVAL_MS: 800,          // минимум между двумя апгрейдами одного юзера
+  },
+
+  ROULETTE: {
     SPIN_PROFILES: [
       { duration: 2900, turns: 3, easing: 'cubic-bezier(.08,.72,.18,1)' },
       { duration: 3400, turns: 4, easing: 'cubic-bezier(.15,.55,.35,1)' },
@@ -42,108 +34,58 @@ const HOUSE_CONFIG = Object.freeze({
       { duration: 4700, turns: 6, easing: 'cubic-bezier(.12,.7,.2,1)' },
       { duration: 5300, turns: 7, easing: 'cubic-bezier(.1,.75,.22,1)' },
     ],
-    SPIN_JITTER: Object.freeze({
+    SPIN_JITTER: {
       DURATION_MIN: 0.85,
       DURATION_MAX: 1.20,
       EXTRA_TURNS_MAX: 1,
-    }),
-    NEAR_MISS: Object.freeze({
-      WIN_MARGIN_MIN: 0.15,
-      WIN_MARGIN_MAX: 0.85,
-      LOSE_MARGIN_MIN: 0.05,
-      LOSE_MARGIN_MAX: 0.55,
-    }),
-  }),
+    },
+    // Визуальный near-miss: проигрыш всегда остаётся за пределами зелёного
+    // сектора, но чаще всего останавливается прямо рядом с его границей.
+    NEAR_MISS: {
+      MILLIMETER: 0.50,
+      CLOSE: 0.40,
+      FAR: 0.10,
+    },
+  },
 
-  // ═══════════════════════════════════════════════════════════════════
-  // LIVE-ЛЕНТА И ОНЛАЙН
-  // ═══════════════════════════════════════════════════════════════════
-  LIVE_FEED: Object.freeze({
-    CACHE_SIZE: 50,
-    FAKE_PER_REQUEST: 12,
-    ONLINE_WINDOW_SEC: 300,
-    ONLINE_MULTIPLIER: 100,
-  }),
+  // Live-лента
+  LIVE_FEED: {
+    CACHE_SIZE: 50,           // сколько реальных дропов держим в памяти
+    FAKE_PER_REQUEST: [6, 14], // сколько фейков примешивать на запрос
+    ONLINE_WINDOW_SEC: 300,    // окно активности для онлайна
+    ONLINE_MULTIPLIER: 100,    // фейковый онлайн = реальный × это
+  },
 
-  // ═══════════════════════════════════════════════════════════════════
-  // ЛИМИТЫ ПОЛЬЗОВАТЕЛЯ
-  // ═══════════════════════════════════════════════════════════════════
-  USER_LIMITS: Object.freeze({
-    MAX_RECEIVED_VALUE_MULTIPLIER: 3,
-    MAX_WITHDRAW_VALUE_MULTIPLIER: 2,
+  USER_LIMITS: {
+    MAX_RECEIVED_VALUE_MULTIPLIER: 1.5,
+    MAX_WITHDRAW_VALUE_MULTIPLIER: 1.0,
     MAX_ITEM_VALUE: 50000,
-    MIN_DEPOSIT_FOR_WITHDRAW: 100,
-    MAX_DAILY_WITHDRAWALS: 3,
+    MIN_DEPOSIT_FOR_WITHDRAW: 0,
+    MAX_DAILY_WITHDRAWALS: 10,
     REQUIRE_REFERRAL_FOR_WITHDRAW: true,
-    // Кто обходит реф-гейт и demo-блок
+    ALLOW_FREE_ITEM_ISSUANCE: true,
     WITHDRAW_WHITELIST: [],
-  }),
+  },
 
-  // ═══════════════════════════════════════════════════════════════════
-  // ВЫВОД
-  // ═══════════════════════════════════════════════════════════════════
-  WITHDRAWAL: Object.freeze({
+  PAYMENTS: {
+    MIN_TOPUP: 50,
+    MAX_TOPUP: 500000,
+    CURRENCY: 'XTR',
+  },
+
+  WITHDRAWAL: {
     STAR_TO_RUB: 0.2,
     COMMISSION_PERCENT: 20,
     MIN_STARS: 100,
     MAX_STARS: 100000,
     MAX_OPEN_REQUESTS: 3,
+    METHODS: {
+      crypto: { enabled: true,  label: 'Криптовалюта',     icon: '₿',  hint: 'USDT TRC20 · до 48ч' },
+      card:   { enabled: false, label: 'Банковская карта', icon: '💳', hint: 'Скоро'              },
+      sbp:    { enabled: false, label: 'СБП',              icon: '⚡', hint: 'Скоро'              },
+    },
     ADMIN_NOTIFY: true,
-
-    METHODS: Object.freeze({
-      crypto: Object.freeze({
-        enabled: true,
-        label: 'Криптовалюта',
-        icon: '₿',
-        hint: 'USDT TRC20 · до 48ч',
-        description: 'Вывод в USDT (TRC20). Минимальная сумма — 100 ⭐.',
-      }),
-      card: Object.freeze({
-        enabled: false,
-        label: 'Банковская карта',
-        icon: '💳',
-        hint: 'Скоро',
-        description: 'Вывод на карту РФ. Временно недоступен.',
-      }),
-      sbp: Object.freeze({
-        enabled: false,
-        label: 'СБП',
-        icon: '⚡',
-        hint: 'Скоро',
-        description: 'Вывод через Систему быстрых платежей. Временно недоступен.',
-      }),
-    }),
-
-    POLICY: Object.freeze({
-      title: 'Условия вывода',
-      lines: [
-        'Курс: 1 ⭐ = 0.20 ₽',
-        'Комиссия: 20% от суммы',
-        'Срок обработки: до 48 часов',
-        'Минимум: 100 ⭐ · Максимум: 100 000 ⭐',
-        'Не более 3 открытых заявок одновременно',
-        'Вывод разблокируется после приглашения друзей',
-      ],
-    }),
-  }),
-
-  // ═══════════════════════════════════════════════════════════════════
-  // ПЛАТЕЖИ
-  // ═══════════════════════════════════════════════════════════════════
-  PAYMENTS: Object.freeze({
-    MIN_TOPUP: 100,
-    MAX_TOPUP: 100000,
-    CURRENCY: 'XTR',
-  }),
+  },
 });
 
-// ── Прямые экспорты для удобства импорта ──
-module.exports = {
-  HOUSE_CONFIG,
-  UPGRADE: HOUSE_CONFIG.UPGRADE,
-  ROULETTE: HOUSE_CONFIG.ROULETTE,
-  LIVE_FEED: HOUSE_CONFIG.LIVE_FEED,
-  USER_LIMITS: HOUSE_CONFIG.USER_LIMITS,
-  WITHDRAWAL: HOUSE_CONFIG.WITHDRAWAL,
-  PAYMENTS: HOUSE_CONFIG.PAYMENTS,
-};
+module.exports = HOUSE_CONFIG;

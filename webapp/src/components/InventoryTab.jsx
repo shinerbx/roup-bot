@@ -1,6 +1,3 @@
-// language: JSX, file: InventoryTab.jsx, target: React
-// *Инвентарь. Подписи кнопок, вывода, demo-статуса. Логика не тронута.*
-
 import { useMemo, useState } from 'react';
 import { haptic } from '../telegram.js';
 
@@ -52,9 +49,7 @@ function SellSheet({ item, pending, onCancel, onConfirm }) {
           <img className="sheet__item-image" src={item.image_url} alt="" />
           <div className="purchase-sheet__info">
             <p className="sheet__item-name">{item.name}</p>
-            <small>
-              ★ {Number(item.price_stars).toLocaleString('ru-RU')} за штуку · у тебя {max}
-            </small>
+            <small>★ {Number(item.price_stars).toLocaleString('ru-RU')} за штуку · у тебя {max}</small>
           </div>
         </div>
 
@@ -85,8 +80,9 @@ function SellSheet({ item, pending, onCancel, onConfirm }) {
           <div className="quantity-presets">
             {[1, Math.min(5, max), Math.min(10, max), max].map((v, i) => (
               <button
-                key={i}
+                key={`${v}-${i}`}
                 type="button"
+                className={qty === v ? 'selected' : ''}
                 onClick={() => { haptic('light'); setSafe(v); }}
                 disabled={pending}
               >
@@ -96,15 +92,26 @@ function SellSheet({ item, pending, onCancel, onConfirm }) {
           </div>
         )}
 
-        <p className="sheet__total">
-          Получишь {total.toLocaleString('ru-RU')} ★
-        </p>
+        <div className="purchase-sheet__summary" style={{ marginTop: 14 }}>
+          <span>Получишь</span>
+          <strong>{total.toLocaleString('ru-RU')} ★</strong>
+        </div>
 
-        <div className="sheet__actions">
-          <button type="button" className="btn btn--ghost" onClick={onCancel} disabled={pending}>
+        <div className="sheet__actions" style={{ marginTop: 14 }}>
+          <button
+            type="button"
+            className="sheet__cancel"
+            onClick={onCancel}
+            disabled={pending}
+          >
             Отмена
           </button>
-          <button type="button" className="btn btn--primary" onClick={() => onConfirm(qty)} disabled={pending}>
+          <button
+            type="button"
+            className="sheet__confirm"
+            onClick={() => onConfirm(qty)}
+            disabled={pending}
+          >
             {pending ? 'Продажа…' : `Продать ${qty}`}
           </button>
         </div>
@@ -124,16 +131,25 @@ export default function InventoryTab({
   demoActive = false,
 }) {
   const [sellItem, setSellItem] = useState(null);
-
   const grouped = useMemo(() => groupInventory(items || []), [items]);
+
   const totalCount = (items || []).length;
 
   if (loading) {
     return (
-      <div className="inventory-grid">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="skeleton" style={{ height: 140, borderRadius: 16 }} />
-        ))}
+      <div className="inventory-screen">
+        <div className="inventory-header">
+          <div className="inventory-header__left">
+            <div className="skeleton" style={{ width: 120, height: 22, borderRadius: 8 }} />
+            <div className="skeleton" style={{ width: 80, height: 12, borderRadius: 6, marginTop: 8 }} />
+          </div>
+          <div className="skeleton" style={{ width: 100, height: 40, borderRadius: 999 }} />
+        </div>
+        <div className="item-grid" style={{ marginTop: 4 }}>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="skeleton" style={{ height: 220, borderRadius: 17 }} />
+          ))}
+        </div>
       </div>
     );
   }
@@ -141,70 +157,76 @@ export default function InventoryTab({
   const isEmpty = !grouped.length;
 
   return (
-    <>
-      <div className="inventory-header">
-        <h3>Инвентарь</h3>
-        <p className="inventory-header__sub">
-          {isEmpty
-            ? 'Пусто'
-            : `${grouped.length} ${plural(grouped.length, 'вид', 'вида', 'видов')} · ${totalCount} ${plural(totalCount, 'шт', 'шт', 'шт')}`}
-        </p>
-      </div>
-
-      {demoActive && (
-        <div className="demo-banner">
-          🧪 Включён demo-режим. Вывод заблокирован. Отключить — напиши менеджеру.
+    <div className="inventory-screen">
+      <header className="inventory-header">
+        <div className="inventory-header__left">
+          <h3 className="inventory-header__title">Инвентарь</h3>
+          <p className="inventory-header__meta">
+            {isEmpty
+              ? 'Пусто'
+              : `${grouped.length} ${plural(grouped.length, 'вид', 'вида', 'видов')} · ${totalCount} ${plural(totalCount, 'шт', 'шт', 'шт')}`}
+          </p>
         </div>
-      )}
-
-      <button
-        type="button"
-        className="btn btn--primary btn--large"
-        onClick={() => { haptic('medium'); onWithdraw?.(); }}
-      >
-        💸 Вывод средств
-      </button>
+        <button
+          type="button"
+          className={`inventory-withdraw-btn${canWithdraw === false ? ' inventory-withdraw-btn--locked' : ''}`}
+          onClick={() => { haptic('medium'); onWithdraw?.(); }}
+        >
+          <span className="inventory-withdraw-btn__icon" aria-hidden="true">💸</span>
+          <span className="inventory-withdraw-btn__label">Вывод</span>
+        </button>
+      </header>
 
       {canWithdraw === false && (
-        <div className="withdraw-gate">
-          <p>🔒 Вывод пока не разблокирован</p>
-          {referralProgress && (
-            <small>
-              Пригласи ещё {referralProgress.premiumRemaining} Premium или{' '}
-              {referralProgress.regularRemaining} обычных пользователей — или оформи заявку
-              через поддержку.
-            </small>
-          )}
+        <div className="inventory-alert">
+          <span className="inventory-alert__icon" aria-hidden="true">🔒</span>
+          <div className="inventory-alert__text">
+            <strong>Вывод пока не разблокирован</strong>
+            {referralProgress && (
+              <span>
+                Пригласи ещё <b>{referralProgress.premiumRemaining}</b> Premium
+                или <b>{referralProgress.regularRemaining}</b> обычных пользователей —
+                или оформи заявку сейчас, менеджер проверит вручную.
+              </span>
+            )}
+          </div>
         </div>
       )}
 
       {isEmpty ? (
         <div className="inventory-empty">
-          <p>Инвентарь пуст</p>
-          <small>Купи первый предмет в каталоге или крути рулетку.</small>
+          <div className="inventory-empty__icon" aria-hidden="true">🎒</div>
+          <p className="inventory-empty__title">Инвентарь пуст</p>
+          <p className="inventory-empty__text">Купи предмет в каталоге или забери подарок за подписку.</p>
         </div>
       ) : (
-        <div className="inventory-grid">
-          {grouped.map((entry) => (
-            <div key={entry.itemId} className="inventory-card">
-              <img src={entry.image_url} alt="" className="inventory-card__image" />
-              <div className="inventory-card__info">
-                <p className="inventory-card__name">{entry.name}</p>
-                <small className="inventory-card__meta">
-                  ★ {Number(entry.price_stars).toLocaleString('ru-RU')} · x{entry.count}
-                  {entry.is_demo && ' · demo'}
-                </small>
+        <div className="item-grid">
+          {grouped.map((it) => {
+            const busy = sellingId === it.itemId;
+            return (
+              <div key={it.itemId} className="item-card">
+                <div className="item-card__image-wrap">
+                  <img className="item-card__image" src={it.image_url} alt="" />
+                  {it.count > 1 && (
+                    <span className="item-card__quantity">×{it.count}</span>
+                  )}
+                </div>
+                <p className="item-card__name" title={it.name}>{it.name}</p>
+                <p className="item-card__category">{it.is_demo ? 'Demo-предмет' : it.category}</p>
+                <div className="item-card__footer">
+                  <span className="price-tag">★ {Number(it.price_stars).toLocaleString('ru-RU')}</span>
+                  <button
+                    type="button"
+                    className="item-card__sell"
+                    disabled={busy || demoActive}
+                    onClick={() => { haptic('light'); setSellItem(it); }}
+                  >
+                    {demoActive ? 'Demo' : (busy ? '…' : 'Продать')}
+                  </button>
+                </div>
               </div>
-              <button
-                type="button"
-                className="btn btn--small"
-                disabled={sellingId === entry.itemId}
-                onClick={() => { haptic('light'); setSellItem(entry); }}
-              >
-                {sellingId === entry.itemId ? '…' : 'Продать'}
-              </button>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -212,14 +234,14 @@ export default function InventoryTab({
         <SellSheet
           item={sellItem}
           pending={sellingId === sellItem.itemId}
-          onCancel={() => setSellItem(null)}
-          onConfirm={(qty) => {
-            onSell?.(sellItem.itemId, qty);
+          onCancel={() => { if (sellingId !== sellItem.itemId) setSellItem(null); }}
+          onConfirm={async (qty) => {
+            await onSell?.(sellItem.itemId, qty);
             setSellItem(null);
           }}
         />
       )}
-    </>
+    </div>
   );
 }
 
@@ -227,6 +249,6 @@ function plural(n, one, few, many) {
   const mod10 = n % 10;
   const mod100 = n % 100;
   if (mod10 === 1 && mod100 !== 11) return one;
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return few;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
   return many;
 }

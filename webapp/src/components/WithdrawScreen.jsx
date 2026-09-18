@@ -1,6 +1,3 @@
-// language: JSX, file: WithdrawScreen.jsx, target: React
-// *Экран вывода. Ошибки, подписи шагов, комиссия. Логика не тронута.*
-
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { haptic, hapticNotify } from '../telegram.js';
@@ -21,17 +18,17 @@ function mapError(code, details) {
     insufficient_balance: 'Недостаточно средств на балансе.',
     amount_below_min: `Минимальная сумма — ${details?.min || 100} ⭐.`,
     amount_above_max: `Максимум за одну заявку — ${Number(details?.max || 100000).toLocaleString('ru-RU')} ⭐.`,
-    invalid_username: 'Проверь формат юзернейма — @username.',
-    too_many_open_requests: 'У тебя уже есть открытые заявки. Дождись их обработки.',
+    invalid_username: 'Проверьте формат юзернейма — @username.',
+    too_many_open_requests: 'У вас уже есть открытые заявки. Дождитесь их обработки.',
     referral_gate: 'Условия по приглашениям ещё не выполнены.',
-    operation_in_progress: 'Заявка уже создаётся, подожди.',
+    operation_in_progress: 'Заявка уже создаётся, подождите.',
     method_not_available: 'Этот способ вывода временно недоступен.',
-    missing_operation_id: 'Ошибка сессии. Обнови страницу и попробуй снова.',
+    missing_operation_id: 'Ошибка сессии. Обновите страницу и попробуйте снова.',
     invalid_amount: 'Некорректная сумма.',
-    demo_active: 'Включён demo-режим. Для отключения напиши своему менеджеру.',
-    server_error: 'Ошибка на сервере. Попробуй позже.',
+    demo_active: 'Включён Demo-Режим. Для его отключения напишите своему менеджеру.',
+    server_error: 'Ошибка на сервере. Попробуйте позже.',
   };
-  return map[code] || 'Не удалось создать заявку. Попробуй позже.';
+  return map[code] || 'Не удалось создать заявку. Попробуйте позже.';
 }
 
 export default function WithdrawScreen({
@@ -77,143 +74,278 @@ export default function WithdrawScreen({
   const calc = useMemo(() => {
     const stars = Math.max(0, Math.floor(Number(amountStars) || 0));
     const rub = +(stars * rate).toFixed(2);
-    const commission = +(rub * (commissionPct / 100)).toFixed(2);
+    const commission = +(rub * commissionPct / 100).toFixed(2);
     const payout = +(rub - commission).toFixed(2);
     return { stars, rub, commission, payout };
   }, [amountStars, rate, commissionPct]);
 
-  const handleSubmit = async () => {
-    if (submittingRef.current) return;
+  const usernameOk = /^@?[A-Za-z0-9_]{4,32}$/.test(username.trim());
+  const amountOk = calc.stars >= minStars && calc.stars <= maxStars && calc.stars <= balance;
+  const canSubmit = amountOk && usernameOk && !loading && canWithdraw && !demoActive;
+
+  const chooseMethod = (key) => {
+    haptic('light');
+    if (key === 'crypto') {
+      operationIdRef.current = createOperationId();
+      setError(null);
+      setStep('form');
+    }
+  };
+
+  const applyPreset = (value) => {
+    haptic('light');
+    if (value === -1) setAmountStars(String(Math.min(balance, maxStars)));
+    else setAmountStars(String(value));
+    setError(null);
+  };
+
+  const submit = async () => {
+    if (!canSubmit || submittingRef.current) return;
     submittingRef.current = true;
     setLoading(true);
     setError(null);
+    haptic('medium');
+
     try {
-      if (!operationIdRef.current) operationIdRef.current = createOperationId();
-      const r = await api.withdrawRequest({
+      const normalized = username.trim().startsWith('@') ? username.trim() : `@${username.trim()}`;
+      const res = await api.createWithdrawRequest({
         method: 'crypto',
         amountStars: calc.stars,
-        contactUsername: username.replace(/^@/, ''),
-        operationId: operationIdRef.current,
+        contactUsername: normalized,
+        operationId: operationIdRef.current || createOperationId(),
       });
-      setResult(r);
-      hapticNotify(true);
-      setStep('success');
-    } catch (err) {
-      setError(mapError(err?.code, err?.details));
-      hapticNotify(false);
+
+      if (res?.error) {
+        setError(mapError(res.error, res.details));
+        hapticNotify('error');
+      } else {
+        setResult(res);
+        setStep('success');
+        hapticNotify('success');
+      }
+    } catch (e) {
+      const code = e?.code || e?.message;
+      setError(mapError(code, e?.details));
+      hapticNotify('error');
     } finally {
       setLoading(false);
       submittingRef.current = false;
     }
   };
 
-  return (
-    <div className="withdraw-screen">
-      <button type="button" className="back-btn" onClick={onClose} aria-label="Назад">‹</button>
+  const goBack = () => {
+    haptic('light');
+    setStep('method');
+    setError(null);
+  };
 
-      {step === 'method' && (
-        <>
-          <h2>💸 Вывод средств</h2>
-          <p className="withdraw-screen__sub">
-            Выбери способ вывода. Комиссия — {commissionPct}%. Срок — до 48 часов.
+  // ═══ УСПЕХ ══════════════════════════════════════════════════════════
+  if (step === 'success') {
+    return (
+      <div className="topup-overlay">
+        <div className="topup-header">
+          <button className="topup-back" onClick={onClose} aria-label="Закрыть">‹</button>
+          <h2 className="screen-title">Заявка создана</h2>
+          <span style={{ width: 28 }} />
+        </div>
+
+        <div className="withdraw-success">
+          <div className="withdraw-success__icon">✓</div>
+          <p className="withdraw-success__amount">{normRub(result?.payoutRub || 0)}</p>
+          <p className="withdraw-success__text">
+            Заявка <b>#{result?.requestId}</b> принята в обработку.<br />
+            Списано: {Number(result?.amountStars || 0).toLocaleString('ru-RU')} ⭐ · Комиссия: {normRub(result?.commissionRub || 0)}
           </p>
+          <p className="withdraw-success__note">
+            Менеджер свяжется с вами в течение 48 часов
+          </p>
+        </div>
+      </div>
+    );
+  }
 
-          {methodsLoading ? (
-            <div className="skeleton" style={{ height: 80, borderRadius: 16 }} />
-          ) : (
-            methods.map((m) => (
+  // ═══ DEMO-БЛОК ══════════════════════════════════════════════════════
+  // Приоритетнее любых других экранов: если demoActive, показываем
+  // сообщение и не даём пройти к форме.
+  if (demoActive) {
+    return (
+      <div className="topup-overlay">
+        <div className="topup-header">
+          <button className="topup-back" onClick={onClose} aria-label="Назад">‹</button>
+          <h2 className="screen-title">Вывод средств</h2>
+          <span style={{ width: 28 }} />
+        </div>
+
+        <div className="withdraw-demo-lock">
+          <div className="withdraw-demo-lock__icon">🔒</div>
+          <p className="withdraw-demo-lock__title">Включён Demo-Режим</p>
+          <p className="withdraw-demo-lock__text">
+            Для его отключения напишите своему менеджеру.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // ═══ ФОРМА ═════════════════════════════════════════════════════════
+  if (step === 'form') {
+    return (
+      <div className="topup-overlay">
+        <div className="topup-header">
+          <button className="topup-back" onClick={goBack} aria-label="Назад">‹</button>
+          <h2 className="screen-title">Вывод · Криптовалюта</h2>
+          <span style={{ width: 28 }} />
+        </div>
+
+        <p className="topup-rate">USDT TRC20 · обработка до 48 часов</p>
+
+        <div className="withdraw-field">
+          <label className="withdraw-field__label" htmlFor="wd-amount">Сумма вывода</label>
+          <div className="topup-custom">
+            <span className="topup-custom__icon">⭐</span>
+            <input
+              id="wd-amount"
+              className="topup-custom__input"
+              type="text"
+              inputMode="numeric"
+              autoComplete="off"
+              placeholder="0"
+              value={amountStars}
+              onChange={(e) => {
+                setAmountStars(e.target.value.replace(/\D/g, '').slice(0, 7));
+                setError(null);
+              }}
+              disabled={loading}
+            />
+          </div>
+          <div className="withdraw-presets">
+            {[100, 500, 1000].map((v) => (
+              <button
+                key={v}
+                type="button"
+                className={`topup-chip${Number(amountStars) === v ? ' selected' : ''}`}
+                onClick={() => applyPreset(v)}
+                disabled={loading}
+              >
+                {v}
+              </button>
+            ))}
+            <button
+              type="button"
+              className={`topup-chip${calc.stars === Math.min(balance, maxStars) && balance > 0 ? ' selected' : ''}`}
+              onClick={() => applyPreset(-1)}
+              disabled={loading}
+            >
+              MAX
+            </button>
+          </div>
+          <p className="withdraw-field__hint">
+            Доступно: <b>{balance.toLocaleString('ru-RU')} ⭐</b> · минимум {minStars} ⭐
+          </p>
+        </div>
+
+        <div className="withdraw-field">
+          <label className="withdraw-field__label" htmlFor="wd-user">Telegram-юзернейм для связи</label>
+          <div className="topup-custom">
+            <span className="topup-custom__icon">@</span>
+            <input
+              id="wd-user"
+              className="topup-custom__input"
+              type="text"
+              autoComplete="off"
+              autoCapitalize="none"
+              spellCheck={false}
+              placeholder="username"
+              value={username.replace(/^@/, '')}
+              onChange={(e) => { setUsername(e.target.value.trim()); setError(null); }}
+              disabled={loading}
+              maxLength={32}
+            />
+          </div>
+        </div>
+
+        <div className="withdraw-calc">
+          <div className="withdraw-calc__row">
+            <span>Сумма к выводу</span>
+            <span><b>{calc.stars.toLocaleString('ru-RU')} ⭐</b> · {normRub(calc.rub)}</span>
+          </div>
+          <div className="withdraw-calc__row">
+            <span>Комиссия системы {commissionPct}%</span>
+            <span className="withdraw-calc__fee">− {normRub(calc.commission)}</span>
+          </div>
+          <div className="withdraw-calc__row withdraw-calc__row--total">
+            <span>К выплате чистыми</span>
+            <b>{normRub(calc.payout)}</b>
+          </div>
+        </div>
+
+        <div className="withdraw-legal">
+          <p>
+            Отправляя заявку, вы подтверждаете, что выводимые средства получены законно
+            и не связаны с мошенничеством, обходом платёжных систем или нарушением правил
+            Telegram. Вы принимаете условия сервиса и соглашаетесь, что транзакция может быть
+            приостановлена для проверки до её завершения.
+          </p>
+          <p className="withdraw-legal__note">
+            Менеджер свяжется с вами для осуществления вывода в течение 48 часов.
+          </p>
+        </div>
+
+        {error && <div className="withdraw-error">{error}</div>}
+
+        <button
+          type="button"
+          className="sheet__confirm"
+          onClick={submit}
+          disabled={!canSubmit}
+          style={{ width: '100%', minHeight: 52 }}
+        >
+          {loading ? 'Создание заявки…' : 'Создать заявку'}
+        </button>
+      </div>
+    );
+  }
+
+  // ═══ ВЫБОР МЕТОДА ══════════════════════════════════════════════════
+  return (
+    <div className="topup-overlay">
+      <div className="topup-header">
+        <button className="topup-back" onClick={onClose} aria-label="Назад">‹</button>
+        <h2 className="screen-title">Вывод средств</h2>
+        <span style={{ width: 28 }} />
+      </div>
+
+      {!canWithdraw && !demoActive && (
+        <div className="withdraw-warning">
+          <b>Вывод пока недоступен.</b>{' '}
+          {referralProgress
+            ? `Пригласи ещё ${referralProgress.premiumRemaining} Premium или ${referralProgress.regularRemaining} обычных — тогда кнопка разблокируется.`
+            : 'Пригласи друзей по реферальной ссылке, чтобы разблокировать.'}
+        </div>
+      )}
+
+      <p className="topup-rate">Выберите способ вывода</p>
+
+      <div className="payment-methods">
+        {methodsLoading
+          ? <div className="skeleton" style={{ height: 56, borderRadius: 14 }} />
+          : methods.map((m) => (
               <button
                 key={m.key}
                 type="button"
-                className="method-card"
-                disabled={!m.enabled}
-                onClick={() => { haptic('light'); setStep('form'); }}
+                className={`payment-method${(!canWithdraw || demoActive) ? ' disabled' : ''}`}
+                disabled={!canWithdraw || demoActive}
+                onClick={() => chooseMethod(m.key)}
               >
-                <span className="method-card__icon">{m.icon}</span>
-                <div className="method-card__info">
-                  <strong>{m.label}</strong>
-                  <small>{m.hint || 'Вывод'}</small>
-                </div>
+                <span className="payment-method__icon">{m.icon}</span>
+                <span className="payment-method__label">
+                  {m.label}
+                  {m.hint && <small style={{ display: 'block', opacity: .6, fontWeight: 500, fontSize: 11 }}>{m.hint}</small>}
+                </span>
+                <span className="payment-method__badge">›</span>
               </button>
-            ))
-          )}
-
-          <div className="withdraw-note">
-            <small>
-              Минимум: {minStars} ⭐ · Максимум: {maxStars.toLocaleString('ru-RU')} ⭐
-            </small>
-          </div>
-        </>
-      )}
-
-      {step === 'form' && (
-        <>
-          <h2>Вывод — детали</h2>
-          <p className="withdraw-screen__sub">
-            Курс: 1 ⭐ = {rate} ₽ · Комиссия: {commissionPct}%
-          </p>
-
-          <label className="field">
-            <span>Сумма в ⭐</span>
-            <input
-              type="text"
-              inputMode="numeric"
-              value={amountStars}
-              onChange={(e) => setAmountStars(e.target.value.replace(/\D/g, '').slice(0, 6))}
-              placeholder={`от ${minStars} до ${maxStars}`}
-            />
-          </label>
-
-          <label className="field">
-            <span>Юзернейм для связи</span>
-            <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="@username"
-              autoComplete="off"
-            />
-          </label>
-
-          {calc.stars > 0 && (
-            <div className="withdraw-calc">
-              <div><span>Сумма</span><b>{calc.stars} ⭐</b></div>
-              <div><span>В рублях</span><b>{normRub(calc.rub)}</b></div>
-              <div><span>Комиссия {commissionPct}%</span><b>−{normRub(calc.commission)}</b></div>
-              <div className="withdraw-calc__total"><span>К выплате</span><b>{normRub(calc.payout)}</b></div>
-            </div>
-          )}
-
-          {error && <p className="error-text">{error}</p>}
-
-          <button
-            type="button"
-            className="btn btn--primary btn--large"
-            disabled={loading || !calc.stars || !username}
-            onClick={handleSubmit}
-          >
-            {loading ? 'Отправка…' : 'Создать заявку'}
-          </button>
-
-          <p className="withdraw-disclaimer">
-            <small>
-              Заявка обрабатывается менеджером вручную. Убедись, что юзернейм верный.
-            </small>
-          </p>
-        </>
-      )}
-
-      {step === 'success' && (
-        <>
-          <h2>✅ Заявка создана</h2>
-          <p className="withdraw-screen__sub">
-            Заявка #{result?.requestId} принята. Ожидай выплату — до 48 часов.
-          </p>
-          <button type="button" className="btn btn--primary btn--large" onClick={onClose}>
-            Понятно
-          </button>
-        </>
-      )}
+            ))}
+      </div>
     </div>
   );
 }
