@@ -6,8 +6,6 @@ const RADIUS = 74;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 const PRESETS = [2, 4, 8, 10];
 
-// Дефолты совпадают с DISPLAY_* в house-config.js.
-// Реальный шанс сервера клиенту неизвестен и не нужен.
 const DEFAULT_CONFIG = {
   displayGamma: 1.0,
   displayBaseChanceMultiplier: 1.0,
@@ -17,19 +15,20 @@ const DEFAULT_CONFIG = {
   minMultiplier: 1,
   maxMultiplier: 100,
   spinProfiles: [
-    { duration: 3200, turns: 3, easing: 'cubic-bezier(.08,.72,.18,1)' },
-    { duration: 3800, turns: 4, easing: 'cubic-bezier(.15,.55,.35,1)' },
-    { duration: 4400, turns: 5, easing: 'cubic-bezier(.2,.6,.15,1)' },
-    { duration: 5000, turns: 6, easing: 'cubic-bezier(.12,.7,.2,1)' },
+    { duration: 2900, turns: 3, easing: 'cubic-bezier(.08,.72,.18,1)' },
+    { duration: 3400, turns: 4, easing: 'cubic-bezier(.15,.55,.35,1)' },
+    { duration: 4100, turns: 5, easing: 'cubic-bezier(.2,.6,.15,1)' },
+    { duration: 4700, turns: 6, easing: 'cubic-bezier(.12,.7,.2,1)' },
+    { duration: 5300, turns: 7, easing: 'cubic-bezier(.1,.75,.22,1)' },
   ],
-  nearMiss: { MILLIMETER: 0.60, CLOSE: 0.25, FAR: 0.15 },
+  spinJitter: { DURATION_MIN: 0.85, DURATION_MAX: 1.20, EXTRA_TURNS_MAX: 1 },
+  nearMiss: { MILLIMETER: 0.20, CLOSE: 0.30, FAR: 0.50 },
 };
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-// Честная формула для UI. Одна и та же и до, и после спина.
 function calcDisplayChance(source, target, multiplier, config) {
   if (!source || !target) return 0;
   const sourcePrice = Number(source.price_stars);
@@ -48,7 +47,6 @@ function formatChance(chance) {
   return `${Number(chance).toFixed(1)}%`;
 }
 
-// Ищем цель с ценой, ближайшей к desiredPrice. Равноудалённые — рандом.
 function findClosestTarget(catalog, desiredPrice, sourceItem) {
   if (!sourceItem) return null;
   const sourcePrice = Number(sourceItem.price_stars);
@@ -69,37 +67,61 @@ function findClosestTarget(catalog, desiredPrice, sourceItem) {
   return winners[Math.floor(Math.random() * winners.length)];
 }
 
-function pickSpinProfile(profiles) {
+// Случайный профиль с джиттером — каждая крутка отличается
+function pickSpinProfile(profiles, jitter) {
   const list = Array.isArray(profiles) && profiles.length ? profiles : DEFAULT_CONFIG.spinProfiles;
-  return list[Math.floor(Math.random() * list.length)];
+  const j = jitter || DEFAULT_CONFIG.spinJitter;
+  const base = list[Math.floor(Math.random() * list.length)];
+  const jitterFactor = (j.DURATION_MIN || 0.85) + Math.random() * ((j.DURATION_MAX || 1.2) - (j.DURATION_MIN || 0.85));
+  const extraTurns = Math.floor(Math.random() * ((j.EXTRA_TURNS_MAX || 1) + 1));
+  return {
+    duration: Math.round(base.duration * jitterFactor),
+    turns: base.turns + extraTurns,
+    easing: base.easing,
+  };
 }
 
-// Угол приземления. Считаем ЛОКАЛЬНО на клиенте.
-// success известен от сервера, displayChance рисует зону на арке.
-// RNG-реальность уже решена на сервере — здесь только визуал.
+/**
+ * Угол приземления стрелки.
+ *
+ * Зона успеха — [0, chance × 3.6] градусов (рисуется сверху по часовой).
+ * Проигрыш — вне этой зоны. Чтобы картинка не была однообразной, промах
+ * может падать как ЗА зоной (zone + gap), так и ПЕРЕД ней (360 − gap),
+ * что визуально тоже "почти попал", но с другой стороны арки.
+ */
 function computeLandingAngle(success, displayChance, nearMiss) {
-  const zone = clamp(displayChance, 0, 100) * 3.6; // % → градусы
+  const zone = clamp(displayChance, 0, 100) * 3.6;
+
+  // Совсем узкая зона: игрок всё равно не попадёт внутрь, кидаем куда угодно
+  if (zone < 0.5) return Math.random() * 360;
 
   if (success) {
-    // Внутри зелёной зоны
-    return Math.max(0, Math.min(359.5, zone * (0.3 + Math.random() * 0.4)));
+    // Внутри зелёной зоны, но без прилипания к одной точке
+    return zone * (0.08 + Math.random() * 0.84);
   }
 
-  // Промах: байт «почти попал»
+  const missArc = 360 - zone;
   const weights = nearMiss || DEFAULT_CONFIG.nearMiss;
   const r = Math.random();
-  let gap;
-  if (r < weights.MILLIMETER) {
-    gap = 0.5 + Math.random() * 2;        // 0.5°–2.5° — почти в яблочко
-  } else if (r < weights.MILLIMETER + weights.CLOSE) {
-    gap = 2.5 + Math.random() * 7.5;      // 2.5°–10°
+  let offset;
+
+  if (r < (weights.MILLIMETER || 0)) {
+    // Впритык к границе зоны — либо сразу за концом, либо перед началом
+    const before = Math.random() < 0.5;
+    const gap = 0.4 + Math.random() * 1.8;
+    offset = before ? (missArc - gap) : gap;
+  } else if (r < ((weights.MILLIMETER || 0) + (weights.CLOSE || 0))) {
+    // Близко, но не впритык — тоже с двух сторон
+    const before = Math.random() < 0.5;
+    const gap = 2 + Math.random() * 8;
+    offset = before ? (missArc - gap) : gap;
   } else {
-    gap = 10 + Math.random() * 50;        // 10°–60°
+    // Далеко — разброс по всей оставшейся дуге
+    offset = missArc * (0.15 + Math.random() * 0.7);
   }
 
-  const remaining = 359.5 - zone;
-  if (remaining <= 0.5) return Math.max(0, Math.min(359.5, zone + 0.1));
-  return zone + Math.max(0.1, Math.min(gap, remaining - 0.1));
+  const safeOffset = clamp(offset, 0.2, missArc - 0.2);
+  return (zone + safeOffset) % 360;
 }
 
 function ResultBurst({ success }) {
@@ -212,7 +234,6 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
   const [config, setConfig] = useState(DEFAULT_CONFIG);
   const timerRef = useRef(null);
 
-  // Тянем ТОЛЬКО отображаемые параметры (без реальной маржи)
   useEffect(() => {
     let alive = true;
     api.getUpgradeConfig?.()
@@ -232,7 +253,6 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
      selectedMultiplier <= config.maxMultiplier &&
      Math.abs(selectedMultiplier * 10 - Math.round(selectedMultiplier * 10)) < 1e-9);
 
-  // Отображаемый шанс. Честная формула, всегда одна и та же.
   const displayChance = serverChance ?? calcDisplayChance(owned, target, customValid ? selectedMultiplier : 1, config);
 
   const targetItems = useMemo(() => {
@@ -316,18 +336,14 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
     haptic('medium');
 
     try {
-      // Сервер решает исход по своему внутреннему шансу.
-      // Нам возвращается success + displayChance.
       const res = await api.upgrade(owned.inventory_id, target.id, selectedMultiplier);
       const success = Boolean(res.success);
       const display = Number.isFinite(Number(res.chance))
         ? Number(res.chance)
         : calcDisplayChance(owned, target, selectedMultiplier, config);
 
-      // Угол приземления считаем локально, чтобы не зависеть от серверных полей
-      // и не провоцировать рассинхрон между аркой (display) и стрелкой.
       const landing = computeLandingAngle(success, display, config.nearMiss);
-      const profile = pickSpinProfile(config.spinProfiles);
+      const profile = pickSpinProfile(config.spinProfiles, config.spinJitter);
 
       setServerChance(display);
       setSpinProfile(profile);
