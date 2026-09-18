@@ -39,6 +39,8 @@ async function initDb() {
         is_premium INTEGER DEFAULT 0,
         accepted_tos INTEGER DEFAULT 0,
         tutorial_completed INTEGER DEFAULT 0,
+        pre_demo_balance INTEGER DEFAULT NULL,
+        lucky_mode INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
@@ -54,6 +56,7 @@ async function initDb() {
         id SERIAL PRIMARY KEY,
         user_id BIGINT NOT NULL REFERENCES users(telegram_id),
         item_id INTEGER NOT NULL REFERENCES items(id),
+        is_demo INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
@@ -111,8 +114,11 @@ async function initDb() {
 
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS is_premium INTEGER DEFAULT 0');
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS tutorial_completed INTEGER DEFAULT 0');
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS pre_demo_balance INTEGER DEFAULT NULL');
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS lucky_mode INTEGER DEFAULT 0');
     await pool.query("ALTER TABLE operation_results ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending'");
     await pool.query("ALTER TABLE operation_results ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+    await pool.query("ALTER TABLE user_inventory ADD COLUMN IF NOT EXISTS is_demo INTEGER DEFAULT 0");
 
     for (const item of catalogItems) {
       await pool.query(`
@@ -199,7 +205,7 @@ async function giveRandomStarterItem(userId) {
   const item = itemRes.rows[0];
 
   if (item) {
-    await pool.query('INSERT INTO user_inventory (user_id, item_id) VALUES ($1, $2)', [userId, item.id]);
+    await pool.query('INSERT INTO user_inventory (user_id, item_id, is_demo) VALUES ($1, $2, 0)', [userId, item.id]);
   }
   return item;
 }
@@ -234,7 +240,7 @@ async function claimSubscriptionItem(userId) {
     }
 
     await client.query(
-      'INSERT INTO user_inventory (user_id, item_id) VALUES ($1, $2)',
+      'INSERT INTO user_inventory (user_id, item_id, is_demo) VALUES ($1, $2, 0)',
       [userId, item.id]
     );
 
@@ -290,7 +296,7 @@ async function getUserInventory(userId) {
 }
 
 async function addInventoryItem(userId, itemId) {
-  await pool.query('INSERT INTO user_inventory (user_id, item_id) VALUES ($1, $2)', [userId, itemId]);
+  await pool.query('INSERT INTO user_inventory (user_id, item_id, is_demo) VALUES ($1, $2, 0)', [userId, itemId]);
 }
 
 async function buyItemsWithBalance(userId, itemId, quantity = 1, operationId = null) {
@@ -326,7 +332,7 @@ async function buyItemsWithBalance(userId, itemId, quantity = 1, operationId = n
     }
 
     const userRes = await client.query(
-      'SELECT balance FROM users WHERE telegram_id = $1 FOR UPDATE',
+      'SELECT balance, lucky_mode FROM users WHERE telegram_id = $1 FOR UPDATE',
       [userId]
     );
     const user = userRes.rows[0];
@@ -371,10 +377,13 @@ async function buyItemsWithBalance(userId, itemId, quantity = 1, operationId = n
       return { error: 'insufficient_balance' };
     }
 
+    // В lucky-режиме купленные предметы помечаются как demo
+    const isDemo = user.lucky_mode ? 1 : 0;
+
     await client.query(`
-      INSERT INTO user_inventory (user_id, item_id)
-      SELECT $1, $2 FROM generate_series(1, $3)
-    `, [userId, item.id, safeQuantity]);
+      INSERT INTO user_inventory (user_id, item_id, is_demo)
+      SELECT $1, $2, $3 FROM generate_series(1, $4)
+    `, [userId, item.id, isDemo, safeQuantity]);
 
     const response = {
       item,
@@ -389,7 +398,7 @@ async function buyItemsWithBalance(userId, itemId, quantity = 1, operationId = n
         INSERT INTO balance_ledger (user_id, operation_type, operation_id, amount, balance_after, metadata)
         VALUES ($1, 'purchase', $2, $3, $4, $5::jsonb)
         ON CONFLICT (user_id, operation_type, operation_id) DO NOTHING
-      `, [userId, opKey, -total, balRes.rows[0].balance, JSON.stringify({ itemId: item.id, quantity: safeQuantity })]);
+      `, [userId, opKey, -total, balRes.rows[0].balance, JSON.stringify({ itemId: item.id, quantity: safeQuantity, isDemo })]);
       await client.query(`
         UPDATE operation_results
         SET response = $3::jsonb, status = 'completed', updated_at = CURRENT_TIMESTAMP
@@ -469,8 +478,11 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
       }
     }
 
+    const userRow = await client.query('SELECT lucky_mode FROM users WHERE telegram_id = $1', [userId]);
+    const luckyMode = Boolean(userRow.rows[0]?.lucky_mode);
+
     const ownedRes = await client.query(`
-      SELECT ui.id, i.id AS item_id, i.name, i.price_stars
+      SELECT ui.id, ui.is_demo, i.id AS item_id, i.name, i.price_stars
       FROM user_inventory ui
       JOIN items i ON i.id = ui.item_id
       WHERE ui.id = $1 AND ui.user_id = $2
@@ -511,7 +523,8 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
     const decision = resolveUpgrade(
       { id: sourceItem.item_id, name: sourceItem.name, price_stars: sourceItem.price_stars },
       targetItem,
-      safeMultiplier
+      safeMultiplier,
+      { luckyMode }
     );
 
     await client.query('DELETE FROM user_inventory WHERE id = $1', [inventoryItemId]);
@@ -525,7 +538,9 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
         await client.query('ROLLBACK');
         return { error: 'result_not_found' };
       }
-      await client.query('INSERT INTO user_inventory (user_id, item_id) VALUES ($1, $2)', [userId, resultItem.id]);
+      // Наследуем is_demo от исходного предмета — demo-цепочка остаётся demo
+      const isDemo = sourceItem.is_demo ? 1 : 0;
+      await client.query('INSERT INTO user_inventory (user_id, item_id, is_demo) VALUES ($1, $2, $3)', [userId, resultItem.id, isDemo]);
     }
 
     const response = {
@@ -631,11 +646,6 @@ async function sellInventoryItem(userId, inventoryItemId, operationId = null) {
   }
 }
 
-/**
- * Продажа партии одинаковых предметов.
- * Удаляет N самых старых строк этого item_id из инвентаря юзера
- * и начисляет price_stars × N на баланс. Всё в одной транзакции.
- */
 async function sellInventoryItemsBatch(userId, itemId, quantity, operationId = null) {
   const safeQuantity = Number(quantity);
   if (!Number.isInteger(safeQuantity) || safeQuantity < 1 || safeQuantity > 9999) {
@@ -759,14 +769,112 @@ async function grantDemoCredits(userId, amount = 1000, operationId = null) {
   } catch (err) { await client.query('ROLLBACK'); throw err; } finally { client.release(); }
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// DEMO / LUCKY MODE
+// ─────────────────────────────────────────────────────────────────────
+
+async function grantDemo(userId, amount) {
+  const safeAmount = Number(amount);
+  if (!Number.isInteger(safeAmount) || safeAmount < 1 || safeAmount > 1_000_000) {
+    return { error: 'invalid_amount' };
+  }
+
+  const user = await getUser(userId);
+  if (!user) return { error: 'user_not_found' };
+
+  const preBalance = user.pre_demo_balance != null
+    ? Number(user.pre_demo_balance)
+    : Number(user.balance);
+
+  const result = await pool.query(
+    `UPDATE users
+     SET pre_demo_balance = $1,
+         balance = balance + $2,
+         lucky_mode = 1
+     WHERE telegram_id = $3
+     RETURNING balance, pre_demo_balance, lucky_mode`,
+    [preBalance, safeAmount, userId]
+  );
+
+  if (!result.rowCount) return { error: 'user_not_found' };
+
+  return {
+    success: true,
+    userId: String(userId),
+    granted: safeAmount,
+    preDemoBalance: Number(result.rows[0].pre_demo_balance),
+    newBalance: Number(result.rows[0].balance),
+    luckyMode: Boolean(result.rows[0].lucky_mode),
+  };
+}
+
+async function revokeDemo(userId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const userRes = await client.query(
+      'SELECT balance, pre_demo_balance, lucky_mode FROM users WHERE telegram_id = $1 FOR UPDATE',
+      [userId]
+    );
+    if (!userRes.rowCount) {
+      await client.query('ROLLBACK');
+      return { error: 'user_not_found' };
+    }
+
+    const user = userRes.rows[0];
+    const wasActive = user.pre_demo_balance != null || Number(user.lucky_mode) > 0;
+    const rollbackTo = user.pre_demo_balance != null ? Number(user.pre_demo_balance) : Number(user.balance);
+
+    const delRes = await client.query(
+      'DELETE FROM user_inventory WHERE user_id = $1 AND is_demo = 1',
+      [userId]
+    );
+
+    await client.query(
+      `UPDATE users
+       SET balance = $1,
+           pre_demo_balance = NULL,
+           lucky_mode = 0
+       WHERE telegram_id = $2`,
+      [rollbackTo, userId]
+    );
+
+    await client.query('COMMIT');
+
+    return {
+      success: true,
+      userId: String(userId),
+      wasActive,
+      restoredBalance: rollbackTo,
+      removedItems: delRes.rowCount,
+    };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function getDemoStatus(userId) {
+  const user = await getUser(userId);
+  if (!user) return { error: 'user_not_found' };
+  return {
+    userId: String(userId),
+    balance: Number(user.balance) || 0,
+    preDemoBalance: user.pre_demo_balance != null ? Number(user.pre_demo_balance) : null,
+    luckyMode: Boolean(user.lucky_mode),
+    active: user.pre_demo_balance != null || Number(user.lucky_mode) > 0,
+  };
+}
+
 async function createWithdrawRequest(userId, { method, amountStars, contactUsername, operationId }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
     const opKey = String(operationId).slice(0, 100);
-    // В operation_results нет колонки id — используем составной ключ.
-    // RETURNING operation_id — валидная колонка, идемпотентность сохраняется.
     const opRes = await client.query(
       `INSERT INTO operation_results (user_id, operation_type, operation_id, response, status)
        VALUES ($1, 'withdraw_request', $2, '{}'::jsonb, 'pending')
@@ -785,6 +893,17 @@ async function createWithdrawRequest(userId, { method, amountStars, contactUsern
       return ex.rows[0]?.status === 'completed'
         ? ex.rows[0].response
         : { error: 'operation_in_progress' };
+    }
+
+    // Demo блокирует вывод
+    const demoCheck = await client.query(
+      'SELECT pre_demo_balance, lucky_mode FROM users WHERE telegram_id = $1 FOR UPDATE',
+      [userId]
+    );
+    const dUser = demoCheck.rows[0];
+    if (dUser && (dUser.pre_demo_balance != null || Number(dUser.lucky_mode) > 0)) {
+      await client.query('ROLLBACK');
+      return { error: 'demo_active' };
     }
 
     const openRes = await client.query(
@@ -943,4 +1062,7 @@ module.exports = {
   refundWithdrawRequest,
   markWithdrawPaid,
   attachAdminMessage,
+  grantDemo,
+  revokeDemo,
+  getDemoStatus,
 };
