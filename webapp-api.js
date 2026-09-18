@@ -42,7 +42,6 @@ function verifyInitData(initData, botToken) {
     const received = Buffer.from(hash, 'utf8');
     if (expected.length !== received.length || !crypto.timingSafeEqual(expected, received)) return null;
 
-    // Отклоняем слишком старые initData
     const authDate = Number(params.get('auth_date') || 0);
     const now = Math.floor(Date.now() / 1000);
     if (!authDate || authDate > now + 300 || now - authDate > 86400) return null;
@@ -55,6 +54,14 @@ function verifyInitData(initData, botToken) {
     console.error('Ошибка парсинга initData:', err.message);
     return null;
   }
+}
+
+// Единый вайтлист: ADMIN_CHAT_ID из env + WITHDRAW_WHITELIST из конфига.
+function buildWithdrawWhitelist() {
+  return new Set([
+    String(process.env.ADMIN_CHAT_ID || ''),
+    ...(USER_LIMITS.WITHDRAW_WHITELIST || []).map(String),
+  ].filter(Boolean));
 }
 
 function createWebappRouter(bot, botToken) {
@@ -93,6 +100,10 @@ function createWebappRouter(bot, botToken) {
       const user = await getUser(req.tgUser.id) || req.dbUser;
       const itemsCount = await getUserInventoryCount(req.tgUser.id);
       const referralProgress = await getReferralProgress(req.tgUser.id);
+
+      const whitelist = buildWithdrawWhitelist();
+      const isWhitelisted = whitelist.has(String(req.tgUser.id));
+
       res.json({
         telegram_id: String(user.telegram_id),
         first_name: user.first_name || '',
@@ -101,7 +112,8 @@ function createWebappRouter(bot, botToken) {
         upgrades_count: user.upgrades_count || 0,
         referrals_count: user.referrals_count || 0,
         referral_progress: referralProgress,
-        can_withdraw: referralProgress.canWithdraw,
+        can_withdraw: isWhitelisted || referralProgress.canWithdraw,
+        is_whitelisted: isWhitelisted,
         balance: user.balance || 0,
         items_count: itemsCount || 0,
         tutorial_completed: Boolean(user.tutorial_completed),
@@ -133,7 +145,6 @@ function createWebappRouter(bot, botToken) {
     }
   });
 
-  // Покупка предмета из каталога за внутренний баланс (⭐, а не за живые Stars)
   router.post('/buy', async (req, res) => {
     try {
       const itemId = Number(req.body?.itemId);
@@ -163,7 +174,6 @@ function createWebappRouter(bot, botToken) {
     }
   });
 
-  // Учебное пополнение: бесплатные демо-кредиты, без реальных денег.
   router.post('/demo/topup', async (req, res) => {
     try {
       const amount = Math.floor(Number(req.body?.amount ?? 1000));
@@ -183,8 +193,6 @@ function createWebappRouter(bot, botToken) {
     }
   });
 
-  // Stars не используются для пополнения игрового баланса.
-  // Отдельный invoice предназначен только для поддержки проекта.
   router.post('/support/create-invoice', async (req, res) => {
     try {
       const amount = Math.floor(Number(req.body.amount));
@@ -210,9 +218,8 @@ function createWebappRouter(bot, botToken) {
     }
   });
 
-  // ── Конфиг апгрейда для клиента ─────────────────────────────────────
-  // Отдаём только ОТОБРАЖАЕМЫЕ параметры (DISPLAY_*).
-  // Реальная маржа (GAMMA, BASE_CHANCE_MULTIPLIER, HOUSE_EDGE) не покидает сервер.
+  // Отдаём клиенту ТОЛЬКО отображаемые параметры.
+  // Реальная маржа (GAMMA, BASE_CHANCE_MULTIPLIER, HOUSE_EDGE, ROLL_NOISE) не покидает сервер.
   router.get('/upgrade/config', (_req, res) => {
     res.json({
       displayGamma: UPGRADE.DISPLAY_GAMMA,
@@ -223,6 +230,7 @@ function createWebappRouter(bot, botToken) {
       minMultiplier: UPGRADE.MIN_MULTIPLIER,
       maxMultiplier: UPGRADE.MAX_MULTIPLIER,
       spinProfiles: ROULETTE.SPIN_PROFILES,
+      spinJitter: ROULETTE.SPIN_JITTER,
       nearMiss: ROULETTE.NEAR_MISS,
     });
   });
@@ -251,7 +259,6 @@ function createWebappRouter(bot, botToken) {
         return res.status(status).json({ error: result.error });
       }
 
-      // Отдаём только публичные поля. realChance и roll сюда не попадают.
       res.json({
         success: result.success,
         item: result.item,
@@ -264,7 +271,6 @@ function createWebappRouter(bot, botToken) {
     }
   });
 
-  // Продажа предмета из инвентаря — начисляет его цену на внутренний баланс
   router.post('/sell', async (req, res) => {
     try {
       const inventoryItemId = Number(req.body.inventoryItemId);
@@ -290,7 +296,6 @@ function createWebappRouter(bot, botToken) {
 
   // ── ВЫВОД ────────────────────────────────────────────────────────────
 
-  // Список доступных методов (для UI)
   router.get('/withdraw/methods', (_req, res) => {
     const methods = Object.entries(WITHDRAWAL.METHODS)
       .filter(([, cfg]) => cfg.enabled)
@@ -304,7 +309,6 @@ function createWebappRouter(bot, botToken) {
     });
   });
 
-  // Создание заявки на вывод
   router.post('/withdraw/request', async (req, res) => {
     try {
       const method = String(req.body?.method || '').trim();
@@ -330,8 +334,12 @@ function createWebappRouter(bot, botToken) {
         return res.status(400).json({ error: 'missing_operation_id' });
       }
 
-      // Реферальный гейт — перепроверяем на сервере
-      if (USER_LIMITS.REQUIRE_REFERRAL_FOR_WITHDRAW) {
+      // Реферальный гейт — перепроверяем на сервере.
+      // Админ и аккаунты из WITHDRAW_WHITELIST проходят без проверки.
+      const whitelist = buildWithdrawWhitelist();
+      const isWhitelisted = whitelist.has(String(req.tgUser.id));
+
+      if (!isWhitelisted && USER_LIMITS.REQUIRE_REFERRAL_FOR_WITHDRAW) {
         const progress = await getReferralProgress(req.tgUser.id);
         if (!progress.canWithdraw) {
           return res.status(403).json({ error: 'referral_gate', progress });
@@ -347,7 +355,6 @@ function createWebappRouter(bot, botToken) {
         return res.status(status).json({ error: result.error });
       }
 
-      // Сервисное сообщение админу
       const adminMsgId = await notifyWithdrawRequest({
         requestId: result.requestId,
         userId: req.tgUser.id,
