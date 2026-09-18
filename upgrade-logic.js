@@ -1,5 +1,3 @@
-// upgrade-logic.js — расчёт шанса апгрейда.
-// Здесь же — lucky-модификатор для demo-режима.
 const crypto = require('crypto');
 const { UPGRADE } = require('./house-config');
 
@@ -31,8 +29,6 @@ function _calcWithParams(sourceItem, targetItem, multiplier, gamma, baseMult, ed
   return clampChance(withEdge);
 }
 
-// ── База / real / display ────────────────────────────────────────────
-
 function calculateRealBaseChance(sourceItem, targetItem, multiplier = 1) {
   return _calcWithParams(
     sourceItem, targetItem, multiplier,
@@ -63,26 +59,19 @@ function calculateDisplayChance(sourceItem, targetItem, multiplier = 1) {
   );
 }
 
-// ── Lucky-модификатор ────────────────────────────────────────────────
-// Применяется к УЖЕ посчитанному реальному шансу.
-// Не трогает display. Работает только при lucky_mode = 1.
+/**
+ * Lucky-модификатор. Формула: base × mult + flatBoost, потолок cap.
+ * Это даёт сильный буст даже на очень маленьких процентах.
+ */
 function applyLucky(realChance, luckyMode) {
   if (!luckyMode) return realChance;
-  const mult = Number(UPGRADE.LUCKY_CHANCE_MULTIPLIER) || 8;
-  const cap = Number(UPGRADE.LUCKY_MAX_CHANCE) || 90;
-  return Math.min(cap, Number(realChance) * mult);
+  const mult = Number(UPGRADE.LUCKY_CHANCE_MULTIPLIER) || 10;
+  const flat = Number(UPGRADE.LUCKY_FLAT_BOOST) || 50;
+  const cap = Number(UPGRADE.LUCKY_MAX_CHANCE) || 92;
+  const boosted = Number(realChance) * mult + flat;
+  return Math.min(cap, boosted);
 }
 
-// ── Главная функция ─────────────────────────────────────────────────
-/**
- * @param {object} sourceItem — { id, price_stars, ... }
- * @param {object} targetItem — { id, price_stars, ... }
- * @param {number} multiplier
- * @param {object} opts — { luckyMode: boolean }
- *
- * Возвращает: success + публичные поля (chance — display) + диагностические _поля.
- * Клиенту уходят ТОЛЬКО success, resultItemId, chance, baseChance, multiplier.
- */
 function resolveUpgrade(sourceItem, targetItem, multiplier = 1, opts = {}) {
   const safeMultiplier = Number(multiplier);
   if (!Number.isFinite(safeMultiplier)
@@ -106,14 +95,11 @@ function resolveUpgrade(sourceItem, targetItem, multiplier = 1, opts = {}) {
   const displayChance = calculateDisplayChance(sourceItem, targetItem, safeMultiplier);
 
   return {
-    // Публичные
     success,
     resultItemId: success ? targetItem.id : null,
     chance: Number(displayChance.toFixed(1)),
     baseChance: Number(displayChance.toFixed(2)),
     multiplier: safeMultiplier,
-
-    // Диагностические — не уходят клиенту (db.js их вырезает из response)
     _realBase: Number(realBase.toFixed(2)),
     _realFinal: Number(realFinal.toFixed(2)),
     _roll: Number(roll.toFixed(2)),
@@ -121,7 +107,6 @@ function resolveUpgrade(sourceItem, targetItem, multiplier = 1, opts = {}) {
   };
 }
 
-// ── Backwards-compat хелперы ────────────────────────────────────────
 function calculateBaseChance(sourceItem, targetItem) {
   return calculateDisplayChance(sourceItem, targetItem, 1);
 }
