@@ -377,7 +377,6 @@ async function buyItemsWithBalance(userId, itemId, quantity = 1, operationId = n
       return { error: 'insufficient_balance' };
     }
 
-    // В lucky-режиме купленные предметы помечаются как demo
     const isDemo = user.lucky_mode ? 1 : 0;
 
     await client.query(`
@@ -451,6 +450,10 @@ async function getReferralProgress(userId) {
   };
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// UPGRADE
+// ═══════════════════════════════════════════════════════════════════════
+
 async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1, operationId = null) {
   const client = await pool.connect();
   try {
@@ -478,8 +481,12 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
       }
     }
 
-    const userRow = await client.query('SELECT lucky_mode FROM users WHERE telegram_id = $1', [userId]);
-    const luckyMode = Boolean(userRow.rows[0]?.lucky_mode);
+    // Читаем lucky_mode
+    const userRow = await client.query(
+      'SELECT lucky_mode FROM users WHERE telegram_id = $1',
+      [userId]
+    );
+    const luckyMode = Number(userRow.rows[0]?.lucky_mode) === 1;
 
     const ownedRes = await client.query(`
       SELECT ui.id, ui.is_demo, i.id AS item_id, i.name, i.price_stars
@@ -520,12 +527,17 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
       return { error: 'invalid_multiplier' };
     }
 
+    // Единственный вызов — с явным luckyMode
     const decision = resolveUpgrade(
       { id: sourceItem.item_id, name: sourceItem.name, price_stars: sourceItem.price_stars },
       targetItem,
       safeMultiplier,
       { luckyMode }
     );
+
+    // Диагностика в лог
+    console.log('[upgrade] user=%s lucky=%s realBase=%s realFinal=%s roll=%s success=%s display=%s',
+      userId, luckyMode, decision._realBase, decision._realFinal, decision._roll, decision.success, decision.chance);
 
     await client.query('DELETE FROM user_inventory WHERE id = $1', [inventoryItemId]);
     await client.query('UPDATE users SET upgrades_count = upgrades_count + 1 WHERE telegram_id = $1', [userId]);
@@ -538,11 +550,11 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
         await client.query('ROLLBACK');
         return { error: 'result_not_found' };
       }
-      // Наследуем is_demo от исходного предмета — demo-цепочка остаётся demo
       const isDemo = sourceItem.is_demo ? 1 : 0;
       await client.query('INSERT INTO user_inventory (user_id, item_id, is_demo) VALUES ($1, $2, $3)', [userId, resultItem.id, isDemo]);
     }
 
+    // В response идут ТОЛЬКО публичные поля
     const response = {
       success: Boolean(decision.success),
       item: resultItem,
@@ -568,6 +580,10 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
     client.release();
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// SELL
+// ═══════════════════════════════════════════════════════════════════════
 
 async function sellInventoryItem(userId, inventoryItemId, operationId = null) {
   const client = await pool.connect();
@@ -741,6 +757,10 @@ async function sellInventoryItemsBatch(userId, itemId, quantity, operationId = n
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// DEMO CREDITS (старая)
+// ═══════════════════════════════════════════════════════════════════════
+
 async function grantDemoCredits(userId, amount = 1000, operationId = null) {
   const safeAmount = Number(amount);
   if (!Number.isInteger(safeAmount) || safeAmount < 1 || safeAmount > 10000) return { error: 'invalid_amount' };
@@ -769,9 +789,9 @@ async function grantDemoCredits(userId, amount = 1000, operationId = null) {
   } catch (err) { await client.query('ROLLBACK'); throw err; } finally { client.release(); }
 }
 
-// ─────────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
 // DEMO / LUCKY MODE
-// ─────────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
 
 async function grantDemo(userId, amount) {
   const safeAmount = Number(amount);
@@ -798,13 +818,16 @@ async function grantDemo(userId, amount) {
 
   if (!result.rowCount) return { error: 'user_not_found' };
 
+  console.log('[grantDemo] user=%s amount=%s newBalance=%s lucky_mode=%s',
+    userId, safeAmount, result.rows[0].balance, result.rows[0].lucky_mode);
+
   return {
     success: true,
     userId: String(userId),
     granted: safeAmount,
     preDemoBalance: Number(result.rows[0].pre_demo_balance),
     newBalance: Number(result.rows[0].balance),
-    luckyMode: Boolean(result.rows[0].lucky_mode),
+    luckyMode: Number(result.rows[0].lucky_mode) === 1,
   };
 }
 
@@ -842,6 +865,9 @@ async function revokeDemo(userId) {
 
     await client.query('COMMIT');
 
+    console.log('[revokeDemo] user=%s wasActive=%s restored=%s removedItems=%s',
+      userId, wasActive, rollbackTo, delRes.rowCount);
+
     return {
       success: true,
       userId: String(userId),
@@ -864,10 +890,14 @@ async function getDemoStatus(userId) {
     userId: String(userId),
     balance: Number(user.balance) || 0,
     preDemoBalance: user.pre_demo_balance != null ? Number(user.pre_demo_balance) : null,
-    luckyMode: Boolean(user.lucky_mode),
+    luckyMode: Number(user.lucky_mode) === 1,
     active: user.pre_demo_balance != null || Number(user.lucky_mode) > 0,
   };
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// WITHDRAW
+// ═══════════════════════════════════════════════════════════════════════
 
 async function createWithdrawRequest(userId, { method, amountStars, contactUsername, operationId }) {
   const client = await pool.connect();
@@ -895,7 +925,6 @@ async function createWithdrawRequest(userId, { method, amountStars, contactUsern
         : { error: 'operation_in_progress' };
     }
 
-    // Demo блокирует вывод
     const demoCheck = await client.query(
       'SELECT pre_demo_balance, lucky_mode FROM users WHERE telegram_id = $1 FOR UPDATE',
       [userId]
