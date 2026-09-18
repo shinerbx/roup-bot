@@ -9,9 +9,9 @@ const {
 const { WITHDRAWAL, USER_LIMITS, UPGRADE, ROULETTE, LIVE_FEED } = require('./house-config');
 const { notifyWithdrawRequest } = require('./admin-notify');
 
-// ═══════════════════════════════════════════════════════════════════
-// Утилиты
-// ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════
+// UTILS
+// ═══════════════════════════════════════════════════════════════════════
 
 function verifyInitData(initData, botToken) {
   if (!initData) return null;
@@ -65,9 +65,9 @@ function isWhitelisted(userId, whitelist) {
   return false;
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// Онлайн — O(1) запрос, O(N) cleanup по таймеру раз в минуту
-// ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════
+// ONLINE — O(1) на запрос, cleanup по таймеру
+// ═══════════════════════════════════════════════════════════════════════
 
 const onlineMap = new Map();
 const ONLINE_WINDOW_MS = (LIVE_FEED.ONLINE_WINDOW_SEC || 300) * 1000;
@@ -83,7 +83,6 @@ function getRealOnline() {
   return count;
 }
 
-// Периодический cleanup — не на каждом запросе
 setInterval(() => {
   const cutoff = Date.now() - ONLINE_WINDOW_MS;
   let removed = 0;
@@ -93,13 +92,13 @@ setInterval(() => {
   if (removed > 0) console.log(`[online] cleanup removed ${removed}, left ${onlineMap.size}`);
 }, 60000).unref?.();
 
-// ═══════════════════════════════════════════════════════════════════
-// Rate limiter per user (sliding window)
-// ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════
+// RATE LIMITER per-user (sliding window)
+// ═══════════════════════════════════════════════════════════════════════
 
 const rlBuckets = new Map();
-const RL_WINDOW_MS = 10_000;
-const RL_MAX = 40;
+const RL_WINDOW_MS = 10000;
+const RL_MAX = 60;
 
 function rateLimit(userId, max = RL_MAX) {
   const now = Date.now();
@@ -119,15 +118,16 @@ setInterval(() => {
   }
 }, 30000).unref?.();
 
-// ═══════════════════════════════════════════════════════════════════
-// Fake drops — пул перегенерируется раз в 60 сек
-// ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════
+// FAKE DROPS — пул без повторов, перегенерация раз в минуту
+// ═══════════════════════════════════════════════════════════════════════
 
 const FAKE_FIRST_NAMES = [
   'Артём', 'Кирилл', 'Данил', 'Влад', 'София', 'Максим',
   'Никита', 'Егор', 'Тимур', 'Константин', 'Илья', 'Роман',
   'Денис', 'Вячеслав', 'Иван', 'Алексей', 'Матвей', 'Марк',
   'Арсений', 'Миша', 'Стёпа', 'Лев', 'Глеб', 'Саша',
+  'Ваня', 'Гоша', 'Слава', 'Толя', 'Женя', 'Мирон',
 ];
 
 const FAKE_POOL_SIZE = 200;
@@ -145,6 +145,7 @@ function shuffle(arr) {
 }
 
 function rebuildFakePool(catalog) {
+  if (!catalog.length) return [];
   const items = shuffle(catalog);
   const names = shuffle(FAKE_FIRST_NAMES);
   const out = [];
@@ -153,9 +154,9 @@ function rebuildFakePool(catalog) {
   for (let i = 0; i < FAKE_POOL_SIZE; i++) {
     const item = items[i % items.length];
     const name = names[i % names.length];
-    if (!item) break;
     out.push({
-      id: `fake_${now}_${i}_${Math.random().toString(36).slice(2, 6)}`,
+      id: `fake_${now}_${i}`,
+      userId: `fake_u_${now}_${i}`,
       userName: name,
       itemName: item.name,
       itemImageUrl: item.image_url,
@@ -183,16 +184,16 @@ function getFakeSamples(catalog, count) {
     const src = fakePool[(start + i) % fakePool.length];
     out.push({
       ...src,
-      id: `fake_${now}_${start + i}_${Math.random().toString(36).slice(2, 6)}`,
+      id: `${src.id}_${Math.random().toString(36).slice(2, 6)}`,
       ts: now - Math.floor(Math.random() * 60000),
     });
   }
   return out;
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// Feed cache — 2 сек TTL, отдаёт всем клиентам один ответ
-// ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════
+// FEED CACHE
+// ═══════════════════════════════════════════════════════════════════════
 
 let feedCache = { data: null, etag: '', expiresAt: 0 };
 
@@ -200,7 +201,7 @@ function etagOf(str) {
   return '"' + crypto.createHash('sha1').update(str).digest('hex').slice(0, 16) + '"';
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════
 
 function createWebappRouter(bot, botToken) {
   const router = express.Router();
@@ -362,36 +363,45 @@ function createWebappRouter(bot, botToken) {
     });
   });
 
-  // ── Feed: 2-секундный кэш ответа + ETag ─────────────────────────
+  // ── Live-feed: 2-секундный кэш, ETag 304, дедуп по user_id ────────
   router.get('/upgrade/feed', async (req, res) => {
     try {
       const now = Date.now();
       if (!feedCache.data || now > feedCache.expiresAt) {
         const catalog = await getCatalogItems();
-        const real = getRecentDrops(20);
+        const real = getRecentDrops(30);
 
-        const [minFake, maxFake] = LIVE_FEED.FAKE_PER_REQUEST || [3, 6];
+        const [minFake, maxFake] = LIVE_FEED.FAKE_PER_REQUEST || [4, 7];
         const fakeCount = minFake + Math.floor(Math.random() * (maxFake - minFake + 1));
         const fake = getFakeSamples(catalog, fakeCount);
 
-        const mixed = [...real.map((d) => ({ ...d, isFake: false })), ...fake]
-          .sort((a, b) => (b.ts || 0) - (a.ts || 0))
-          .map((d) => ({ ...d, userName: String(d.userName || 'игрок').replace(/^@+/, '') }));
+        const mixed = [
+          ...real.map((d) => ({ ...d, isFake: false })),
+          ...fake,
+        ].sort((a, b) => (b.ts || 0) - (a.ts || 0));
 
-        const body = JSON.stringify({ drops: mixed });
-        feedCache = {
-          data: body,
-          etag: etagOf(body),
-          expiresAt: now + 2000,
-        };
+        // Дедуп: два подряд идущих не могут быть от одного userId
+        const unique = [];
+        let lastKey = null;
+        for (const d of mixed) {
+          const key = d.userId || d.id;
+          if (key === lastKey) continue;
+          unique.push({
+            ...d,
+            userName: String(d.userName || 'игрок').replace(/^@+/, ''),
+          });
+          lastKey = key;
+          if (unique.length >= 30) break;
+        }
+
+        const body = JSON.stringify({ drops: unique });
+        feedCache = { data: body, etag: etagOf(body), expiresAt: now + 2000 };
       }
 
-      // 304 если клиент уже имеет такую же версию
       if (req.header('If-None-Match') === feedCache.etag) {
         res.status(304).end();
         return;
       }
-
       res.set('ETag', feedCache.etag);
       res.set('Cache-Control', 'private, max-age=2');
       res.type('application/json').send(feedCache.data);
@@ -431,9 +441,6 @@ function createWebappRouter(bot, botToken) {
 
       const result = await upgradeItem(req.tgUser.id, inventoryItemId, targetItemId, multiplier, operationId);
       if (result.error) {
-        if (result.error === 'pending_upgrade') {
-          return res.status(429).json({ error: 'pending_upgrade', message: 'Дождитесь завершения предыдущего апгрейда.' });
-        }
         const status = result.error === 'same_price_target' ? 409 : 400;
         return res.status(status).json({ error: result.error });
       }
