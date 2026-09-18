@@ -131,11 +131,19 @@ export default function InventoryTab({
   const [sellItem, setSellItem] = useState(null);
   const grouped = useMemo(() => groupInventory(items || []), [items]);
 
+  const totalCount = (items || []).length;
+
   if (loading) {
     return (
       <div className="inventory-screen">
-        <div className="skeleton" style={{ height: 64, borderRadius: 16 }} />
-        <div className="item-grid" style={{ marginTop: 12 }}>
+        <div className="inventory-header">
+          <div className="inventory-header__left">
+            <div className="skeleton" style={{ width: 120, height: 22, borderRadius: 8 }} />
+            <div className="skeleton" style={{ width: 80, height: 12, borderRadius: 6, marginTop: 8 }} />
+          </div>
+          <div className="skeleton" style={{ width: 100, height: 40, borderRadius: 999 }} />
+        </div>
+        <div className="item-grid" style={{ marginTop: 4 }}>
           {Array.from({ length: 4 }).map((_, i) => (
             <div key={i} className="skeleton" style={{ height: 220, borderRadius: 17 }} />
           ))}
@@ -148,31 +156,46 @@ export default function InventoryTab({
 
   return (
     <div className="inventory-screen">
-      <div className="inventory-heading">
-        <p className="section-title">Инвентарь</p>
+      <header className="inventory-header">
+        <div className="inventory-header__left">
+          <h3 className="inventory-header__title">Инвентарь</h3>
+          <p className="inventory-header__meta">
+            {isEmpty
+              ? 'Пусто'
+              : `${grouped.length} ${plural(grouped.length, 'вид', 'вида', 'видов')} · ${totalCount} ${plural(totalCount, 'шт', 'шт', 'шт')}`}
+          </p>
+        </div>
         <button
           type="button"
-          className="inventory-withdraw-btn"
-          onClick={() => { haptic('light'); onWithdraw?.(); }}
+          className={`inventory-withdraw-btn${canWithdraw === false ? ' inventory-withdraw-btn--locked' : ''}`}
+          onClick={() => { haptic('medium'); onWithdraw?.(); }}
         >
-          💸 Вывод
+          <span className="inventory-withdraw-btn__icon" aria-hidden="true">💸</span>
+          <span className="inventory-withdraw-btn__label">Вывод</span>
         </button>
-      </div>
+      </header>
 
       {canWithdraw === false && (
-        <div className="withdraw-warning" style={{ marginTop: 10 }}>
-          Вывод откроется после выполнения условий по приглашениям
-          {referralProgress
-            ? ` — нужно ещё ${referralProgress.premiumRemaining} Premium или ${referralProgress.regularRemaining} обычных.`
-            : '.'}
+        <div className="inventory-alert">
+          <span className="inventory-alert__icon" aria-hidden="true">🔒</span>
+          <div className="inventory-alert__text">
+            <strong>Вывод пока не разблокирован</strong>
+            {referralProgress && (
+              <span>
+                Пригласи ещё <b>{referralProgress.premiumRemaining}</b> Premium
+                или <b>{referralProgress.regularRemaining}</b> обычных пользователей —
+                или оформи заявку сейчас, менеджер проверит вручную.
+              </span>
+            )}
+          </div>
         </div>
       )}
 
       {isEmpty ? (
-        <div className="empty-state" style={{ marginTop: 24 }}>
-          <div className="inventory-empty__icon">🎒</div>
-          <p className="empty-state__title">Инвентарь пуст</p>
-          <p>Купи предмет в каталоге или забери подарок за подписку.</p>
+        <div className="inventory-empty">
+          <div className="inventory-empty__icon" aria-hidden="true">🎒</div>
+          <p className="inventory-empty__title">Инвентарь пуст</p>
+          <p className="inventory-empty__text">Купи предмет в каталоге или забери подарок за подписку.</p>
         </div>
       ) : (
         <div className="item-grid">
@@ -218,4 +241,12 @@ export default function InventoryTab({
       )}
     </div>
   );
+}
+
+function plural(n, one, few, many) {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
+  return many;
 }
