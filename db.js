@@ -3,10 +3,6 @@ const catalogItems = require('./catalog');
 const { resolveUpgrade, canUpgradeTo, MAX_MULTIPLIER } = require('./upgrade-logic');
 const { WITHDRAWAL } = require('./house-config');
 
-// ВАЖНО: строка подключения берётся только из переменной окружения.
-// На Render добавьте переменную DATABASE_URL со значением вида:
-// postgresql://postgres.<project>:<ПАРОЛЬ>@aws-1-eu-west-1.pooler.supabase.com:5432/postgres
-// Спецсимволы в пароле нужно URL-кодировать (@ -> %40, # -> %23, $ -> %24, ! -> %21).
 const connectionString = process.env.DATABASE_URL;
 
 if (!connectionString) {
@@ -635,6 +631,106 @@ async function sellInventoryItem(userId, inventoryItemId, operationId = null) {
   }
 }
 
+/**
+ * Продажа партии одинаковых предметов.
+ * Удаляет N самых старых строк этого item_id из инвентаря юзера
+ * и начисляет price_stars × N на баланс. Всё в одной транзакции.
+ */
+async function sellInventoryItemsBatch(userId, itemId, quantity, operationId = null) {
+  const safeQuantity = Number(quantity);
+  if (!Number.isInteger(safeQuantity) || safeQuantity < 1 || safeQuantity > 9999) {
+    return { error: 'invalid_quantity' };
+  }
+  const safeItemId = Number(itemId);
+  if (!Number.isInteger(safeItemId) || safeItemId <= 0) {
+    return { error: 'invalid_item' };
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const normalizedOperationId = operationId ? String(operationId).slice(0, 100) : null;
+    if (normalizedOperationId) {
+      const opRes = await client.query(`
+        INSERT INTO operation_results (user_id, operation_type, operation_id, response, status)
+        VALUES ($1, 'sell_batch', $2, '{}'::jsonb, 'pending')
+        ON CONFLICT (user_id, operation_type, operation_id) DO NOTHING
+        RETURNING response, status
+      `, [userId, normalizedOperationId]);
+
+      if (!opRes.rowCount) {
+        const existing = await client.query(`
+          SELECT response, status FROM operation_results
+          WHERE user_id = $1 AND operation_type = 'sell_batch' AND operation_id = $2
+          FOR UPDATE
+        `, [userId, normalizedOperationId]);
+        const existingRow = existing.rows[0];
+        await client.query('ROLLBACK');
+        if (existingRow?.status === 'completed') return existingRow.response;
+        return { error: 'operation_in_progress' };
+      }
+    }
+
+    const rows = await client.query(`
+      SELECT ui.id AS inventory_id, i.name, i.price_stars
+      FROM user_inventory ui
+      JOIN items i ON i.id = ui.item_id
+      WHERE ui.user_id = $1 AND ui.item_id = $2
+      ORDER BY ui.created_at ASC
+      LIMIT $3
+      FOR UPDATE OF ui
+    `, [userId, safeItemId, safeQuantity]);
+
+    if (rows.rowCount < safeQuantity) {
+      await client.query('ROLLBACK');
+      return { error: 'not_enough_items', available: rows.rowCount };
+    }
+
+    const ids = rows.rows.map((r) => r.inventory_id);
+    const unitPrice = Number(rows.rows[0].price_stars);
+    const itemName = rows.rows[0].name;
+    const totalEarned = unitPrice * safeQuantity;
+
+    await client.query('DELETE FROM user_inventory WHERE id = ANY($1::int[])', [ids]);
+
+    const balRes = await client.query(
+      'UPDATE users SET balance = balance + $1 WHERE telegram_id = $2 RETURNING balance',
+      [totalEarned, userId]
+    );
+
+    const response = {
+      itemId: safeItemId,
+      soldName: itemName,
+      quantity: safeQuantity,
+      unitPrice,
+      earned: totalEarned,
+      balance: balRes.rows[0]?.balance ?? 0,
+    };
+
+    if (normalizedOperationId) {
+      await client.query(`
+        INSERT INTO balance_ledger (user_id, operation_type, operation_id, amount, balance_after, metadata)
+        VALUES ($1, 'sell_batch', $2, $3, $4, $5::jsonb)
+        ON CONFLICT (user_id, operation_type, operation_id) DO NOTHING
+      `, [userId, normalizedOperationId, totalEarned, balRes.rows[0]?.balance ?? 0, JSON.stringify({ itemId: safeItemId, quantity: safeQuantity })]);
+      await client.query(`
+        UPDATE operation_results
+        SET response = $3::jsonb, status = 'completed', updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = $1 AND operation_type = 'sell_batch' AND operation_id = $2
+      `, [userId, normalizedOperationId, JSON.stringify(response)]);
+    }
+
+    await client.query('COMMIT');
+    return response;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 async function grantDemoCredits(userId, amount = 1000, operationId = null) {
   const safeAmount = Number(amount);
   if (!Number.isInteger(safeAmount) || safeAmount < 1 || safeAmount > 10000) return { error: 'invalid_amount' };
@@ -840,6 +936,7 @@ module.exports = {
   buyItemsWithBalance,
   upgradeItem,
   sellInventoryItem,
+  sellInventoryItemsBatch,
   createWithdrawRequest,
   refundWithdrawRequest,
   markWithdrawPaid,
