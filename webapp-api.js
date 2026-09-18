@@ -9,6 +9,10 @@ const {
 const { WITHDRAWAL, USER_LIMITS, UPGRADE, ROULETTE, LIVE_FEED } = require('./house-config');
 const { notifyWithdrawRequest } = require('./admin-notify');
 
+// ═══════════════════════════════════════════════════════════════════
+// Утилиты
+// ═══════════════════════════════════════════════════════════════════
+
 function verifyInitData(initData, botToken) {
   if (!initData) return null;
   try {
@@ -61,15 +65,15 @@ function isWhitelisted(userId, whitelist) {
   return false;
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// Онлайн — O(1) запрос, O(N) cleanup по таймеру раз в минуту
+// ═══════════════════════════════════════════════════════════════════
+
 const onlineMap = new Map();
 const ONLINE_WINDOW_MS = (LIVE_FEED.ONLINE_WINDOW_SEC || 300) * 1000;
 
 function touchOnline(userId) {
   onlineMap.set(String(userId), Date.now());
-  if (onlineMap.size > 5000) {
-    const cutoff = Date.now() - ONLINE_WINDOW_MS;
-    for (const [id, ts] of onlineMap.entries()) if (ts < cutoff) onlineMap.delete(id);
-  }
 }
 
 function getRealOnline() {
@@ -79,7 +83,46 @@ function getRealOnline() {
   return count;
 }
 
-// ── Фейк-генератор: только first_name, никаких @ ────────────────────
+// Периодический cleanup — не на каждом запросе
+setInterval(() => {
+  const cutoff = Date.now() - ONLINE_WINDOW_MS;
+  let removed = 0;
+  for (const [id, ts] of onlineMap.entries()) {
+    if (ts < cutoff) { onlineMap.delete(id); removed++; }
+  }
+  if (removed > 0) console.log(`[online] cleanup removed ${removed}, left ${onlineMap.size}`);
+}, 60000).unref?.();
+
+// ═══════════════════════════════════════════════════════════════════
+// Rate limiter per user (sliding window)
+// ═══════════════════════════════════════════════════════════════════
+
+const rlBuckets = new Map();
+const RL_WINDOW_MS = 10_000;
+const RL_MAX = 40;
+
+function rateLimit(userId, max = RL_MAX) {
+  const now = Date.now();
+  let b = rlBuckets.get(String(userId));
+  if (!b || now - b.start > RL_WINDOW_MS) {
+    b = { start: now, count: 0 };
+    rlBuckets.set(String(userId), b);
+  }
+  b.count++;
+  return b.count <= max;
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, b] of rlBuckets.entries()) {
+    if (now - b.start > RL_WINDOW_MS * 2) rlBuckets.delete(id);
+  }
+}, 30000).unref?.();
+
+// ═══════════════════════════════════════════════════════════════════
+// Fake drops — пул перегенерируется раз в 60 сек
+// ═══════════════════════════════════════════════════════════════════
+
 const FAKE_FIRST_NAMES = [
   'Артём', 'Кирилл', 'Данил', 'Влад', 'София', 'Максим',
   'Никита', 'Егор', 'Тимур', 'Константин', 'Илья', 'Роман',
@@ -87,23 +130,77 @@ const FAKE_FIRST_NAMES = [
   'Арсений', 'Миша', 'Стёпа', 'Лев', 'Глеб', 'Саша',
 ];
 
-function makeFakeDrop(catalog) {
-  if (!catalog.length) return null;
-  const item = catalog[Math.floor(Math.random() * catalog.length)];
-  const name = FAKE_FIRST_NAMES[Math.floor(Math.random() * FAKE_FIRST_NAMES.length)];
-  return {
-    id: `fake_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-    userId: null,
-    userName: name,
-    itemName: item.name,
-    itemImageUrl: item.image_url,
-    priceStars: Number(item.price_stars) || 0,
-    chance: Number((Math.random() * 40 + 3).toFixed(1)),
-    success: true,
-    isFake: true,
-    ts: Date.now() - Math.floor(Math.random() * 120000),
-  };
+const FAKE_POOL_SIZE = 200;
+let fakePool = [];
+let fakePoolBuiltAt = 0;
+let fakePoolCatalogVersion = '';
+
+function shuffle(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
 }
+
+function rebuildFakePool(catalog) {
+  const items = shuffle(catalog);
+  const names = shuffle(FAKE_FIRST_NAMES);
+  const out = [];
+  const now = Date.now();
+
+  for (let i = 0; i < FAKE_POOL_SIZE; i++) {
+    const item = items[i % items.length];
+    const name = names[i % names.length];
+    if (!item) break;
+    out.push({
+      id: `fake_${now}_${i}_${Math.random().toString(36).slice(2, 6)}`,
+      userName: name,
+      itemName: item.name,
+      itemImageUrl: item.image_url,
+      priceStars: Number(item.price_stars) || 0,
+      chance: Number((Math.random() * 40 + 3).toFixed(1)),
+      isFake: true,
+      ts: 0,
+    });
+  }
+  return out;
+}
+
+function getFakeSamples(catalog, count) {
+  const catVersion = `${catalog.length}_${catalog[0]?.id || 0}_${catalog[catalog.length - 1]?.id || 0}`;
+  const now = Date.now();
+  if (fakePool.length === 0 || now - fakePoolBuiltAt > 60000 || catVersion !== fakePoolCatalogVersion) {
+    fakePool = rebuildFakePool(catalog);
+    fakePoolBuiltAt = now;
+    fakePoolCatalogVersion = catVersion;
+  }
+
+  const out = [];
+  const start = Math.floor(Math.random() * fakePool.length);
+  for (let i = 0; i < count; i++) {
+    const src = fakePool[(start + i) % fakePool.length];
+    out.push({
+      ...src,
+      id: `fake_${now}_${start + i}_${Math.random().toString(36).slice(2, 6)}`,
+      ts: now - Math.floor(Math.random() * 60000),
+    });
+  }
+  return out;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Feed cache — 2 сек TTL, отдаёт всем клиентам один ответ
+// ═══════════════════════════════════════════════════════════════════
+
+let feedCache = { data: null, etag: '', expiresAt: 0 };
+
+function etagOf(str) {
+  return '"' + crypto.createHash('sha1').update(str).digest('hex').slice(0, 16) + '"';
+}
+
+// ═══════════════════════════════════════════════════════════════════
 
 function createWebappRouter(bot, botToken) {
   const router = express.Router();
@@ -115,6 +212,10 @@ function createWebappRouter(bot, botToken) {
 
     req.tgUser = tgUser;
     touchOnline(tgUser.id);
+
+    if (!rateLimit(tgUser.id)) {
+      return res.status(429).json({ error: 'rate_limited' });
+    }
 
     try {
       req.dbUser = await ensureUserExists(tgUser);
@@ -246,6 +347,7 @@ function createWebappRouter(bot, botToken) {
   });
 
   router.get('/upgrade/config', (_req, res) => {
+    res.set('Cache-Control', 'public, max-age=300');
     res.json({
       displayGamma: UPGRADE.DISPLAY_GAMMA,
       displayBaseChanceMultiplier: UPGRADE.DISPLAY_BASE_CHANCE_MULTIPLIER,
@@ -260,30 +362,39 @@ function createWebappRouter(bot, botToken) {
     });
   });
 
+  // ── Feed: 2-секундный кэш ответа + ETag ─────────────────────────
   router.get('/upgrade/feed', async (req, res) => {
     try {
-      const catalog = await getCatalogItems();
-      const real = getRecentDrops(20);
+      const now = Date.now();
+      if (!feedCache.data || now > feedCache.expiresAt) {
+        const catalog = await getCatalogItems();
+        const real = getRecentDrops(20);
 
-      const [minFake, maxFake] = LIVE_FEED.FAKE_PER_REQUEST || [6, 14];
-      const fakeCount = minFake + Math.floor(Math.random() * (maxFake - minFake + 1));
-      const fake = [];
-      for (let i = 0; i < fakeCount; i++) {
-        const f = makeFakeDrop(catalog);
-        if (f) fake.push(f);
+        const [minFake, maxFake] = LIVE_FEED.FAKE_PER_REQUEST || [3, 6];
+        const fakeCount = minFake + Math.floor(Math.random() * (maxFake - minFake + 1));
+        const fake = getFakeSamples(catalog, fakeCount);
+
+        const mixed = [...real.map((d) => ({ ...d, isFake: false })), ...fake]
+          .sort((a, b) => (b.ts || 0) - (a.ts || 0))
+          .map((d) => ({ ...d, userName: String(d.userName || 'игрок').replace(/^@+/, '') }));
+
+        const body = JSON.stringify({ drops: mixed });
+        feedCache = {
+          data: body,
+          etag: etagOf(body),
+          expiresAt: now + 2000,
+        };
       }
 
-      const mixed = [...real.map((d) => ({ ...d, isFake: false })), ...fake]
-        .sort((a, b) => (b.ts || 0) - (a.ts || 0))
-        .slice(0, 30);
+      // 304 если клиент уже имеет такую же версию
+      if (req.header('If-None-Match') === feedCache.etag) {
+        res.status(304).end();
+        return;
+      }
 
-      // Дополнительная фильтрация: никаких @ в userName
-      const clean = mixed.map((d) => ({
-        ...d,
-        userName: String(d.userName || 'игрок').replace(/^@+/, ''),
-      }));
-
-      res.json({ drops: clean });
+      res.set('ETag', feedCache.etag);
+      res.set('Cache-Control', 'private, max-age=2');
+      res.type('application/json').send(feedCache.data);
     } catch (err) {
       console.error('Ошибка /api/upgrade/feed:', err.message);
       res.status(500).json({ drops: [], error: 'server_error' });
@@ -295,6 +406,7 @@ function createWebappRouter(bot, botToken) {
     const mult = Number(LIVE_FEED.ONLINE_MULTIPLIER) || 100;
     const fake = Math.max(real * mult, 1);
     const jitter = Math.floor(fake * (Math.random() * 0.1 - 0.05));
+    res.set('Cache-Control', 'public, max-age=10');
     res.json({ online: Math.max(1, fake + jitter) });
   });
 
@@ -378,6 +490,7 @@ function createWebappRouter(bot, botToken) {
     const methods = Object.entries(WITHDRAWAL.METHODS)
       .filter(([, cfg]) => cfg.enabled)
       .map(([key, cfg]) => ({ key, label: cfg.label, icon: cfg.icon, hint: cfg.hint }));
+    res.set('Cache-Control', 'public, max-age=300');
     res.json({
       methods,
       rate: WITHDRAWAL.STAR_TO_RUB,
