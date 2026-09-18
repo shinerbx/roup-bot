@@ -15,7 +15,6 @@ const {
 const { createWebappRouter } = require('./webapp-api');
 const { registerBot } = require('./admin-notify');
 
-// Telegram Bot API token хранится только в Render Environment Variables.
 const BOT_TOKEN = process.env.BOT_TOKEN;
 if (!BOT_TOKEN) console.error('❌ Не задана переменная окружения BOT_TOKEN — бот не запустится.');
 
@@ -48,8 +47,6 @@ const getMainMenu = () => Markup.keyboard([
 ]).resize();
 
 bot.use(async (ctx, next) => {
-  // pre_checkout_query должен быть обработан максимум за 10 секунд, поэтому
-  // платёжные апдейты не попадают под обычный антиспам-кулдаун.
   const isPaymentUpdate = Boolean(ctx.preCheckoutQuery || ctx.shippingQuery || ctx.message?.successful_payment);
   if (isPaymentUpdate) return next();
 
@@ -278,7 +275,6 @@ bot.on('pre_checkout_query', async (ctx) => {
   const payload = String(ctx.preCheckoutQuery?.invoice_payload || '');
   console.log('💳 pre_checkout_query от', ctx.from?.id, payload);
   try {
-    // Принимаем только новые support-инвойсы. Старый topup нельзя проводить.
     if (!payload.startsWith('support_')) {
       return ctx.answerPreCheckoutQuery(false, 'Этот платёж больше не используется.').catch(() => {});
     }
@@ -302,7 +298,6 @@ bot.on('message', async (ctx) => {
     return;
   }
 
-  // Старые topup-инвойсы не дают права на начисление баланса.
   if (payload.startsWith('topup_')) console.warn('⚠️ Старый topup-платёж: баланс не изменён:', payload);
 });
 
@@ -341,12 +336,10 @@ app.get('/health', (req, res) => res.json({ ok: true, service: 'roup' }));
 
 const webappDist = path.join(__dirname, 'webapp', 'dist');
 
-// ---------- Настройка кэширования для статики (включая картинки) ----------
 app.use(express.static(webappDist, {
-  maxAge: '30d', // Заставляем Telegram кэшировать картинки на 30 дней
+  maxAge: '30d',
   setHeaders: (res, path) => {
     if (path.endsWith('.html')) {
-      // HTML файл не кэшируем, чтобы у игроков всегда была последняя версия кода
       res.setHeader('Cache-Control', 'no-cache');
     }
   }
