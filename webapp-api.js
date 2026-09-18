@@ -61,8 +61,7 @@ function isWhitelisted(userId, whitelist) {
   return false;
 }
 
-// ── Онлайн (in-memory) ──────────────────────────────────────────────
-const onlineMap = new Map(); // userId → ts
+const onlineMap = new Map();
 const ONLINE_WINDOW_MS = (LIVE_FEED.ONLINE_WINDOW_SEC || 300) * 1000;
 
 function touchOnline(userId) {
@@ -80,18 +79,18 @@ function getRealOnline() {
   return count;
 }
 
-// ── Фейковые дропы ──────────────────────────────────────────────────
-const FAKE_NAMES = [
-  'Артём', 'kirill_228', 'Данил', 'vlad_mlbb', 'Соня', 'max_power',
-  'Никита', 'gamer_pro', 'Егор', 'Tima', 'Костя', 'zxc_player',
-  'Илья', 'roman_x', 'Ден', 'slava', 'Ваня', 'ghost_777',
-  'Лёша', 'pro_skill', 'Матвей', 'ded_inside', 'Марк', 'kid_luck',
+// ── Фейк-генератор: только first_name, никаких @ ────────────────────
+const FAKE_FIRST_NAMES = [
+  'Артём', 'Кирилл', 'Данил', 'Влад', 'София', 'Максим',
+  'Никита', 'Егор', 'Тимур', 'Константин', 'Илья', 'Роман',
+  'Денис', 'Вячеслав', 'Иван', 'Алексей', 'Матвей', 'Марк',
+  'Арсений', 'Миша', 'Стёпа', 'Лев', 'Глеб', 'Саша',
 ];
 
 function makeFakeDrop(catalog) {
   if (!catalog.length) return null;
   const item = catalog[Math.floor(Math.random() * catalog.length)];
-  const name = FAKE_NAMES[Math.floor(Math.random() * FAKE_NAMES.length)];
+  const name = FAKE_FIRST_NAMES[Math.floor(Math.random() * FAKE_FIRST_NAMES.length)];
   return {
     id: `fake_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     userId: null,
@@ -109,7 +108,6 @@ function makeFakeDrop(catalog) {
 function createWebappRouter(bot, botToken) {
   const router = express.Router();
 
-  // Middleware: auth + touchOnline
   router.use(async (req, res, next) => {
     const initData = req.header('X-Telegram-Init-Data') || req.header('x-telegram-init-data') || '';
     const tgUser = verifyInitData(initData, botToken);
@@ -127,7 +125,6 @@ function createWebappRouter(bot, botToken) {
     }
   });
 
-  // ── Каталог ─────────────────────────────────────────────────────
   router.get('/catalog', async (req, res) => {
     try {
       const items = await getCatalogItems();
@@ -138,7 +135,6 @@ function createWebappRouter(bot, botToken) {
     }
   });
 
-  // ── Профиль ─────────────────────────────────────────────────────
   router.get('/profile', async (req, res) => {
     try {
       const user = await getUser(req.tgUser.id) || req.dbUser;
@@ -249,7 +245,6 @@ function createWebappRouter(bot, botToken) {
     }
   });
 
-  // ── Конфиг апгрейда ─────────────────────────────────────────────
   router.get('/upgrade/config', (_req, res) => {
     res.json({
       displayGamma: UPGRADE.DISPLAY_GAMMA,
@@ -265,7 +260,6 @@ function createWebappRouter(bot, botToken) {
     });
   });
 
-  // ── Live-лента дропов ───────────────────────────────────────────
   router.get('/upgrade/feed', async (req, res) => {
     try {
       const catalog = await getCatalogItems();
@@ -279,29 +273,31 @@ function createWebappRouter(bot, botToken) {
         if (f) fake.push(f);
       }
 
-      // Смешиваем: все реальные + фейки, сортируем по ts desc
       const mixed = [...real.map((d) => ({ ...d, isFake: false })), ...fake]
         .sort((a, b) => (b.ts || 0) - (a.ts || 0))
         .slice(0, 30);
 
-      res.json({ drops: mixed });
+      // Дополнительная фильтрация: никаких @ в userName
+      const clean = mixed.map((d) => ({
+        ...d,
+        userName: String(d.userName || 'игрок').replace(/^@+/, ''),
+      }));
+
+      res.json({ drops: clean });
     } catch (err) {
       console.error('Ошибка /api/upgrade/feed:', err.message);
       res.status(500).json({ drops: [], error: 'server_error' });
     }
   });
 
-  // ── Онлайн ──────────────────────────────────────────────────────
   router.get('/online', (_req, res) => {
     const real = getRealOnline();
     const mult = Number(LIVE_FEED.ONLINE_MULTIPLIER) || 100;
     const fake = Math.max(real * mult, 1);
-    // Джиттер ±5% чтобы не было ровно круглого числа
     const jitter = Math.floor(fake * (Math.random() * 0.1 - 0.05));
     res.json({ online: Math.max(1, fake + jitter) });
   });
 
-  // ── Апгрейд ─────────────────────────────────────────────────────
   router.post('/upgrade', async (req, res) => {
     try {
       const inventoryItemId = Number(req.body?.inventoryItemId);
@@ -378,7 +374,6 @@ function createWebappRouter(bot, botToken) {
     }
   });
 
-  // ── Вывод ───────────────────────────────────────────────────────
   router.get('/withdraw/methods', (_req, res) => {
     const methods = Object.entries(WITHDRAWAL.METHODS)
       .filter(([, cfg]) => cfg.enabled)
