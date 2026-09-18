@@ -22,7 +22,6 @@ const { notifyWithdrawRequest } = require('./admin-notify');
 
 function verifyInitData(initData, botToken) {
   if (!initData) return null;
-
   try {
     const params = new URLSearchParams(initData);
     const hash = params.get('hash');
@@ -30,9 +29,7 @@ function verifyInitData(initData, botToken) {
     params.delete('hash');
 
     const pairs = [];
-    for (const [key, value] of params.entries()) {
-      pairs.push(`${key}=${value}`);
-    }
+    for (const [key, value] of params.entries()) pairs.push(`${key}=${value}`);
     pairs.sort();
     const dataCheckString = pairs.join('\n');
 
@@ -49,7 +46,6 @@ function verifyInitData(initData, botToken) {
 
     const userRaw = params.get('user');
     if (!userRaw) return null;
-
     return JSON.parse(userRaw);
   } catch (err) {
     console.error('Ошибка парсинга initData:', err.message);
@@ -57,46 +53,19 @@ function verifyInitData(initData, botToken) {
   }
 }
 
-/**
- * Собираем вайтлист из всех возможных источников.
- * Поддерживаем:
- *   - ADMIN_CHAT_ID как одиночный ID или список через запятую
- *   - USER_LIMITS.WITHDRAW_WHITELIST (массив)
- * Все значения нормализуем как строки без пробелов.
- */
 function buildWithdrawWhitelist() {
   const set = new Set();
-
-  // ADMIN_CHAT_ID из env — может быть "6043384033" или "6043384033,123456"
   const envRaw = String(process.env.ADMIN_CHAT_ID || '');
-  if (envRaw) {
-    envRaw.split(',').forEach((part) => {
-      const v = String(part).trim();
-      if (v) set.add(v);
-    });
-  }
-
-  // WITHDRAW_WHITELIST из конфига
+  if (envRaw) envRaw.split(',').forEach((p) => { const v = String(p).trim(); if (v) set.add(v); });
   const cfgList = Array.isArray(USER_LIMITS.WITHDRAW_WHITELIST) ? USER_LIMITS.WITHDRAW_WHITELIST : [];
-  cfgList.forEach((v) => {
-    const s = String(v).trim();
-    if (s) set.add(s);
-  });
-
+  cfgList.forEach((v) => { const s = String(v).trim(); if (s) set.add(s); });
   return set;
 }
 
-/**
- * Надёжная проверка: сравниваем и как строку, и как число.
- * Срабатывает даже если где-то есть пробелы/переносы/разный тип.
- */
 function isWhitelisted(userId, whitelist) {
   const asStr = String(userId).trim();
   const asNum = Number(userId);
-
   if (whitelist.has(asStr)) return true;
-
-  // Резерв: сравнить по числу (на случай "  6043384033  " в env)
   for (const entry of whitelist) {
     if (Number(entry) === asNum && Number.isFinite(asNum)) return true;
   }
@@ -106,19 +75,12 @@ function isWhitelisted(userId, whitelist) {
 function createWebappRouter(bot, botToken) {
   const router = express.Router();
 
-  // Лог вайтлиста при старте
-  const startWhitelist = [...buildWithdrawWhitelist()];
-  console.log('[withdraw] ADMIN_CHAT_ID env =', JSON.stringify(process.env.ADMIN_CHAT_ID || null));
-  console.log('[withdraw] WITHDRAW_WHITELIST config =', JSON.stringify(USER_LIMITS.WITHDRAW_WHITELIST || []));
-  console.log('[withdraw] resolved whitelist =', startWhitelist.length ? startWhitelist : '(empty)');
+  console.log('[withdraw] resolved whitelist =', [...buildWithdrawWhitelist()]);
 
   router.use(async (req, res, next) => {
     const initData = req.header('X-Telegram-Init-Data') || req.header('x-telegram-init-data') || '';
     const tgUser = verifyInitData(initData, botToken);
-
-    if (!tgUser) {
-      return res.status(401).json({ error: 'invalid_init_data' });
-    }
+    if (!tgUser) return res.status(401).json({ error: 'invalid_init_data' });
 
     req.tgUser = tgUser;
     try {
@@ -195,23 +157,15 @@ function createWebappRouter(bot, botToken) {
       const itemId = Number(req.body?.itemId);
       const quantity = Number(req.body?.quantity ?? 1);
       const operationId = String(req.body?.operationId || '');
-
-      if (!Number.isInteger(itemId) || itemId <= 0) {
-        return res.status(400).json({ error: 'invalid_item' });
-      }
-      if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100) {
-        return res.status(400).json({ error: 'invalid_quantity' });
-      }
-      if (!operationId || operationId.length > 100) {
-        return res.status(400).json({ error: 'missing_operation_id' });
-      }
+      if (!Number.isInteger(itemId) || itemId <= 0) return res.status(400).json({ error: 'invalid_item' });
+      if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100) return res.status(400).json({ error: 'invalid_quantity' });
+      if (!operationId || operationId.length > 100) return res.status(400).json({ error: 'missing_operation_id' });
 
       const result = await buyItemsWithBalance(req.tgUser.id, itemId, quantity, operationId);
       if (result.error) {
         const status = result.error === 'insufficient_balance' ? 402 : 400;
         return res.status(status).json({ error: result.error });
       }
-
       res.json(result);
     } catch (err) {
       console.error('Ошибка /api/buy:', err.message);
@@ -223,12 +177,8 @@ function createWebappRouter(bot, botToken) {
     try {
       const amount = Math.floor(Number(req.body?.amount ?? 1000));
       const operationId = String(req.body?.operationId || '');
-      if (!Number.isInteger(amount) || amount < 1 || amount > 10000) {
-        return res.status(400).json({ error: 'invalid_amount' });
-      }
-      if (!operationId || operationId.length > 100) {
-        return res.status(400).json({ error: 'missing_operation_id' });
-      }
+      if (!Number.isInteger(amount) || amount < 1 || amount > 10000) return res.status(400).json({ error: 'invalid_amount' });
+      if (!operationId || operationId.length > 100) return res.status(400).json({ error: 'missing_operation_id' });
       const result = await grantDemoCredits(req.tgUser.id, amount, operationId);
       if (result.error) return res.status(400).json({ error: result.error });
       res.json(result);
@@ -241,9 +191,7 @@ function createWebappRouter(bot, botToken) {
   router.post('/support/create-invoice', async (req, res) => {
     try {
       const amount = Math.floor(Number(req.body.amount));
-      if (!Number.isFinite(amount) || amount < 1 || amount > 100000) {
-        return res.status(400).json({ error: 'invalid_amount' });
-      }
+      if (!Number.isFinite(amount) || amount < 1 || amount > 100000) return res.status(400).json({ error: 'invalid_amount' });
 
       const payload = `support_${req.tgUser.id}_${Date.now()}`;
       const invoiceLink = await bot.telegram.createInvoiceLink({
@@ -254,11 +202,10 @@ function createWebappRouter(bot, botToken) {
         currency: 'XTR',
         prices: [{ label: `${amount} Telegram Stars`, amount }]
       });
-
       res.json({ invoiceLink });
     } catch (err) {
       const detail = err.response?.description || err.description || err.message;
-      console.error('❌ Ошибка /api/support/create-invoice:', detail, err);
+      console.error('❌ Ошибка /api/support/create-invoice:', detail);
       res.status(500).json({ error: 'server_error', detail });
     }
   });
@@ -292,16 +239,13 @@ function createWebappRouter(bot, botToken) {
       if (!Number.isFinite(multiplier) || Math.abs(multiplier * 10 - Math.round(multiplier * 10)) >= 1e-9 || multiplier < 1 || multiplier > 100) {
         return res.status(400).json({ error: 'invalid_multiplier' });
       }
-      if (!operationId || operationId.length > 100) {
-        return res.status(400).json({ error: 'missing_operation_id' });
-      }
+      if (!operationId || operationId.length > 100) return res.status(400).json({ error: 'missing_operation_id' });
 
       const result = await upgradeItem(req.tgUser.id, inventoryItemId, targetItemId, multiplier, operationId);
       if (result.error) {
         const status = result.error === 'same_price_target' ? 409 : 400;
         return res.status(status).json({ error: result.error });
       }
-
       res.json({
         success: result.success,
         item: result.item,
@@ -317,19 +261,12 @@ function createWebappRouter(bot, botToken) {
   router.post('/sell', async (req, res) => {
     try {
       const inventoryItemId = Number(req.body.inventoryItemId);
-      if (!Number.isInteger(inventoryItemId) || inventoryItemId <= 0) {
-        return res.status(400).json({ error: 'missing_fields' });
-      }
+      if (!Number.isInteger(inventoryItemId) || inventoryItemId <= 0) return res.status(400).json({ error: 'missing_fields' });
       const operationId = String(req.body?.operationId || '');
-      if (!operationId || operationId.length > 100) {
-        return res.status(400).json({ error: 'missing_operation_id' });
-      }
+      if (!operationId || operationId.length > 100) return res.status(400).json({ error: 'missing_operation_id' });
 
       const result = await sellInventoryItem(req.tgUser.id, inventoryItemId, operationId);
-      if (result.error) {
-        return res.status(400).json({ error: result.error });
-      }
-
+      if (result.error) return res.status(400).json({ error: result.error });
       res.json(result);
     } catch (err) {
       console.error('Ошибка /api/sell:', err.message);
@@ -343,21 +280,12 @@ function createWebappRouter(bot, botToken) {
       const quantity = Number(req.body?.quantity);
       const operationId = String(req.body?.operationId || '');
 
-      if (!Number.isInteger(itemId) || itemId <= 0) {
-        return res.status(400).json({ error: 'invalid_item' });
-      }
-      if (!Number.isInteger(quantity) || quantity < 1 || quantity > 9999) {
-        return res.status(400).json({ error: 'invalid_quantity' });
-      }
-      if (!operationId || operationId.length > 100) {
-        return res.status(400).json({ error: 'missing_operation_id' });
-      }
+      if (!Number.isInteger(itemId) || itemId <= 0) return res.status(400).json({ error: 'invalid_item' });
+      if (!Number.isInteger(quantity) || quantity < 1 || quantity > 9999) return res.status(400).json({ error: 'invalid_quantity' });
+      if (!operationId || operationId.length > 100) return res.status(400).json({ error: 'missing_operation_id' });
 
       const result = await sellInventoryItemsBatch(req.tgUser.id, itemId, quantity, operationId);
-      if (result.error) {
-        return res.status(400).json({ error: result.error, available: result.available });
-      }
-
+      if (result.error) return res.status(400).json({ error: result.error, available: result.available });
       res.json(result);
     } catch (err) {
       console.error('Ошибка /api/sell-many:', err.message);
@@ -381,13 +309,12 @@ function createWebappRouter(bot, botToken) {
   });
 
   /**
-   * Создание заявки на вывод.
-   *
-   * Логика:
-   *   1. Вайтлист (админ / WITHDRAW_WHITELIST) → пропускаем сразу.
-   *   2. Иначе если REQUIRE_REFERRAL_FOR_WITHDRAW → проверяем рефералов,
-   *      при неудаче возвращаем 403 referral_gate.
-   *   3. Иначе создаём заявку.
+   * Создание заявки.
+   * Порядок:
+   *   1. Вайтлист (админ + WITHDRAW_WHITELIST) → пропускаем.
+   *   2. Если REQUIRE_REFERRAL_FOR_WITHDRAW → проверяем рефералов.
+   *      Не выполнено — 403 referral_gate, заявка НЕ создаётся.
+   *   3. Создаём заявку + сервисное сообщение админу.
    */
   router.post('/withdraw/request', async (req, res) => {
     try {
@@ -399,9 +326,7 @@ function createWebappRouter(bot, botToken) {
       console.log('[withdraw/request] user=%s method=%s amount=%s username=%s',
         req.tgUser.id, method, amountStars, rawUsername);
 
-      if (!WITHDRAWAL.METHODS[method]?.enabled) {
-        return res.status(400).json({ error: 'method_not_available' });
-      }
+      if (!WITHDRAWAL.METHODS[method]?.enabled) return res.status(400).json({ error: 'method_not_available' });
       if (!Number.isFinite(amountStars) || amountStars < WITHDRAWAL.MIN_STARS) {
         return res.status(400).json({ error: 'amount_below_min', min: WITHDRAWAL.MIN_STARS });
       }
@@ -410,24 +335,19 @@ function createWebappRouter(bot, botToken) {
       }
 
       let username = rawUsername.startsWith('@') ? rawUsername : `@${rawUsername}`;
-      if (!/^@[A-Za-z0-9_]{4,32}$/.test(username)) {
-        return res.status(400).json({ error: 'invalid_username' });
-      }
-      if (!operationId || operationId.length > 100) {
-        return res.status(400).json({ error: 'missing_operation_id' });
-      }
+      if (!/^@[A-Za-z0-9_]{4,32}$/.test(username)) return res.status(400).json({ error: 'invalid_username' });
+      if (!operationId || operationId.length > 100) return res.status(400).json({ error: 'missing_operation_id' });
 
       const whitelist = buildWithdrawWhitelist();
       const whitelisted = isWhitelisted(req.tgUser.id, whitelist);
 
-      console.log('[withdraw/request] whitelist check: userId=%s whitelist=[%s] match=%s',
-        req.tgUser.id, [...whitelist].join(','), whitelisted);
+      console.log('[withdraw/request] whitelist check: userId=%s match=%s', req.tgUser.id, whitelisted);
 
       if (!whitelisted && USER_LIMITS.REQUIRE_REFERRAL_FOR_WITHDRAW) {
         const progress = await getReferralProgress(req.tgUser.id);
         if (!progress.canWithdraw) {
-          console.log('[withdraw/request] BLOCKED by referral gate: user=%s premium=%s/%s regular=%s/%s',
-            req.tgUser.id, progress.premium, 5, progress.regular, 10);
+          console.log('[withdraw/request] BLOCKED referral_gate user=%s premium=%s/5 regular=%s/10',
+            req.tgUser.id, progress.premium, progress.regular);
           return res.status(403).json({ error: 'referral_gate', progress });
         }
       }
