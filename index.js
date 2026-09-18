@@ -31,7 +31,7 @@ const BOT_USERNAME = 'roupgrade_bot';
 const WEB_APP_URL = process.env.WEB_APP_URL || 'https://roup-bot.onrender.com';
 const CHANNEL_USERNAME = '@ro_upgrade';
 const SHARE_BANNER_URL = 'https://i.ibb.co/Fq6L8G16/7007-D8-FC-C59-A-4-F72-B1-AB-C63-DFAA2-F87-A.png';
-const PRIVACY_POLICY_URL = 'https://telegra.ph/Polzovatelskoe-soglashenie-i-Usloviya-programmy-loyalnosti-RoUP-09-16';
+const PRIVACY_POLICY_URL = 'https://telegra.ph/Polzovatelskoe-soglashenie-i-Usloviya-ispolzovaniya-RoUP-09-18';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID;
 
 const IS_PROD = process.env.NODE_ENV === 'production';
