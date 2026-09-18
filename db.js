@@ -113,14 +113,11 @@ async function initDb() {
         ON withdraw_requests (status, created_at DESC);
     `);
 
-    // Совместимо с уже существующей Supabase БД: добавляем только недостающие поля.
-    // Старые данные не удаляются.
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS is_premium INTEGER DEFAULT 0');
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS tutorial_completed INTEGER DEFAULT 0');
     await pool.query("ALTER TABLE operation_results ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending'");
     await pool.query("ALTER TABLE operation_results ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
 
-    // Загружаем предметы одним запросом, чтобы не спамить в пул базы
     for (const item of catalogItems) {
       await pool.query(`
         INSERT INTO items (name, category, price_stars, image_url)
@@ -158,8 +155,6 @@ async function registerUser(tgUser, referrerId = null) {
       RETURNING telegram_id
     `, [tgUser.id, tgUser.username || null, tgUser.first_name || '', successfulReferrer, isPremium]);
 
-    // Только реально вставленная строка может активировать реферальную награду.
-    // Это закрывает гонку двух одновременных /start для одного аккаунта.
     if (insertRes.rowCount && successfulReferrer) {
       await pool.query('UPDATE users SET referrals_count = referrals_count + 1 WHERE telegram_id = $1', [successfulReferrer]);
       await giveRandomStarterItem(successfulReferrer);
@@ -171,7 +166,6 @@ async function registerUser(tgUser, referrerId = null) {
     user = res.rows[0];
   }
 
-  // Telegram присылает актуальный флаг Premium. Обновляем его при каждом входе.
   await pool.query('UPDATE users SET is_premium = $1, username = $2, first_name = $3 WHERE telegram_id = $4', [isPremium, tgUser.username || null, tgUser.first_name || '', tgUser.id]);
   return { user: (await getUser(tgUser.id)), rewardedReferrerId: successfulReferrer };
 }
@@ -303,10 +297,6 @@ async function addInventoryItem(userId, itemId) {
   await pool.query('INSERT INTO user_inventory (user_id, item_id) VALUES ($1, $2)', [userId, itemId]);
 }
 
-// Покупка предмета из каталога за внутренний баланс (не за живые Stars).
-// Баланс списывается и предмет начисляется в одной транзакции;
-// строка пользователя блокируется, чтобы нельзя было купить дважды
-// на грани баланса параллельными запросами.
 async function buyItemsWithBalance(userId, itemId, quantity = 1, operationId = null) {
   const safeQuantity = Number(quantity);
   if (!Number.isInteger(safeQuantity) || safeQuantity < 1 || safeQuantity > 9999) {
@@ -421,7 +411,6 @@ async function buyItemsWithBalance(userId, itemId, quantity = 1, operationId = n
   }
 }
 
-// Backwards-compatible single-item helper.
 async function buyItemWithBalance(userId, itemId) {
   return buyItemsWithBalance(userId, itemId, 1, null);
 }
@@ -523,8 +512,6 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
       return { error: 'invalid_multiplier' };
     }
 
-    // resolveUpgrade возвращает только публичные поля.
-    // Реальный шанс и roll остаются внутри функции и не покидают её.
     const decision = resolveUpgrade(
       { id: sourceItem.item_id, name: sourceItem.name, price_stars: sourceItem.price_stars },
       targetItem,
@@ -545,7 +532,6 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
       await client.query('INSERT INTO user_inventory (user_id, item_id) VALUES ($1, $2)', [userId, resultItem.id]);
     }
 
-    // Публичный ответ. Никаких realChance, roll, landingAngle.
     const response = {
       success: Boolean(decision.success),
       item: resultItem,
@@ -572,9 +558,6 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
   }
 }
 
-// Продажа предмета: удаляет его из инвентаря и начисляет его цену
-// на внутренний баланс пользователя. Всё в одной транзакции,
-// строка инвентаря блокируется, чтобы предмет нельзя было продать дважды.
 async function sellInventoryItem(userId, inventoryItemId, operationId = null) {
   const client = await pool.connect();
   try {
@@ -652,7 +635,6 @@ async function sellInventoryItem(userId, inventoryItemId, operationId = null) {
   }
 }
 
-// Учебное пополнение демо-баланса. Никаких платежей или конвертации реальных денег.
 async function grantDemoCredits(userId, amount = 1000, operationId = null) {
   const safeAmount = Number(amount);
   if (!Number.isInteger(safeAmount) || safeAmount < 1 || safeAmount > 10000) return { error: 'invalid_amount' };
@@ -680,10 +662,6 @@ async function grantDemoCredits(userId, amount = 1000, operationId = null) {
     return response;
   } catch (err) { await client.query('ROLLBACK'); throw err; } finally { client.release(); }
 }
-
-// ─────────────────────────────────────────────────────────────────────
-// ЗАЯВКИ НА ВЫВОД
-// ─────────────────────────────────────────────────────────────────────
 
 async function createWithdrawRequest(userId, { method, amountStars, contactUsername, operationId }) {
   const client = await pool.connect();
