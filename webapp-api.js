@@ -75,8 +75,6 @@ function isWhitelisted(userId, whitelist) {
 function createWebappRouter(bot, botToken) {
   const router = express.Router();
 
-  console.log('[withdraw] resolved whitelist =', [...buildWithdrawWhitelist()]);
-
   router.use(async (req, res, next) => {
     const initData = req.header('X-Telegram-Init-Data') || req.header('x-telegram-init-data') || '';
     const tgUser = verifyInitData(initData, botToken);
@@ -111,6 +109,10 @@ function createWebappRouter(bot, botToken) {
       const whitelist = buildWithdrawWhitelist();
       const whitelisted = isWhitelisted(req.tgUser.id, whitelist);
 
+      // Demo блокирует вывод, но игрок этого не видит — просто can_withdraw=false
+      const demoActive = user.pre_demo_balance != null || Number(user.lucky_mode) > 0;
+      const canWithdraw = (whitelisted || referralProgress.canWithdraw) && !demoActive;
+
       res.json({
         telegram_id: String(user.telegram_id),
         first_name: user.first_name || '',
@@ -119,7 +121,7 @@ function createWebappRouter(bot, botToken) {
         upgrades_count: user.upgrades_count || 0,
         referrals_count: user.referrals_count || 0,
         referral_progress: referralProgress,
-        can_withdraw: whitelisted || referralProgress.canWithdraw,
+        can_withdraw: canWithdraw,
         is_whitelisted: whitelisted,
         balance: user.balance || 0,
         items_count: itemsCount || 0,
@@ -308,23 +310,12 @@ function createWebappRouter(bot, botToken) {
     });
   });
 
-  /**
-   * Создание заявки.
-   * Порядок:
-   *   1. Вайтлист (админ + WITHDRAW_WHITELIST) → пропускаем.
-   *   2. Если REQUIRE_REFERRAL_FOR_WITHDRAW → проверяем рефералов.
-   *      Не выполнено — 403 referral_gate, заявка НЕ создаётся.
-   *   3. Создаём заявку + сервисное сообщение админу.
-   */
   router.post('/withdraw/request', async (req, res) => {
     try {
       const method = String(req.body?.method || '').trim();
       const amountStars = Math.floor(Number(req.body?.amountStars));
       const rawUsername = String(req.body?.contactUsername || '').trim();
       const operationId = String(req.body?.operationId || '').trim();
-
-      console.log('[withdraw/request] user=%s method=%s amount=%s username=%s',
-        req.tgUser.id, method, amountStars, rawUsername);
 
       if (!WITHDRAWAL.METHODS[method]?.enabled) return res.status(400).json({ error: 'method_not_available' });
       if (!Number.isFinite(amountStars) || amountStars < WITHDRAWAL.MIN_STARS) {
@@ -338,16 +329,18 @@ function createWebappRouter(bot, botToken) {
       if (!/^@[A-Za-z0-9_]{4,32}$/.test(username)) return res.status(400).json({ error: 'invalid_username' });
       if (!operationId || operationId.length > 100) return res.status(400).json({ error: 'missing_operation_id' });
 
+      // Demo-режим блокирует вывод. Игрок получает общий отказ без деталей.
+      const u = req.dbUser;
+      if (u && (u.pre_demo_balance != null || Number(u.lucky_mode) > 0)) {
+        return res.status(403).json({ error: 'withdraw_unavailable' });
+      }
+
       const whitelist = buildWithdrawWhitelist();
       const whitelisted = isWhitelisted(req.tgUser.id, whitelist);
-
-      console.log('[withdraw/request] whitelist check: userId=%s match=%s', req.tgUser.id, whitelisted);
 
       if (!whitelisted && USER_LIMITS.REQUIRE_REFERRAL_FOR_WITHDRAW) {
         const progress = await getReferralProgress(req.tgUser.id);
         if (!progress.canWithdraw) {
-          console.log('[withdraw/request] BLOCKED referral_gate user=%s premium=%s/5 regular=%s/10',
-            req.tgUser.id, progress.premium, progress.regular);
           return res.status(403).json({ error: 'referral_gate', progress });
         }
       }
