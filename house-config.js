@@ -1,15 +1,11 @@
-// house-config.js — единая экономика RoUP.
-
 const HOUSE_CONFIG = Object.freeze({
 
   UPGRADE: {
-    // Реальный расчёт
     GAMMA: 1.12,
     BASE_CHANCE_MULTIPLIER: 0.90,
     HOUSE_EDGE: 0.25,
     ROLL_NOISE: 0.12,
 
-    // Отображаемый (честный) расчёт для UI
     DISPLAY_GAMMA: 1.0,
     DISPLAY_BASE_CHANCE_MULTIPLIER: 1.0,
     DISPLAY_HOUSE_EDGE: 0.0,
@@ -20,11 +16,14 @@ const HOUSE_CONFIG = Object.freeze({
     MAX_MULTIPLIER: 100,
     DEFAULT_MULTIPLIER: 1,
 
-    // Lucky mode (demo)
-    // realFinal = min(LUCKY_MAX_CHANCE, realBase × LUCKY_CHANCE_MULTIPLIER + LUCKY_FLAT_BOOST)
+    // Lucky
     LUCKY_CHANCE_MULTIPLIER: 10,
-    LUCKY_FLAT_BOOST: 50,        // +50 п.п. к шансу
+    LUCKY_FLAT_BOOST: 50,
     LUCKY_MAX_CHANCE: 92,
+
+    // Anti-flood
+    PENDING_WINDOW_SEC: 15,       // окно, в котором висит pending-запрос
+    MIN_INTERVAL_MS: 800,          // минимум между двумя апгрейдами одного юзера
   },
 
   ROULETTE: {
@@ -45,6 +44,14 @@ const HOUSE_CONFIG = Object.freeze({
       CLOSE: 0.30,
       FAR: 0.50,
     },
+  },
+
+  // Live-лента
+  LIVE_FEED: {
+    CACHE_SIZE: 50,           // сколько реальных дропов держим в памяти
+    FAKE_PER_REQUEST: [6, 14], // сколько фейков примешивать на запрос
+    ONLINE_WINDOW_SEC: 300,    // окно активности для онлайна
+    ONLINE_MULTIPLIER: 100,    // фейковый онлайн = реальный × это
   },
 
   USER_LIMITS: {
