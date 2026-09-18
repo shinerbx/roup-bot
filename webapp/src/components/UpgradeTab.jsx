@@ -1,33 +1,105 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { haptic, hapticNotify } from '../telegram.js';
 
 const RADIUS = 74;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 const PRESETS = [2, 4, 8, 10];
-const MAX_MULTIPLIER = 100;
-const SPIN_MS = 3600;
+
+// Дефолты совпадают с DISPLAY_* в house-config.js.
+// Реальный шанс сервера клиенту неизвестен и не нужен.
+const DEFAULT_CONFIG = {
+  displayGamma: 1.0,
+  displayBaseChanceMultiplier: 1.0,
+  displayHouseEdge: 0.0,
+  minChance: 0.1,
+  maxChance: 95,
+  minMultiplier: 1,
+  maxMultiplier: 100,
+  spinProfiles: [
+    { duration: 3200, turns: 3, easing: 'cubic-bezier(.08,.72,.18,1)' },
+    { duration: 3800, turns: 4, easing: 'cubic-bezier(.15,.55,.35,1)' },
+    { duration: 4400, turns: 5, easing: 'cubic-bezier(.2,.6,.15,1)' },
+    { duration: 5000, turns: 6, easing: 'cubic-bezier(.12,.7,.2,1)' },
+  ],
+  nearMiss: { MILLIMETER: 0.60, CLOSE: 0.25, FAR: 0.15 },
+};
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-function getChance(source, target, multiplier) {
+// Честная формула для UI. Одна и та же и до, и после спина.
+function calcDisplayChance(source, target, multiplier, config) {
   if (!source || !target) return 0;
   const sourcePrice = Number(source.price_stars);
   const targetPrice = Number(target.price_stars);
-  if (!Number.isFinite(sourcePrice) || !Number.isFinite(targetPrice) || targetPrice <= 0) return 0;
-  const base = Math.min(100, Math.max(0, sourcePrice / targetPrice * 100));
-  return Math.min(100, Math.max(0, base / multiplier));
+  if (!Number.isFinite(sourcePrice) || !Number.isFinite(targetPrice) || targetPrice <= sourcePrice) return 0;
+
+  const safeMultiplier = Math.max(1, Number(multiplier) || 1);
+  const ratio = Math.pow(sourcePrice / targetPrice, config.displayGamma);
+  const base = ratio * 100 * config.displayBaseChanceMultiplier;
+  const withMult = base / safeMultiplier;
+  const withEdge = withMult * (1 - config.displayHouseEdge);
+  return clamp(withEdge, config.minChance, config.maxChance);
 }
 
-function randomAngleForResult(success, chance) {
-  const zone = clamp(chance, 0, 100) * 3.6;
-  if (success) {
-    return Math.random() * Math.max(zone, 1);
+function formatChance(chance) {
+  return `${Number(chance).toFixed(1)}%`;
+}
+
+// Ищем цель с ценой, ближайшей к desiredPrice. Равноудалённые — рандом.
+function findClosestTarget(catalog, desiredPrice, sourceItem) {
+  if (!sourceItem) return null;
+  const sourcePrice = Number(sourceItem.price_stars);
+  const candidates = catalog.filter((i) => Number(i.price_stars) > sourcePrice);
+  if (!candidates.length) return null;
+
+  let minDiff = Infinity;
+  let winners = [];
+  for (const item of candidates) {
+    const diff = Math.abs(Number(item.price_stars) - desiredPrice);
+    if (diff < minDiff - 1e-6) {
+      minDiff = diff;
+      winners = [item];
+    } else if (Math.abs(diff - minDiff) <= 1e-6) {
+      winners.push(item);
+    }
   }
-  if (zone >= 359.5) return 359.5 + Math.random() * 0.4;
-  return zone + 1 + Math.random() * (359 - zone - 1);
+  return winners[Math.floor(Math.random() * winners.length)];
+}
+
+function pickSpinProfile(profiles) {
+  const list = Array.isArray(profiles) && profiles.length ? profiles : DEFAULT_CONFIG.spinProfiles;
+  return list[Math.floor(Math.random() * list.length)];
+}
+
+// Угол приземления. Считаем ЛОКАЛЬНО на клиенте.
+// success известен от сервера, displayChance рисует зону на арке.
+// RNG-реальность уже решена на сервере — здесь только визуал.
+function computeLandingAngle(success, displayChance, nearMiss) {
+  const zone = clamp(displayChance, 0, 100) * 3.6; // % → градусы
+
+  if (success) {
+    // Внутри зелёной зоны
+    return Math.max(0, Math.min(359.5, zone * (0.3 + Math.random() * 0.4)));
+  }
+
+  // Промах: байт «почти попал»
+  const weights = nearMiss || DEFAULT_CONFIG.nearMiss;
+  const r = Math.random();
+  let gap;
+  if (r < weights.MILLIMETER) {
+    gap = 0.5 + Math.random() * 2;        // 0.5°–2.5° — почти в яблочко
+  } else if (r < weights.MILLIMETER + weights.CLOSE) {
+    gap = 2.5 + Math.random() * 7.5;      // 2.5°–10°
+  } else {
+    gap = 10 + Math.random() * 50;        // 10°–60°
+  }
+
+  const remaining = 359.5 - zone;
+  if (remaining <= 0.5) return Math.max(0, Math.min(359.5, zone + 0.1));
+  return zone + Math.max(0.1, Math.min(gap, remaining - 0.1));
 }
 
 function ResultBurst({ success }) {
@@ -39,7 +111,11 @@ function ResultBurst({ success }) {
   return (
     <div className={`result-burst ${success ? 'result-burst--success' : 'result-burst--failure'}`} aria-hidden="true">
       {particles.map((particle, index) => (
-        <span key={index} style={{ '--angle': `${particle.angle}deg`, '--distance': `${particle.distance}px`, '--delay': `${particle.delay}ms` }} />
+        <span key={index} style={{
+          '--angle': `${particle.angle}deg`,
+          '--distance': `${particle.distance}px`,
+          '--delay': `${particle.delay}ms`
+        }} />
       ))}
     </div>
   );
@@ -124,23 +200,40 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
   const [targetId, setTargetId] = useState(null);
   const [picker, setPicker] = useState(null);
   const [spinning, setSpinning] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
   const [multiplier, setMultiplier] = useState(2);
   const [customMultiplier, setCustomMultiplier] = useState('');
   const [needleAngle, setNeedleAngle] = useState(0);
+  const [totalAngle, setTotalAngle] = useState(0);
+  const [spinProfile, setSpinProfile] = useState(DEFAULT_CONFIG.spinProfiles[0]);
   const [spinKey, setSpinKey] = useState(0);
   const [serverChance, setServerChance] = useState(null);
+  const [config, setConfig] = useState(DEFAULT_CONFIG);
   const timerRef = useRef(null);
+
+  // Тянем ТОЛЬКО отображаемые параметры (без реальной маржи)
+  useEffect(() => {
+    let alive = true;
+    api.getUpgradeConfig?.()
+      .then((r) => { if (alive && r) setConfig({ ...DEFAULT_CONFIG, ...r }); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   const owned = inventory.find((i) => i.inventory_id === ownedId) || null;
   const target = catalog.find((i) => i.id === targetId) || null;
   const selectedMultiplier = multiplier === 'custom'
     ? Number(customMultiplier)
     : Number(multiplier);
-  const customValid = multiplier !== 'custom' ||
-    (Number.isFinite(selectedMultiplier) && selectedMultiplier >= 1 && selectedMultiplier <= MAX_MULTIPLIER && Math.abs(selectedMultiplier * 10 - Math.round(selectedMultiplier * 10)) < 1e-9);
 
-  const displayChance = serverChance ?? getChance(owned, target, customValid ? selectedMultiplier : 1);
+  const customValid = multiplier !== 'custom' ||
+    (Number.isFinite(selectedMultiplier) && selectedMultiplier >= config.minMultiplier &&
+     selectedMultiplier <= config.maxMultiplier &&
+     Math.abs(selectedMultiplier * 10 - Math.round(selectedMultiplier * 10)) < 1e-9);
+
+  // Отображаемый шанс. Честная формула, всегда одна и та же.
+  const displayChance = serverChance ?? calcDisplayChance(owned, target, customValid ? selectedMultiplier : 1, config);
 
   const targetItems = useMemo(() => {
     if (!owned) return catalog;
@@ -171,18 +264,37 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
     haptic('light');
   };
 
-  const chooseMultiplier = (value) => {
-    if (spinning || result) return;
+  const chooseMultiplier = useCallback((value) => {
+    if (spinning || busy || result) return;
     setMultiplier(value);
+    setServerChance(null);
+    haptic('light');
+
+    if (!owned || value === 'custom') return;
+    const m = Number(value);
+    if (!Number.isFinite(m) || m < 1) return;
+
+    const desired = Number(owned.price_stars) * m;
+    const pick = findClosestTarget(catalog, desired, owned);
+    if (pick) setTargetId(pick.id);
+  }, [spinning, busy, result, owned, catalog]);
+
+  const handleCustom = () => {
+    if (spinning || busy || result) return;
+    setMultiplier('custom');
     setServerChance(null);
     haptic('light');
   };
 
-  const handleCustom = () => {
-    if (spinning || result) return;
-    setMultiplier('custom');
+  const handleCustomChange = (val) => {
+    setCustomMultiplier(val);
     setServerChance(null);
-    haptic('light');
+    if (!owned) return;
+    const m = Number(val);
+    if (!Number.isFinite(m) || m < 1 || m > config.maxMultiplier) return;
+    const desired = Number(owned.price_stars) * m;
+    const pick = findClosestTarget(catalog, desired, owned);
+    if (pick) setTargetId(pick.id);
   };
 
   const handleAction = async () => {
@@ -191,31 +303,42 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
       setOwnedId(null);
       setTargetId(null);
       setNeedleAngle(0);
+      setTotalAngle(0);
       setServerChance(null);
       return;
     }
 
-    if (!owned || !target || !customValid || spinning) return;
+    if (!owned || !target || !customValid || spinning || busy) return;
 
-    setSpinning(true);
+    setBusy(true);
     setResult(null);
     setServerChance(null);
-    setNeedleAngle(0);
     haptic('medium');
 
     try {
-      // The server decides success/failure. Animation starts only after its result arrives.
+      // Сервер решает исход по своему внутреннему шансу.
+      // Нам возвращается success + displayChance.
       const res = await api.upgrade(owned.inventory_id, target.id, selectedMultiplier);
       const success = Boolean(res.success);
-      const chance = Number.isFinite(Number(res.chance)) ? Number(res.chance) : getChance(owned, target, selectedMultiplier);
-      const finalAngle = randomAngleForResult(success, chance);
+      const display = Number.isFinite(Number(res.chance))
+        ? Number(res.chance)
+        : calcDisplayChance(owned, target, selectedMultiplier, config);
 
-      setServerChance(chance);
-      setNeedleAngle(finalAngle);
-      setSpinKey((value) => value + 1);
+      // Угол приземления считаем локально, чтобы не зависеть от серверных полей
+      // и не провоцировать рассинхрон между аркой (display) и стрелкой.
+      const landing = computeLandingAngle(success, display, config.nearMiss);
+      const profile = pickSpinProfile(config.spinProfiles);
+
+      setServerChance(display);
+      setSpinProfile(profile);
+      setNeedleAngle(landing);
+      setTotalAngle(landing + profile.turns * 360);
+      setSpinKey((v) => v + 1);
+      setSpinning(true);
+      setBusy(false);
 
       await new Promise((resolve) => {
-        timerRef.current = setTimeout(resolve, SPIN_MS);
+        timerRef.current = setTimeout(resolve, profile.duration + 150);
       });
 
       hapticNotify(success ? 'success' : 'error');
@@ -229,11 +352,14 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
         item_not_owned: 'Исходный предмет уже недоступен.',
         invalid_multiplier: 'Некорректный множитель.',
         target_not_found: 'Целевой предмет больше недоступен.',
-        target_not_higher: 'Для апгрейда нужен предмет дороже исходного.'
+        target_not_higher: 'Для апгрейда нужен предмет дороже исходного.',
+        operation_in_progress: 'Апгрейд уже выполняется.',
       };
       onError?.(messages[err.code] || 'Не удалось выполнить апгрейд. Попробуйте ещё раз.');
       setNeedleAngle(0);
+      setTotalAngle(0);
     } finally {
+      setBusy(false);
       setSpinning(false);
     }
   };
@@ -268,7 +394,13 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
             <div
               key={spinKey}
               className={`upgrade-gauge ${spinning ? 'spinning' : ''} ${result?.success ? 'success' : ''} ${result && !result.success ? 'failure' : ''}`}
-              style={{ '--spin-duration': `${SPIN_MS}ms`, '--needle-angle': `${needleAngle}deg`, '--chance': `${displayChance}` }}
+              style={{
+                '--spin-duration': `${spinProfile.duration}ms`,
+                '--spin-easing': spinProfile.easing,
+                '--needle-angle': `${needleAngle}deg`,
+                '--spin-total-angle': `${totalAngle}deg`,
+                '--chance': `${displayChance}`,
+              }}
             >
               <svg viewBox="0 0 168 168" aria-hidden="true">
                 <defs>
@@ -278,20 +410,25 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
                   </linearGradient>
                 </defs>
                 <circle className="upgrade-gauge__track" cx="84" cy="84" r={RADIUS} />
-                <circle className="upgrade-gauge__value-arc" cx="84" cy="84" r={RADIUS} strokeDasharray={CIRCUMFERENCE} strokeDashoffset={CIRCUMFERENCE * (1 - displayChance / 100)} />
+                <circle
+                  className="upgrade-gauge__value-arc"
+                  cx="84" cy="84" r={RADIUS}
+                  strokeDasharray={CIRCUMFERENCE}
+                  strokeDashoffset={CIRCUMFERENCE * (1 - displayChance / 100)}
+                />
               </svg>
               <div className="upgrade-needle" aria-hidden="true"><span /></div>
               <div className="upgrade-gauge__center">
-                <strong>{result ? (result.success ? 'УСПЕХ' : 'НЕУДАЧА') : `${Number(displayChance).toFixed(displayChance % 1 ? 1 : 0)}%`}</strong>
+                <strong>{result ? (result.success ? 'УСПЕХ' : 'НЕУДАЧА') : formatChance(displayChance)}</strong>
               </div>
             </div>
             <button
               type="button"
               className="upgrade-action-button"
-              disabled={result ? false : (!owned || !target || !customValid || spinning)}
+              disabled={result ? false : (!owned || !target || !customValid || spinning || busy)}
               onClick={handleAction}
             >
-              {spinning ? 'АПГРЕЙДИМ…' : result ? 'ПРОДОЛЖИТЬ' : 'УЛУЧШИТЬ'}
+              {busy || spinning ? 'АПГРЕЙДИМ…' : result ? 'ПРОДОЛЖИТЬ' : 'УЛУЧШИТЬ'}
             </button>
           </div>
         </div>
@@ -310,15 +447,26 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
       <section className="upgrade-multiplier-bar">
         <div className="upgrade-multiplier-bar__head">
           <span>Множитель</span>
-          {owned && target && <span className="upgrade-multiplier-bar__chance">Шанс {Number(displayChance).toFixed(displayChance % 1 ? 1 : 0)}%</span>}
+          {owned && target && <span className="upgrade-multiplier-bar__chance">Шанс {formatChance(displayChance)}</span>}
         </div>
         <div className="upgrade-multiplier-row">
           {PRESETS.map((value) => (
-            <button type="button" key={value} className={`upgrade-multiplier ${multiplier === value ? 'selected' : ''}`} onClick={() => chooseMultiplier(value)} disabled={spinning || Boolean(result)}>
+            <button
+              type="button"
+              key={value}
+              className={`upgrade-multiplier ${multiplier === value ? 'selected' : ''}`}
+              onClick={() => chooseMultiplier(value)}
+              disabled={spinning || busy || Boolean(result)}
+            >
               ×{value}
             </button>
           ))}
-          <button type="button" className={`upgrade-multiplier upgrade-multiplier--custom ${multiplier === 'custom' ? 'selected' : ''}`} onClick={handleCustom} disabled={spinning || Boolean(result)}>
+          <button
+            type="button"
+            className={`upgrade-multiplier upgrade-multiplier--custom ${multiplier === 'custom' ? 'selected' : ''}`}
+            onClick={handleCustom}
+            disabled={spinning || busy || Boolean(result)}
+          >
             Своя
           </button>
         </div>
@@ -329,12 +477,12 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
               inputMode="decimal"
               type="number"
               min="1"
-              max="100"
+              max={config.maxMultiplier}
               step="0.1"
               value={customMultiplier}
-              onChange={(event) => setCustomMultiplier(event.target.value)}
+              onChange={(event) => handleCustomChange(event.target.value)}
               placeholder="3.5"
-              disabled={spinning || Boolean(result)}
+              disabled={spinning || busy || Boolean(result)}
               aria-label="Пользовательский множитель"
             />
           </div>
@@ -356,7 +504,14 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
       )}
 
       {picker === 'owned' && (
-        <PickerSheet title="Предмет из инвентаря" items={inventory} selectedId={ownedId} getId={(item) => item.inventory_id} onSelect={chooseOwned} onClose={() => setPicker(null)} />
+        <PickerSheet
+          title="Предмет из инвентаря"
+          items={inventory}
+          selectedId={ownedId}
+          getId={(item) => item.inventory_id}
+          onSelect={chooseOwned}
+          onClose={() => setPicker(null)}
+        />
       )}
 
       {picker === 'target' && (
