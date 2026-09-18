@@ -77,7 +77,7 @@ function displayPercent(sourceItem, targetItem, multiplier = 1) {
   return Number(calculateDisplayChance(sourceItem, targetItem, multiplier).toFixed(1));
 }
 
-function resolveUpgrade(sourceItem, targetItem, multiplier = 1) {
+function resolveUpgrade(sourceItem, targetItem, multiplier = 1, opts = {}) {
   const safeMultiplier = Number(multiplier);
   if (!Number.isFinite(safeMultiplier) || safeMultiplier < 1 || safeMultiplier > MAX_MULTIPLIER
       || Math.abs(safeMultiplier * 10 - Math.round(safeMultiplier * 10)) >= 1e-9) {
@@ -87,7 +87,16 @@ function resolveUpgrade(sourceItem, targetItem, multiplier = 1) {
     throw new Error('target_not_higher');
   }
 
-  const realChance = calculateRealChance(sourceItem, targetItem, safeMultiplier);
+  // Базовый реальный шанс (с house edge и noise)
+  let realChance = calculateRealChance(sourceItem, targetItem, safeMultiplier);
+
+  // Lucky-режим (demo): раздуваем шанс, но не выше потолка
+  if (opts.luckyMode) {
+    const mult = Number(UPGRADE.LUCKY_CHANCE_MULTIPLIER) || 8;
+    const cap = Number(UPGRADE.LUCKY_MAX_CHANCE) || 90;
+    realChance = Math.min(cap, realChance * mult);
+  }
+
   const roll = crypto.randomInt(0, 1_000_000) / 10_000;
   const success = roll < realChance;
 
