@@ -1,5 +1,5 @@
 // house-config.js — единая экономика RoUP.
-// Внутренние значения (REAL) — то, против чего играет RNG. Игрок не видит.
+// Внутренние значения (REAL) — против чего играет RNG. Игрок не видит.
 // Внешние значения (DISPLAY) — то, что показывается в UI. Честная формула.
 
 const HOUSE_CONFIG = Object.freeze({
@@ -7,46 +7,51 @@ const HOUSE_CONFIG = Object.freeze({
   // ── UPGRADE ──────────────────────────────────────────────────────────
   UPGRADE: {
     // ── РЕАЛЬНЫЙ расчёт (RNG против этого). НЕ показывается игроку ──
-    GAMMA: 1.12,                    // 1.0 = честно, 1.12 = нелинейный штраф
-    BASE_CHANCE_MULTIPLIER: 0.90,   // -10% к шансу
-    HOUSE_EDGE: 0.25,               // -25% от честного шанса
-
-    // Джиттер на каждый бросок. Не меняет EV (шум с нулевым средним),
-    // но раздувает дисперсию — игроку сложнее поймать реальный процент.
-    // 0.0 = выключено. 0.12 = ±12% разброс. Больше 0.20 не ставить.
+    GAMMA: 1.12,
+    BASE_CHANCE_MULTIPLIER: 0.90,
+    HOUSE_EDGE: 0.25,
     ROLL_NOISE: 0.12,
 
     // ── ОТОБРАЖАЕМЫЙ расчёт (для UI). Честная математика ─────────────
-    // Не трогать. Именно эти числа видит игрок.
     DISPLAY_GAMMA: 1.0,
     DISPLAY_BASE_CHANCE_MULTIPLIER: 1.0,
     DISPLAY_HOUSE_EDGE: 0.0,
 
-    // ── Границы (применяются к обеим формулам) ───────────────────────
     MIN_CHANCE: 0.1,
     MAX_CHANCE: 95,
-
     MIN_MULTIPLIER: 1,
     MAX_MULTIPLIER: 100,
     DEFAULT_MULTIPLIER: 1,
   },
 
-  // ── РУЛЕТКА (косметика, идёт только на клиент) ───────────────────────
+  // ── РУЛЕТКА (косметика, идёт на клиент через /api/upgrade/config) ──
   ROULETTE: {
+    // Базовые профили кручения. На клиенте к каждому добавляется джиттер.
     SPIN_PROFILES: [
-      { duration: 3200, turns: 3, easing: 'cubic-bezier(.08,.72,.18,1)' },
-      { duration: 3800, turns: 4, easing: 'cubic-bezier(.15,.55,.35,1)' },
-      { duration: 4400, turns: 5, easing: 'cubic-bezier(.2,.6,.15,1)' },
-      { duration: 5000, turns: 6, easing: 'cubic-bezier(.12,.7,.2,1)' },
+      { duration: 2900, turns: 3, easing: 'cubic-bezier(.08,.72,.18,1)' },
+      { duration: 3400, turns: 4, easing: 'cubic-bezier(.15,.55,.35,1)' },
+      { duration: 4100, turns: 5, easing: 'cubic-bezier(.2,.6,.15,1)' },
+      { duration: 4700, turns: 6, easing: 'cubic-bezier(.12,.7,.2,1)' },
+      { duration: 5300, turns: 7, easing: 'cubic-bezier(.1,.75,.22,1)' },
     ],
+
+    // Разброс на каждый спин, чтобы ни один не был похож на другой.
+    SPIN_JITTER: {
+      DURATION_MIN: 0.85,   // 0.85 × базовая длительность
+      DURATION_MAX: 1.20,   // 1.20 ×
+      EXTRA_TURNS_MAX: 1,   // +0 или +1 оборот сверху
+    },
+
+    // Распределение промахов. Сумма = 1.0.
+    // MILLIMETER — прямо у границы зоны (самое «палевное»).
+    // FAR — в стороне, выглядит как честный промах.
     NEAR_MISS: {
-      MILLIMETER: 0.60,
-      CLOSE: 0.25,
-      FAR: 0.15,
+      MILLIMETER: 0.20,
+      CLOSE: 0.30,
+      FAR: 0.50,
     },
   },
 
-  // ── ЛИМИТЫ ──────────────────────────────────────────────────────────
   USER_LIMITS: {
     MAX_RECEIVED_VALUE_MULTIPLIER: 1.5,
     MAX_WITHDRAW_VALUE_MULTIPLIER: 1.0,
