@@ -39,10 +39,12 @@ const HOUSE_CONFIG = Object.freeze({
       DURATION_MAX: 1.20,
       EXTRA_TURNS_MAX: 1,
     },
+    // Визуальный near-miss: проигрыш всегда остаётся за пределами зелёного
+    // сектора, но чаще всего останавливается прямо рядом с его границей.
     NEAR_MISS: {
-      MILLIMETER: 0.20,
-      CLOSE: 0.30,
-      FAR: 0.50,
+      MILLIMETER: 0.50,
+      CLOSE: 0.40,
+      FAR: 0.10,
     },
   },
 

@@ -1117,6 +1117,7 @@ button {
 
 .upgrade-gauge.spinning .upgrade-gauge__value-arc {
   animation: gauge-pulse var(--spin-duration) ease-in-out 1;
+  transition: none;
 }
 
 @keyframes gauge-pulse {

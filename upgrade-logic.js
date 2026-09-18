@@ -81,11 +81,11 @@ function pickLandingAngle(success, displayChance) {
   let gap;
 
   if (r < weights.MILLIMETER) {
-    gap = 0.4 + Math.random() * 2.1;      // почти попал — 1–3 px
+    gap = 0.15 + Math.random() * 0.95;     // практически у самой границы
   } else if (r < weights.MILLIMETER + weights.CLOSE) {
-    gap = 2.5 + Math.random() * 8;
+    gap = 1.2 + Math.random() * 3.8;
   } else {
-    gap = 10 + Math.random() * 60;
+    gap = 5 + Math.random() * 15;
   }
 
   const missArc = 360 - zone;

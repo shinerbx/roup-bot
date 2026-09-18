@@ -157,6 +157,7 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
   const [totalAngle, setTotalAngle] = useState(0);
   const [spinProfile, setSpinProfile] = useState(DEFAULT_CONFIG.spinProfiles[0]);
   const [spinKey, setSpinKey] = useState(0);
+  const [spinChance, setSpinChance] = useState(null);
   const [config, setConfig] = useState(DEFAULT_CONFIG);
   const timerRef = useRef(null);
 
@@ -192,6 +193,13 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
     () => calcDisplayChance(owned, target, config),
     [owned, target, config]
   );
+
+  // While spinning/result is shown, use the exact server-side chance that
+  // was used for this upgrade. This keeps the visual wheel and outcome aligned,
+  // especially in Demo/Lucky mode where the real chance is boosted server-side.
+  const wheelChance = result
+    ? Number(result.chance) || 0
+    : (spinning && Number.isFinite(spinChance) ? spinChance : displayChance);
 
   const targetItems = useMemo(() => {
     if (!owned) return catalog;
@@ -254,6 +262,7 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
       setTargetId(null);
       setNeedleAngle(0);
       setTotalAngle(0);
+      setSpinChance(null);
       return;
     }
 
@@ -266,10 +275,12 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
     try {
       const res = await api.upgrade(owned.inventory_id, target.id, selectedMultiplier);
       const success = Boolean(res.success);
+      const serverChance = Number(res.chance);
       const landing = Number.isFinite(Number(res.landingAngle)) ? Number(res.landingAngle) : 0;
       const profile = pickSpinProfile(config.spinProfiles, config.spinJitter);
 
       setSpinProfile(profile);
+      setSpinChance(Number.isFinite(serverChance) ? serverChance : displayChance);
       setNeedleAngle(landing);
       setTotalAngle(landing + profile.turns * 360);
       setSpinKey((v) => v + 1);
@@ -281,7 +292,7 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
       });
 
       hapticNotify(success ? 'success' : 'error');
-      setResult({ sourceItem: owned, targetItem: target, success, item: res.item });
+      setResult({ sourceItem: owned, targetItem: target, success, item: res.item, chance: Number.isFinite(serverChance) ? serverChance : displayChance });
       await onUpgraded?.();
     } catch (err) {
       console.error(err);
@@ -301,6 +312,7 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
       onError?.(messages[err.code] || 'Не удалось выполнить апгрейд. Попробуйте ещё раз.');
       setNeedleAngle(0);
       setTotalAngle(0);
+      setSpinChance(null);
     } finally {
       setBusy(false);
       setSpinning(false);
@@ -359,12 +371,12 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
                   className="upgrade-gauge__value-arc"
                   cx="84" cy="84" r={RADIUS}
                   strokeDasharray={CIRCUMFERENCE}
-                  strokeDashoffset={CIRCUMFERENCE * (1 - displayChance / 100)}
+                  strokeDashoffset={CIRCUMFERENCE * (1 - wheelChance / 100)}
                 />
               </svg>
               <div className="upgrade-needle" aria-hidden="true"><span /></div>
               <div className="upgrade-gauge__center">
-                <strong>{result ? (result.success ? 'УСПЕХ' : 'НЕУДАЧА') : formatChance(displayChance)}</strong>
+                <strong>{result ? (result.success ? 'УСПЕХ' : 'НЕУДАЧА') : formatChance(wheelChance)}</strong>
               </div>
             </div>
 
@@ -394,7 +406,7 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
         <div className="upgrade-multiplier-bar__head">
           <span>Множитель</span>
           {owned && target && (
-            <span className="upgrade-multiplier-bar__chance">Шанс {formatChance(displayChance)}</span>
+            <span className="upgrade-multiplier-bar__chance">Шанс {formatChance(wheelChance)}</span>
           )}
         </div>
         <div className="upgrade-multiplier-row">
