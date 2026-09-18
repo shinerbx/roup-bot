@@ -9,6 +9,7 @@ const {
   ensureUserExists,
   upgradeItem,
   sellInventoryItem,
+  sellInventoryItemsBatch,
   buyItemsWithBalance,
   getReferralProgress,
   setTutorialCompleted,
@@ -56,16 +57,19 @@ function verifyInitData(initData, botToken) {
   }
 }
 
-// Единый вайтлист: ADMIN_CHAT_ID из env + WITHDRAW_WHITELIST из конфига.
 function buildWithdrawWhitelist() {
-  return new Set([
-    String(process.env.ADMIN_CHAT_ID || ''),
-    ...(USER_LIMITS.WITHDRAW_WHITELIST || []).map(String),
-  ].filter(Boolean));
+  const envId = String(process.env.ADMIN_CHAT_ID || '').trim();
+  const fromConfig = (USER_LIMITS.WITHDRAW_WHITELIST || []).map((v) => String(v).trim());
+  const set = new Set([envId, ...fromConfig].filter(Boolean));
+  return set;
 }
 
 function createWebappRouter(bot, botToken) {
   const router = express.Router();
+
+  // Лог вайтлиста при старте
+  const startWhitelist = [...buildWithdrawWhitelist()];
+  console.log('[withdraw] whitelist loaded:', startWhitelist.length ? startWhitelist : '(empty)');
 
   router.use(async (req, res, next) => {
     const initData = req.header('X-Telegram-Init-Data') || req.header('x-telegram-init-data') || '';
@@ -218,8 +222,6 @@ function createWebappRouter(bot, botToken) {
     }
   });
 
-  // Отдаём клиенту ТОЛЬКО отображаемые параметры.
-  // Реальная маржа (GAMMA, BASE_CHANCE_MULTIPLIER, HOUSE_EDGE, ROLL_NOISE) не покидает сервер.
   router.get('/upgrade/config', (_req, res) => {
     res.json({
       displayGamma: UPGRADE.DISPLAY_GAMMA,
@@ -271,6 +273,7 @@ function createWebappRouter(bot, botToken) {
     }
   });
 
+  // Продажа одного конкретного инвентарного слота (оставлен для совместимости)
   router.post('/sell', async (req, res) => {
     try {
       const inventoryItemId = Number(req.body.inventoryItemId);
@@ -290,6 +293,35 @@ function createWebappRouter(bot, botToken) {
       res.json(result);
     } catch (err) {
       console.error('Ошибка /api/sell:', err.message);
+      res.status(500).json({ error: 'server_error' });
+    }
+  });
+
+  // Продажа N одинаковых предметов (партия)
+  router.post('/sell-many', async (req, res) => {
+    try {
+      const itemId = Number(req.body?.itemId);
+      const quantity = Number(req.body?.quantity);
+      const operationId = String(req.body?.operationId || '');
+
+      if (!Number.isInteger(itemId) || itemId <= 0) {
+        return res.status(400).json({ error: 'invalid_item' });
+      }
+      if (!Number.isInteger(quantity) || quantity < 1 || quantity > 9999) {
+        return res.status(400).json({ error: 'invalid_quantity' });
+      }
+      if (!operationId || operationId.length > 100) {
+        return res.status(400).json({ error: 'missing_operation_id' });
+      }
+
+      const result = await sellInventoryItemsBatch(req.tgUser.id, itemId, quantity, operationId);
+      if (result.error) {
+        return res.status(400).json({ error: result.error, available: result.available });
+      }
+
+      res.json(result);
+    } catch (err) {
+      console.error('Ошибка /api/sell-many:', err.message);
       res.status(500).json({ error: 'server_error' });
     }
   });
@@ -316,6 +348,9 @@ function createWebappRouter(bot, botToken) {
       const rawUsername = String(req.body?.contactUsername || '').trim();
       const operationId = String(req.body?.operationId || '').trim();
 
+      console.log('[withdraw/request] user=%s method=%s amount=%s username=%s',
+        req.tgUser.id, method, amountStars, rawUsername);
+
       if (!WITHDRAWAL.METHODS[method]?.enabled) {
         return res.status(400).json({ error: 'method_not_available' });
       }
@@ -334,10 +369,10 @@ function createWebappRouter(bot, botToken) {
         return res.status(400).json({ error: 'missing_operation_id' });
       }
 
-      // Реферальный гейт — перепроверяем на сервере.
-      // Админ и аккаунты из WITHDRAW_WHITELIST проходят без проверки.
       const whitelist = buildWithdrawWhitelist();
       const isWhitelisted = whitelist.has(String(req.tgUser.id));
+      console.log('[withdraw/request] whitelist check: id=%s whitelisted=%s',
+        req.tgUser.id, isWhitelisted);
 
       if (!isWhitelisted && USER_LIMITS.REQUIRE_REFERRAL_FOR_WITHDRAW) {
         const progress = await getReferralProgress(req.tgUser.id);
