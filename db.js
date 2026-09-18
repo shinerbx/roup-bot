@@ -23,9 +23,16 @@ pool.on('error', (err) => {
   console.error('Непредвиденный сброс сокета PostgreSQL pooler:', err.message);
 });
 
-// ── In-memory кэш последних дропов (для live-ленты) ──────────────────
+// ── In-memory кэш последних дропов ──────────────────────────────────
 const LIVE_FEED_MAX = 50;
-const recentDrops = []; // { id, userId, userName, itemName, itemImageUrl, priceStars, chance, success, ts }
+const recentDrops = [];
+
+function pickDisplayName(user) {
+  // Только first_name. Если пусто — нейтральный аноним.
+  const fn = String(user?.first_name || '').trim();
+  if (fn) return fn;
+  return 'игрок';
+}
 
 function pushDrop(drop) {
   recentDrops.unshift(drop);
@@ -146,10 +153,9 @@ async function initDb() {
       `, [item.name, item.category, item.price_stars, item.image_url]);
     }
 
-    // Прогреваем кэш дропов из БД последними успешными апгрейдами
     try {
       const warm = await pool.query(`
-        SELECT o.user_id, o.response, u.username, u.first_name, o.created_at
+        SELECT o.user_id, o.response, u.first_name, o.created_at
         FROM operation_results o
         LEFT JOIN users u ON u.telegram_id = o.user_id
         WHERE o.operation_type = 'upgrade'
@@ -165,7 +171,7 @@ async function initDb() {
         pushDrop({
           id: `warm_${row.user_id}_${new Date(row.created_at).getTime()}`,
           userId: String(row.user_id),
-          userName: row.username || row.first_name || 'игрок',
+          userName: pickDisplayName({ first_name: row.first_name }),
           itemName: item.name,
           itemImageUrl: item.image_url,
           priceStars: Number(item.price_stars) || 0,
@@ -186,10 +192,6 @@ async function initDb() {
 }
 
 initDb();
-
-// ═══════════════════════════════════════════════════════════════════
-// USERS
-// ═══════════════════════════════════════════════════════════════════
 
 async function registerUser(tgUser, referrerId = null) {
   let res = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [tgUser.id]);
@@ -301,10 +303,6 @@ function calculateTier(user) {
   return '🥉 Базовый';
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// ITEMS / INVENTORY
-// ═══════════════════════════════════════════════════════════════════
-
 async function getCatalogItems() {
   const res = await pool.query(
     'SELECT id, name, category, price_stars, image_url FROM items ORDER BY category, price_stars'
@@ -332,10 +330,6 @@ async function getUserInventory(userId) {
 async function addInventoryItem(userId, itemId) {
   await pool.query('INSERT INTO user_inventory (user_id, item_id, is_demo) VALUES ($1, $2, 0)', [userId, itemId]);
 }
-
-// ═══════════════════════════════════════════════════════════════════
-// BUY
-// ═══════════════════════════════════════════════════════════════════
 
 async function buyItemsWithBalance(userId, itemId, quantity = 1, operationId = null) {
   const safeQuantity = Number(quantity);
@@ -459,10 +453,6 @@ async function getReferralProgress(userId) {
   };
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// UPGRADE
-// ═══════════════════════════════════════════════════════════════════
-
 async function countPendingUpgrades(userId) {
   const res = await pool.query(
     `SELECT COUNT(*)::int AS cnt FROM operation_results
@@ -478,7 +468,6 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
   try {
     await client.query('BEGIN');
 
-    // Anti-flood: одна pending-операция за окно
     const pendingRes = await client.query(
       `SELECT COUNT(*)::int AS cnt FROM operation_results
        WHERE user_id = $1 AND operation_type = 'upgrade' AND status = 'pending'
@@ -513,11 +502,11 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
     }
 
     const userRow = await client.query(
-      'SELECT lucky_mode, username, first_name FROM users WHERE telegram_id = $1',
+      'SELECT lucky_mode, first_name FROM users WHERE telegram_id = $1',
       [userId]
     );
     const luckyMode = Number(userRow.rows[0]?.lucky_mode) === 1;
-    const userName = userRow.rows[0]?.username || userRow.rows[0]?.first_name || 'игрок';
+    const displayName = pickDisplayName(userRow.rows[0]);
 
     const ownedRes = await client.query(`
       SELECT ui.id, ui.is_demo, i.id AS item_id, i.name, i.price_stars
@@ -594,12 +583,11 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
       `, [userId, opKey, JSON.stringify(response)]);
     }
 
-    // Логируем в live-ленту только успех и не в демо-режиме
     if (decision.success && resultItem && !luckyMode) {
       pushDrop({
         id: `drop_${userId}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         userId: String(userId),
-        userName,
+        userName: displayName,
         itemName: resultItem.name,
         itemImageUrl: resultItem.image_url,
         priceStars: Number(resultItem.price_stars) || 0,
@@ -614,10 +602,6 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
   } catch (err) { await client.query('ROLLBACK'); throw err; }
   finally { client.release(); }
 }
-
-// ═══════════════════════════════════════════════════════════════════
-// SELL
-// ═══════════════════════════════════════════════════════════════════
 
 async function sellInventoryItem(userId, inventoryItemId, operationId = null) {
   const client = await pool.connect();
@@ -763,10 +747,6 @@ async function sellInventoryItemsBatch(userId, itemId, quantity, operationId = n
   finally { client.release(); }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// DEMO
-// ═══════════════════════════════════════════════════════════════════
-
 async function grantDemoCredits(userId, amount = 1000, operationId = null) {
   const safeAmount = Number(amount);
   if (!Number.isInteger(safeAmount) || safeAmount < 1 || safeAmount > 10000) return { error: 'invalid_amount' };
@@ -813,7 +793,6 @@ async function grantDemo(userId, amount) {
   try {
     await client.query('BEGIN');
 
-    // Стираем старые demo-предметы перед новой выдачей (чистим мусор)
     const delRes = await client.query(
       'DELETE FROM user_inventory WHERE user_id = $1 AND is_demo = 1',
       [userId]
@@ -895,10 +874,6 @@ async function getDemoStatus(userId) {
     active: user.pre_demo_balance != null || Number(user.lucky_mode) > 0,
   };
 }
-
-// ═══════════════════════════════════════════════════════════════════
-// WITHDRAW
-// ═══════════════════════════════════════════════════════════════════
 
 async function createWithdrawRequest(userId, { method, amountStars, contactUsername, operationId }) {
   const client = await pool.connect();
