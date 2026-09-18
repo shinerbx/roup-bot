@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const { UPGRADE } = require('./house-config');
+const { UPGRADE, ROULETTE } = require('./house-config');
 
 const MIN_CHANCE = UPGRADE.MIN_CHANCE;
 const MAX_CHANCE = UPGRADE.MAX_CHANCE;
@@ -30,12 +30,8 @@ function _calcWithParams(sourceItem, targetItem, multiplier, gamma, baseMult, ed
 }
 
 function calculateRealBaseChance(sourceItem, targetItem, multiplier = 1) {
-  return _calcWithParams(
-    sourceItem, targetItem, multiplier,
-    UPGRADE.GAMMA,
-    UPGRADE.BASE_CHANCE_MULTIPLIER,
-    UPGRADE.HOUSE_EDGE
-  );
+  return _calcWithParams(sourceItem, targetItem, multiplier,
+    UPGRADE.GAMMA, UPGRADE.BASE_CHANCE_MULTIPLIER, UPGRADE.HOUSE_EDGE);
 }
 
 function applyRollNoise(baseChance) {
@@ -51,25 +47,53 @@ function calculateRealChance(sourceItem, targetItem, multiplier = 1) {
 }
 
 function calculateDisplayChance(sourceItem, targetItem, multiplier = 1) {
-  return _calcWithParams(
-    sourceItem, targetItem, multiplier,
-    UPGRADE.DISPLAY_GAMMA,
-    UPGRADE.DISPLAY_BASE_CHANCE_MULTIPLIER,
-    UPGRADE.DISPLAY_HOUSE_EDGE
-  );
+  return _calcWithParams(sourceItem, targetItem, multiplier,
+    UPGRADE.DISPLAY_GAMMA, UPGRADE.DISPLAY_BASE_CHANCE_MULTIPLIER, UPGRADE.DISPLAY_HOUSE_EDGE);
 }
 
-/**
- * Lucky-модификатор. Формула: base × mult + flatBoost, потолок cap.
- * Это даёт сильный буст даже на очень маленьких процентах.
- */
 function applyLucky(realChance, luckyMode) {
   if (!luckyMode) return realChance;
   const mult = Number(UPGRADE.LUCKY_CHANCE_MULTIPLIER) || 10;
   const flat = Number(UPGRADE.LUCKY_FLAT_BOOST) || 50;
   const cap = Number(UPGRADE.LUCKY_MAX_CHANCE) || 92;
-  const boosted = Number(realChance) * mult + flat;
-  return Math.min(cap, boosted);
+  return Math.min(cap, Number(realChance) * mult + flat);
+}
+
+/**
+ * Угол приземления стрелки (0–360°), рисуется по часовой от верха.
+ * Сектор выигрыша на колесе = displayChance × 3.6°.
+ *
+ * success=true  → угол ВНУТРИ сектора.
+ * success=false → угол ЗА сектором, с разбросом близости (байт-эффект).
+ *
+ * Тем самым визуал всегда соответствует реальному исходу.
+ */
+function pickLandingAngle(success, displayChance) {
+  const zone = Math.max(0.5, clampChance(displayChance) * 3.6);
+
+  if (success) {
+    // 5%..95% от ширины зоны — стрелка точно в зелёном секторе
+    return Number((zone * (0.05 + Math.random() * 0.9)).toFixed(2));
+  }
+
+  const weights = ROULETTE.NEAR_MISS;
+  const r = Math.random();
+  let gap;
+
+  if (r < weights.MILLIMETER) {
+    gap = 0.4 + Math.random() * 2.1;      // почти попал — 1–3 px
+  } else if (r < weights.MILLIMETER + weights.CLOSE) {
+    gap = 2.5 + Math.random() * 8;
+  } else {
+    gap = 10 + Math.random() * 60;
+  }
+
+  const missArc = 360 - zone;
+  const before = Math.random() < 0.5;
+  const offset = Math.min(gap, Math.max(0.2, missArc - 0.3));
+  const angle = before ? (360 - offset) : (zone + offset);
+
+  return Number((angle % 360).toFixed(2));
 }
 
 function resolveUpgrade(sourceItem, targetItem, multiplier = 1, opts = {}) {
@@ -93,13 +117,14 @@ function resolveUpgrade(sourceItem, targetItem, multiplier = 1, opts = {}) {
   const success = roll < realFinal;
 
   const displayChance = calculateDisplayChance(sourceItem, targetItem, safeMultiplier);
+  const landingAngle = pickLandingAngle(success, displayChance);
 
   return {
     success,
     resultItemId: success ? targetItem.id : null,
     chance: Number(displayChance.toFixed(1)),
-    baseChance: Number(displayChance.toFixed(2)),
     multiplier: safeMultiplier,
+    landingAngle,
     _realBase: Number(realBase.toFixed(2)),
     _realFinal: Number(realFinal.toFixed(2)),
     _roll: Number(roll.toFixed(2)),
@@ -136,4 +161,5 @@ module.exports = {
   displayPercent,
   canUpgradeTo,
   resolveUpgrade,
+  pickLandingAngle,
 };
