@@ -516,11 +516,15 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
     }
 
     const safeMultiplier = Number(multiplier);
-    if (!Number.isFinite(safeMultiplier) || Math.abs(safeMultiplier * 10 - Math.round(safeMultiplier * 10)) >= 1e-9 || safeMultiplier < 1 || safeMultiplier > MAX_MULTIPLIER) {
+    if (!Number.isFinite(safeMultiplier)
+        || Math.abs(safeMultiplier * 10 - Math.round(safeMultiplier * 10)) >= 1e-9
+        || safeMultiplier < 1 || safeMultiplier > MAX_MULTIPLIER) {
       await client.query('ROLLBACK');
       return { error: 'invalid_multiplier' };
     }
 
+    // resolveUpgrade возвращает только публичные поля.
+    // Реальный шанс и roll остаются внутри функции и не покидают её.
     const decision = resolveUpgrade(
       { id: sourceItem.item_id, name: sourceItem.name, price_stars: sourceItem.price_stars },
       targetItem,
@@ -541,13 +545,12 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
       await client.query('INSERT INTO user_inventory (user_id, item_id) VALUES ($1, $2)', [userId, resultItem.id]);
     }
 
+    // Публичный ответ. Никаких realChance, roll, landingAngle.
     const response = {
       success: Boolean(decision.success),
       item: resultItem,
       chance: decision.chance,
-      baseChance: decision.baseChance,
-      roll: decision.roll,
-      multiplier: decision.multiplier
+      multiplier: decision.multiplier,
     };
 
     if (operationId) {
