@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { haptic, hapticNotify } from '../telegram.js';
 
@@ -45,16 +45,16 @@ function formatChance(c) {
 function findClosestTarget(catalog, desiredPrice, sourceItem) {
   if (!sourceItem) return null;
   const sp = Number(sourceItem.price_stars);
-  const list = catalog.filter((i) => Number(i.price_stars) > sp);
-  if (!list.length) return null;
   let min = Infinity;
   let winners = [];
-  for (const item of list) {
-    const d = Math.abs(Number(item.price_stars) - desiredPrice);
+  for (const item of catalog) {
+    const p = Number(item.price_stars);
+    if (p <= sp) continue;
+    const d = Math.abs(p - desiredPrice);
     if (d < min - 1e-6) { min = d; winners = [item]; }
     else if (Math.abs(d - min) <= 1e-6) winners.push(item);
   }
-  return winners[Math.floor(Math.random() * winners.length)];
+  return winners.length ? winners[Math.floor(Math.random() * winners.length)] : null;
 }
 
 function pickSpinProfile(profiles, jitter) {
@@ -66,7 +66,8 @@ function pickSpinProfile(profiles, jitter) {
   return { duration: Math.round(base.duration * jf), turns: base.turns + extra, easing: base.easing };
 }
 
-function Slot({ item, placeholder, onOpen, spinning, side, title, resultStatus }) {
+// ── Memoized Slot ───────────────────────────────────────────────────
+const Slot = memo(function Slot({ item, placeholder, onOpen, spinning, side, title, resultStatus }) {
   const failedTarget = side === 'target' && resultStatus === 'fail';
   return (
     <button
@@ -82,7 +83,7 @@ function Slot({ item, placeholder, onOpen, spinning, side, title, resultStatus }
       ) : item ? (
         <span className="upgrade-slot__filled">
           <span className="upgrade-slot__image-wrap">
-            <img src={item.image_url} alt="" />
+            <img src={item.image_url} alt="" loading="lazy" decoding="async" />
           </span>
           <span className="upgrade-slot__name" title={item.name}>{item.name}</span>
           <span className="upgrade-slot__price">★ {Number(item.price_stars).toLocaleString('ru-RU')}</span>
@@ -95,9 +96,10 @@ function Slot({ item, placeholder, onOpen, spinning, side, title, resultStatus }
       )}
     </button>
   );
-}
+});
 
-function PickerSheet({ title, items, selectedId, getId, onSelect, onClose, disabledReason }) {
+// ── Memoized Picker ─────────────────────────────────────────────────
+const PickerSheet = memo(function PickerSheet({ title, items, selectedId, getId, onSelect, onClose, disabledReason }) {
   return (
     <>
       <div className="sheet-backdrop" onClick={onClose} />
@@ -128,7 +130,7 @@ function PickerSheet({ title, items, selectedId, getId, onSelect, onClose, disab
                   onClick={() => onSelect(item)}
                 >
                   <span className="upgrade-picker-item__image-wrap">
-                    <img src={item.image_url} alt="" />
+                    <img src={item.image_url} alt="" loading="lazy" decoding="async" />
                   </span>
                   <span className="upgrade-picker-item__name" title={item.name}>{item.name}</span>
                   <small>★ {Number(item.price_stars).toLocaleString('ru-RU')}</small>
@@ -140,7 +142,7 @@ function PickerSheet({ title, items, selectedId, getId, onSelect, onClose, disab
       </div>
     </>
   );
-}
+});
 
 export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, onError }) {
   const [ownedId, setOwnedId] = useState(null);
@@ -161,13 +163,19 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
   useEffect(() => {
     let alive = true;
     api.getUpgradeConfig?.()
-      .then((r) => { if (alive && r) setConfig((prev) => ({ ...prev, ...r })); })
+      .then((r) => { if (alive && r && !r.__notModified) setConfig((prev) => ({ ...prev, ...r })); })
       .catch(() => {});
     return () => { alive = false; };
   }, []);
 
-  const owned = inventory.find((i) => i.inventory_id === ownedId) || null;
-  const target = catalog.find((i) => i.id === targetId) || null;
+  const owned = useMemo(
+    () => inventory.find((i) => i.inventory_id === ownedId) || null,
+    [inventory, ownedId]
+  );
+  const target = useMemo(
+    () => catalog.find((i) => i.id === targetId) || null,
+    [catalog, targetId]
+  );
   const selectedMultiplier = multiplier === 'custom' ? Number(customMultiplier) : Number(multiplier);
 
   const customValid = multiplier !== 'custom' ||
@@ -175,7 +183,10 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
      selectedMultiplier <= config.maxMultiplier &&
      Math.abs(selectedMultiplier * 10 - Math.round(selectedMultiplier * 10)) < 1e-9);
 
-  const displayChance = calcDisplayChance(owned, target, config);
+  const displayChance = useMemo(
+    () => calcDisplayChance(owned, target, config),
+    [owned, target, config]
+  );
 
   const targetItems = useMemo(() => {
     if (!owned) return catalog;
@@ -185,7 +196,7 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
 
   useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
 
-  const chooseOwned = (item) => {
+  const chooseOwned = useCallback((item) => {
     setOwnedId(item.inventory_id);
     setTargetId((current) => {
       const ct = catalog.find((x) => x.id === current);
@@ -193,14 +204,14 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
     });
     setPicker(null);
     haptic('light');
-  };
+  }, [catalog]);
 
-  const chooseTarget = (item) => {
+  const chooseTarget = useCallback((item) => {
     if (!owned || Number(item.price_stars) <= Number(owned.price_stars)) return;
     setTargetId(item.id);
     setPicker(null);
     haptic('light');
-  };
+  }, [owned]);
 
   const chooseMultiplier = useCallback((value) => {
     if (spinning || busy || result) return;
@@ -215,13 +226,13 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
     if (pick) setTargetId(pick.id);
   }, [spinning, busy, result, owned, catalog]);
 
-  const handleCustom = () => {
+  const handleCustom = useCallback(() => {
     if (spinning || busy || result) return;
     setMultiplier('custom');
     haptic('light');
-  };
+  }, [spinning, busy, result]);
 
-  const handleCustomChange = (val) => {
+  const handleCustomChange = useCallback((val) => {
     setCustomMultiplier(val);
     if (!owned) return;
     const m = Number(val);
@@ -229,9 +240,9 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
     const desired = Number(owned.price_stars) * m;
     const pick = findClosestTarget(catalog, desired, owned);
     if (pick) setTargetId(pick.id);
-  };
+  }, [owned, catalog, config.maxMultiplier]);
 
-  const handleAction = async () => {
+  const handleAction = useCallback(async () => {
     if (result) {
       setResult(null);
       setOwnedId(null);
@@ -286,7 +297,7 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
       setBusy(false);
       setSpinning(false);
     }
-  };
+  }, [owned, target, customValid, spinning, busy, result, selectedMultiplier, config, onUpgraded, onError]);
 
   if (loading) return <div className="skeleton upgrade-skeleton" />;
 
