@@ -30,26 +30,25 @@ function clamp(value, min, max) {
 }
 
 /**
- * ЕДИНСТВЕННАЯ ФОРМУЛА ОТОБРАЖЕНИЯ ШАНСА.
- * Чистая математика: (source/target) × 100 / multiplier.
- * 10⭐ → 75⭐, ×1 = 13.3%
- * 10⭐ → 75⭐, ×2 = 6.7%
- * Никаких house edge, никакого гамма-штрафа — только честный расчёт.
- * serverChance НЕ используется для отображения.
+ * Визуальный (честный) шанс.
+ * Формула: source / target × 100.
+ *
+ * Множитель НЕ участвует в формуле. Он только подбирает цель (source × multiplier).
+ *
+ * 5⭐ → 10⭐        = 50.0%
+ * 10⭐ → 75⭐       = 13.3%
+ * 10⭐ → 100⭐      = 10.0%
+ * 100⭐ → 150⭐     = 66.7%
  */
-function calcDisplayChance(source, target, multiplier, config) {
+function calcDisplayChance(source, target, config) {
   if (!source || !target) return 0;
   const s = Number(source.price_stars);
   const t = Number(target.price_stars);
   if (!Number.isFinite(s) || !Number.isFinite(t) || t <= s) return 0;
 
-  const m = Math.max(1, Number(multiplier) || 1);
-
-  // Прямая честная формула. displayGamma = 1.0 → Math.pow(x,1) = x.
   const ratio = Math.pow(s / t, config.displayGamma);
   const base = ratio * 100 * config.displayBaseChanceMultiplier;
-  const withMult = base / m;
-  const withEdge = withMult * (1 - config.displayHouseEdge);
+  const withEdge = base * (1 - config.displayHouseEdge);
 
   return clamp(withEdge, config.minChance, config.maxChance);
 }
@@ -60,6 +59,11 @@ function formatChance(chance) {
   return `${n.toFixed(1)}%`;
 }
 
+/**
+ * Ищем в каталоге предмет с ценой, ближайшей к desiredPrice.
+ * Из равноудалённых — рандом.
+ * Только предметы дороже source.
+ */
 function findClosestTarget(catalog, desiredPrice, sourceItem) {
   if (!sourceItem) return null;
   const sourcePrice = Number(sourceItem.price_stars);
@@ -251,13 +255,8 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
      selectedMultiplier <= config.maxMultiplier &&
      Math.abs(selectedMultiplier * 10 - Math.round(selectedMultiplier * 10)) < 1e-9);
 
-  // ВСЕГДА считаем локально. Никаких serverChance.
-  const displayChance = calcDisplayChance(
-    owned,
-    target,
-    customValid ? selectedMultiplier : 1,
-    config
-  );
+  // Визуальный шанс. Только source/target, без множителя в формуле.
+  const displayChance = calcDisplayChance(owned, target, config);
 
   const targetItems = useMemo(() => {
     if (!owned) return catalog;
@@ -286,6 +285,13 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
     haptic('light');
   };
 
+  /**
+   * Кнопка множителя:
+   * 1) желаемая цена = source × multiplier
+   * 2) ищем ближайшую цель в каталоге
+   * 3) ставим её как target
+   * Шанс потом считается формулой source/target — без деления на множитель.
+   */
   const chooseMultiplier = useCallback((value) => {
     if (spinning || busy || result) return;
     setMultiplier(value);
@@ -336,8 +342,8 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
       const res = await api.upgrade(owned.inventory_id, target.id, selectedMultiplier);
       const success = Boolean(res.success);
 
-      // Для визуала используем ту же локальную честную формулу
-      const display = calcDisplayChance(owned, target, selectedMultiplier, config);
+      // Визуал по той же честной формуле, что и в шапке
+      const display = calcDisplayChance(owned, target, config);
 
       const landing = computeLandingAngle(success, display, config.nearMiss);
       const profile = pickSpinProfile(config.spinProfiles, config.spinJitter);
