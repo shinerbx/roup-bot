@@ -122,3 +122,13 @@ export default function CatalogTab({ items, ownedItemIds, loading, onBuy }) {
     </div>
   );
 }
+<footer className="app-footer">
+  <span className="app-footer__line">
+    Все предметы виртуальные и не являются имуществом.
+  </span>
+  <span className="app-footer__line">
+    Не связано с Roblox Corporation и Telegram.
+    <span className="app-footer__sep">·</span>
+    Сервис <b>18+</b>.
+  </span>
+</footer>
