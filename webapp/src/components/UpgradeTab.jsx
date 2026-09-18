@@ -144,7 +144,7 @@ const PickerSheet = memo(function PickerSheet({ title, items, selectedId, getId,
   );
 });
 
-export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, onError }) {
+export default function UpgradeTab({ inventory, catalog, loading, demoActive = false, onUpgraded, onError }) {
   const [ownedId, setOwnedId] = useState(null);
   const [targetId, setTargetId] = useState(null);
   const [picker, setPicker] = useState(null);
@@ -168,9 +168,14 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
     return () => { alive = false; };
   }, []);
 
+  const availableInventory = useMemo(
+    () => demoActive ? inventory.filter((i) => Number(i.is_demo) === 1) : inventory.filter((i) => Number(i.is_demo) !== 1),
+    [inventory, demoActive]
+  );
+
   const owned = useMemo(
-    () => inventory.find((i) => i.inventory_id === ownedId) || null,
-    [inventory, ownedId]
+    () => availableInventory.find((i) => i.inventory_id === ownedId) || null,
+    [availableInventory, ownedId]
   );
   const target = useMemo(
     () => catalog.find((i) => i.id === targetId) || null,
@@ -282,12 +287,15 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
       console.error(err);
       hapticNotify('error');
       const messages = {
+        demo_item_required: 'Во время Demo можно улучшать только Demo-предметы.',
+        demo_item_locked: 'Demo-предмет больше недоступен вне Demo-режима.',
         same_price_target: 'Предметы одинаковой стоимости нельзя улучшать.',
         item_not_owned: 'Исходный предмет уже недоступен.',
         invalid_multiplier: 'Некорректный множитель.',
         target_not_found: 'Целевой предмет больше недоступен.',
         target_not_higher: 'Для апгрейда нужен предмет дороже исходного.',
         operation_in_progress: 'Апгрейд уже выполняется.',
+        user_not_found: 'Профиль игрока не найден.',
         pending_upgrade: 'Подождите — предыдущий апгрейд ещё обрабатывается.',
       };
       onError?.(messages[err.code] || 'Не удалось выполнить апгрейд. Попробуйте ещё раз.');
@@ -429,7 +437,7 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
         )}
       </section>
 
-      {!owned && !inventory.length && (
+      {!owned && !availableInventory.length && (
         <div className="empty-state upgrade-empty">
           <p className="empty-state__title">Нужен предмет</p>
           <p>Купи или получи предмет, чтобы начать апгрейд.</p>
@@ -446,7 +454,7 @@ export default function UpgradeTab({ inventory, catalog, loading, onUpgraded, on
       {picker === 'owned' && (
         <PickerSheet
           title="Предмет из инвентаря"
-          items={inventory}
+          items={availableInventory}
           selectedId={ownedId}
           getId={(item) => item.inventory_id}
           onSelect={chooseOwned}

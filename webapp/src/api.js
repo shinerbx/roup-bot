@@ -62,7 +62,11 @@ async function request(path, options = {}, {
     const initData = await waitForInitData();
     let lastError;
 
-    for (let attempt = 1; attempt <= retries; attempt++) {
+    // retries означает количество ДОПОЛНИТЕЛЬНЫХ повторов, поэтому
+    // даже при retries=0 исходный запрос должен быть выполнен один раз.
+    const maxAttempts = Math.max(1, Number(retries) + 1);
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         const res = await fetchWithTimeout(
           `${BASE}${path}`,
@@ -101,7 +105,7 @@ async function request(path, options = {}, {
         lastError = err;
         if (err.name === 'AbortError') throw err;
         if (err.fatal) throw err;
-        if (attempt < retries) await sleep(baseDelayMs * 2 ** (attempt - 1));
+        if (attempt < maxAttempts) await sleep(baseDelayMs * 2 ** (attempt - 1));
       }
     }
     throw lastError;
@@ -109,7 +113,10 @@ async function request(path, options = {}, {
 
   if (key) {
     inflight.set(key, promise);
-    promise.finally(() => inflight.delete(key));
+    promise.then(
+      () => inflight.delete(key),
+      () => inflight.delete(key)
+    );
   }
 
   return promise;
@@ -136,7 +143,7 @@ export const api = {
     request('/upgrade', {
       method: 'POST',
       body: JSON.stringify({ inventoryItemId, targetItemId, multiplier, operationId: createOperationId() }),
-    }, { retries: 0 }),
+    }, { retries: 2 }),
 
   getUpgradeFeed: () => request('/upgrade/feed', {}, { retries: 1, dedupe: true }),
   getOnline: () => request('/online', {}, { retries: 1, dedupe: true }),
@@ -157,5 +164,5 @@ export const api = {
   createWithdrawRequest: (payload) => request('/withdraw/request', {
     method: 'POST',
     body: JSON.stringify(payload),
-  }, { retries: 0 }),
+  }, { retries: 2 }),
 };

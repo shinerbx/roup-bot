@@ -157,7 +157,11 @@ export default function App() {
       hapticNotify('error');
       const msg = err?.code === 'not_enough_items'
         ? 'Недостаточно предметов для продажи.'
-        : 'Не получилось продать.';
+        : err?.code === 'demo_active'
+          ? 'Продажа недоступна во время Demo-режима.'
+          : err?.code === 'demo_item_locked'
+            ? 'Demo-предмет нельзя продать.'
+            : 'Не получилось продать.';
       setToast(msg);
     } finally {
       setSellingId(null);
@@ -266,6 +270,7 @@ export default function App() {
           inventory={inventory}
           catalog={catalog}
           loading={loading}
+          demoActive={Boolean(profile?.demo_active)}
           onUpgraded={refreshInventoryAndProfile}
           onError={setToast}
         />
@@ -276,6 +281,7 @@ export default function App() {
           loading={loading}
           onSell={handleSellMany}
           sellingId={sellingId}
+          demoActive={Boolean(profile?.demo_active)}
           canWithdraw={Boolean(profile?.can_withdraw)}
           referralProgress={profile?.referral_progress}
           onWithdraw={() => setShowWithdraw(true)}

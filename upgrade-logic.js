@@ -117,12 +117,13 @@ function resolveUpgrade(sourceItem, targetItem, multiplier = 1, opts = {}) {
   const success = roll < realFinal;
 
   const displayChance = calculateDisplayChance(sourceItem, targetItem, safeMultiplier);
-  const landingAngle = pickLandingAngle(success, displayChance);
+  const effectiveChance = luckyMode ? realFinal : displayChance;
+  const landingAngle = pickLandingAngle(success, effectiveChance);
 
   return {
     success,
     resultItemId: success ? targetItem.id : null,
-    chance: Number(displayChance.toFixed(1)),
+    chance: Number(effectiveChance.toFixed(1)),
     multiplier: safeMultiplier,
     landingAngle,
     _realBase: Number(realBase.toFixed(2)),

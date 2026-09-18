@@ -12,6 +12,7 @@ function groupInventory(items) {
         category: it.category,
         price_stars: it.price_stars,
         image_url: it.image_url,
+        is_demo: Boolean(it.is_demo),
         count: 0,
         inventoryIds: [],
         latestCreatedAt: it.created_at,
@@ -127,6 +128,7 @@ export default function InventoryTab({
   canWithdraw,
   referralProgress,
   onWithdraw,
+  demoActive = false,
 }) {
   const [sellItem, setSellItem] = useState(null);
   const grouped = useMemo(() => groupInventory(items || []), [items]);
@@ -210,16 +212,16 @@ export default function InventoryTab({
                   )}
                 </div>
                 <p className="item-card__name" title={it.name}>{it.name}</p>
-                <p className="item-card__category">{it.category}</p>
+                <p className="item-card__category">{it.is_demo ? 'Demo-предмет' : it.category}</p>
                 <div className="item-card__footer">
                   <span className="price-tag">★ {Number(it.price_stars).toLocaleString('ru-RU')}</span>
                   <button
                     type="button"
                     className="item-card__sell"
-                    disabled={busy}
+                    disabled={busy || demoActive}
                     onClick={() => { haptic('light'); setSellItem(it); }}
                   >
-                    {busy ? '…' : 'Продать'}
+                    {demoActive ? 'Demo' : (busy ? '…' : 'Продать')}
                   </button>
                 </div>
               </div>

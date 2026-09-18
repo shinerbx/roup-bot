@@ -16,7 +16,7 @@ const HOUSE_CONFIG = Object.freeze({
     MAX_MULTIPLIER: 100,
     DEFAULT_MULTIPLIER: 1,
 
-    // Lucky
+    // Lucky — только для server-side demo-режима; клиент не задаёт эти значения.
     LUCKY_CHANCE_MULTIPLIER: 10,
     LUCKY_FLAT_BOOST: 50,
     LUCKY_MAX_CHANCE: 92,

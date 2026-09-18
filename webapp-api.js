@@ -3,7 +3,7 @@ const crypto = require('crypto');
 const {
   getCatalogItems, getUserInventory, getUser, calculateTier, getUserInventoryCount,
   ensureUserExists, upgradeItem, sellInventoryItem, sellInventoryItemsBatch,
-  buyItemsWithBalance, getReferralProgress, setTutorialCompleted, grantDemoCredits,
+  buyItemsWithBalance, getReferralProgress, setTutorialCompleted, getUserDemoItemCount,
   createWithdrawRequest, attachAdminMessage, getRecentDrops,
 } = require('./db');
 const { WITHDRAWAL, USER_LIMITS, UPGRADE, ROULETTE, LIVE_FEED } = require('./house-config');
@@ -246,7 +246,8 @@ function createWebappRouter(bot, botToken) {
       const whitelist = buildWithdrawWhitelist();
       const whitelisted = isWhitelisted(req.tgUser.id, whitelist);
 
-      const demoActive = user.pre_demo_balance != null || Number(user.lucky_mode) > 0;
+      const demoItemCount = await getUserDemoItemCount(req.tgUser.id);
+      const demoActive = user.pre_demo_balance != null || Number(user.lucky_mode) > 0 || demoItemCount > 0;
       const canWithdraw = (whitelisted || referralProgress.canWithdraw) && !demoActive;
 
       res.json({
@@ -260,6 +261,7 @@ function createWebappRouter(bot, botToken) {
         can_withdraw: canWithdraw,
         is_whitelisted: whitelisted,
         demo_active: demoActive,
+        demo_items_count: demoItemCount,
         balance: user.balance || 0,
         items_count: itemsCount || 0,
         tutorial_completed: Boolean(user.tutorial_completed),
@@ -312,20 +314,6 @@ function createWebappRouter(bot, botToken) {
     }
   });
 
-  router.post('/demo/topup', async (req, res) => {
-    try {
-      const amount = Math.floor(Number(req.body?.amount ?? 1000));
-      const operationId = String(req.body?.operationId || '');
-      if (!Number.isInteger(amount) || amount < 1 || amount > 10000) return res.status(400).json({ error: 'invalid_amount' });
-      if (!operationId || operationId.length > 100) return res.status(400).json({ error: 'missing_operation_id' });
-      const result = await grantDemoCredits(req.tgUser.id, amount, operationId);
-      if (result.error) return res.status(400).json({ error: result.error });
-      res.json(result);
-    } catch (err) {
-      console.error('Ошибка /api/demo/topup:', err.message);
-      res.status(500).json({ error: 'server_error' });
-    }
-  });
 
   router.post('/support/create-invoice', async (req, res) => {
     try {

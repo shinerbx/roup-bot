@@ -726,19 +726,7 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
-// Диагностика
-app.get('/api/diag', (req, res) => {
-  const whitelist = buildWhitelistForDiag();
-  const userId = req.query.userId ? String(req.query.userId).trim() : null;
-  res.json({
-    adminChatIdRaw: process.env.ADMIN_CHAT_ID || null,
-    adminChatIdTrimmed: String(process.env.ADMIN_CHAT_ID || '').trim(),
-    whitelist,
-    requireReferral: USER_LIMITS.REQUIRE_REFERRAL_FOR_WITHDRAW,
-    checkedUserId: userId,
-    checkedUserInWhitelist: userId ? isWhitelistedId(userId, whitelist) : null,
-  });
-});
+// Диагностический endpoint намеренно удалён: он не должен раскрывать ADMIN_CHAT_ID/whitelist публично.
 
 // Вебхук Telegram
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET
