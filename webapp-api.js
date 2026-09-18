@@ -11,7 +11,8 @@ const {
   sellInventoryItem,
   buyItemsWithBalance,
   getReferralProgress,
-  setTutorialCompleted
+  setTutorialCompleted,
+  grantDemoCredits
 } = require('./db');
 
 function verifyInitData(initData, botToken) {
@@ -33,11 +34,14 @@ function verifyInitData(initData, botToken) {
     const secretKey = crypto.createHmac('sha256', 'WebAppData').update(botToken).digest();
     const computedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
 
-    if (computedHash !== hash) return null;
+    const expected = Buffer.from(computedHash, 'utf8');
+    const received = Buffer.from(hash, 'utf8');
+    if (expected.length !== received.length || !crypto.timingSafeEqual(expected, received)) return null;
 
     // Отклоняем слишком старые initData
     const authDate = Number(params.get('auth_date') || 0);
-    if (!authDate || Date.now() / 1000 - authDate > 86400) return null;
+    const now = Math.floor(Date.now() / 1000);
+    if (!authDate || authDate > now + 300 || now - authDate > 86400) return null;
 
     const userRaw = params.get('user');
     if (!userRaw) return null;
@@ -135,7 +139,7 @@ function createWebappRouter(bot, botToken) {
       if (!Number.isInteger(itemId) || itemId <= 0) {
         return res.status(400).json({ error: 'invalid_item' });
       }
-      if (!Number.isInteger(quantity) || quantity < 1 || quantity > 9999) {
+      if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100) {
         return res.status(400).json({ error: 'invalid_quantity' });
       }
       if (!operationId || operationId.length > 100) {
@@ -151,6 +155,26 @@ function createWebappRouter(bot, botToken) {
       res.json(result);
     } catch (err) {
       console.error('Ошибка /api/buy:', err.message);
+      res.status(500).json({ error: 'server_error' });
+    }
+  });
+
+  // Учебное пополнение: бесплатные демо-кредиты, без реальных денег.
+  router.post('/demo/topup', async (req, res) => {
+    try {
+      const amount = Math.floor(Number(req.body?.amount ?? 1000));
+      const operationId = String(req.body?.operationId || '');
+      if (!Number.isInteger(amount) || amount < 1 || amount > 10000) {
+        return res.status(400).json({ error: 'invalid_amount' });
+      }
+      if (!operationId || operationId.length > 100) {
+        return res.status(400).json({ error: 'missing_operation_id' });
+      }
+      const result = await grantDemoCredits(req.tgUser.id, amount, operationId);
+      if (result.error) return res.status(400).json({ error: result.error });
+      res.json(result);
+    } catch (err) {
+      console.error('Ошибка /api/demo/topup:', err.message);
       res.status(500).json({ error: 'server_error' });
     }
   });

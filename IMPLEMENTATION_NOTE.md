@@ -1,14 +1,32 @@
-# RoUP WebApp — stability/UI update
+# RoUP — implementation notes
 
-Implemented:
-- Long item names now wrap safely, stay inside their containers, and are clamped to two lines across catalog, inventory, purchase and upgrade UI.
-- Upgrade targets must be more expensive than the source item. The server enforces this too, so cheaper targets and same-price targets cannot be submitted directly. The most expensive catalog item therefore has no valid next target.
-- Purchase, upgrade and sell operations use idempotency keys to make network retries safe; sell now has the same protection as purchase/upgrade.
-- Subscription rewards and referral rewards are protected against concurrent duplicate callbacks/registration races.
-- Added per-Telegram-account tutorial completion state with a backward-compatible database migration.
-- Added a first-run interactive tutorial with a spotlight, animated arrow, exact click-through target, modal finish screen, and blocking overlay for all non-target controls.
+## Что переработано
 
-Validation:
-- Node syntax checks passed for the modified CommonJS server files.
-- Standalone upgrade-logic tests passed for higher targets, invalid targets, multiplier validation and chance calculation.
-- Full Vite build could not be executed in this environment because npm registry DNS access is unavailable; no dependencies were added to the project archive.
+- `upgrade-logic.js`: прозрачная формула шанса, вынесенная в отдельные функции; серверный random через Node `crypto.randomInt`.
+- `db.js`: транзакционный журнал `balance_ledger`; статусы `pending/completed` для идемпотентных операций; индексы для инвентаря/рефералов/операций.
+- Покупка ограничена 100 предметами за запрос, чтобы исключить случайную генерацию огромных стопок.
+- Продажа, покупка и апгрейд выполняются атомарно в PostgreSQL-транзакциях.
+- `/api/demo/topup`: бесплатное учебное пополнение демо-баланса без реальных денег.
+- `webapp-api.js`: более строгая проверка Telegram initData, ограничение JSON body, корректный CORS для WEB_APP_URL.
+- `index.js`: отключён `X-Powered-By`, добавлен `/health`, webhook больше не использует BOT_TOKEN напрямую в URL при отсутствии отдельного `WEBHOOK_SECRET`.
+- UI: ограничение количества покупки синхронизировано с сервером; частицы результата Upgrade больше не пересоздаются с новым `Math.random()` на каждом render.
+
+## Реальные платежи
+
+В этой версии игровое пополнение реальными деньгами/криптовалютой не подключается. Для демонстрации используется sandbox endpoint.
+
+## Проверка
+
+Node-файлы прошли `node --check`. Сборка Vite в текущем окружении не была выполнена: установка npm-зависимостей превысила доступный лимит времени. На локальной машине запустите:
+
+```bash
+cd webapp
+npm install
+npm run build
+```
+
+Затем из корня:
+
+```bash
+npm start
+```

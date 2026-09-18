@@ -65,15 +65,37 @@ async function initDb() {
         operation_type TEXT NOT NULL,
         operation_id TEXT NOT NULL,
         response JSONB NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (user_id, operation_type, operation_id)
       );
+
+      CREATE TABLE IF NOT EXISTS balance_ledger (
+        id BIGSERIAL PRIMARY KEY,
+        user_id BIGINT NOT NULL REFERENCES users(telegram_id),
+        operation_type TEXT NOT NULL,
+        operation_id TEXT NOT NULL,
+        amount INTEGER NOT NULL,
+        balance_after INTEGER NOT NULL,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (user_id, operation_type, operation_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_inventory_user_created
+        ON user_inventory (user_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_referrals_invited_by
+        ON users (invited_by);
+      CREATE INDEX IF NOT EXISTS idx_operations_created
+        ON operation_results (created_at DESC);
     `);
 
     // Совместимо с уже существующей Supabase БД: добавляем только недостающие поля.
     // Старые данные не удаляются.
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS is_premium INTEGER DEFAULT 0');
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS tutorial_completed INTEGER DEFAULT 0');
+    await pool.query("ALTER TABLE operation_results ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending'");
+    await pool.query("ALTER TABLE operation_results ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
 
 
     // Загружаем предметы одним запросом, чтобы не спамить в пул базы
@@ -274,20 +296,24 @@ async function buyItemsWithBalance(userId, itemId, quantity = 1, operationId = n
     await client.query('BEGIN');
 
     if (operationId) {
+      const opKey = String(operationId).slice(0, 100);
       const opRes = await client.query(`
-        INSERT INTO operation_results (user_id, operation_type, operation_id, response)
-        VALUES ($1, 'purchase', $2, '{}'::jsonb)
+        INSERT INTO operation_results (user_id, operation_type, operation_id, response, status)
+        VALUES ($1, 'purchase', $2, '{}'::jsonb, 'pending')
         ON CONFLICT (user_id, operation_type, operation_id) DO NOTHING
-        RETURNING response
-      `, [userId, String(operationId).slice(0, 100)]);
+        RETURNING response, status
+      `, [userId, opKey]);
 
       if (!opRes.rowCount) {
         const existing = await client.query(`
-          SELECT response FROM operation_results
+          SELECT response, status FROM operation_results
           WHERE user_id = $1 AND operation_type = 'purchase' AND operation_id = $2
-        `, [userId, String(operationId).slice(0, 100)]);
+          FOR UPDATE
+        `, [userId, opKey]);
+        const row = existing.rows[0];
         await client.query('ROLLBACK');
-        return existing.rows[0]?.response || { error: 'operation_in_progress' };
+        if (row?.status === 'completed') return row.response;
+        return { error: 'operation_in_progress' };
       }
     }
 
@@ -350,11 +376,17 @@ async function buyItemsWithBalance(userId, itemId, quantity = 1, operationId = n
     };
 
     if (operationId) {
+      const opKey = String(operationId).slice(0, 100);
+      await client.query(`
+        INSERT INTO balance_ledger (user_id, operation_type, operation_id, amount, balance_after, metadata)
+        VALUES ($1, 'purchase', $2, $3, $4, $5::jsonb)
+        ON CONFLICT (user_id, operation_type, operation_id) DO NOTHING
+      `, [userId, opKey, -total, balRes.rows[0].balance, JSON.stringify({ itemId: item.id, quantity: safeQuantity })]);
       await client.query(`
         UPDATE operation_results
-        SET response = $3::jsonb
+        SET response = $3::jsonb, status = 'completed', updated_at = CURRENT_TIMESTAMP
         WHERE user_id = $1 AND operation_type = 'purchase' AND operation_id = $2
-      `, [userId, String(operationId).slice(0, 100), JSON.stringify(response)]);
+      `, [userId, opKey, JSON.stringify(response)]);
     }
 
     await client.query('COMMIT');
@@ -410,20 +442,24 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
     await client.query('BEGIN');
 
     if (operationId) {
+      const opKey = String(operationId).slice(0, 100);
       const opRes = await client.query(`
-        INSERT INTO operation_results (user_id, operation_type, operation_id, response)
-        VALUES ($1, 'upgrade', $2, '{}'::jsonb)
+        INSERT INTO operation_results (user_id, operation_type, operation_id, response, status)
+        VALUES ($1, 'upgrade', $2, '{}'::jsonb, 'pending')
         ON CONFLICT (user_id, operation_type, operation_id) DO NOTHING
-        RETURNING response
-      `, [userId, String(operationId).slice(0, 100)]);
+        RETURNING response, status
+      `, [userId, opKey]);
 
       if (!opRes.rowCount) {
         const existing = await client.query(`
-          SELECT response FROM operation_results
+          SELECT response, status FROM operation_results
           WHERE user_id = $1 AND operation_type = 'upgrade' AND operation_id = $2
-        `, [userId, String(operationId).slice(0, 100)]);
+          FOR UPDATE
+        `, [userId, opKey]);
+        const row = existing.rows[0];
         await client.query('ROLLBACK');
-        return existing.rows[0]?.response || { error: 'operation_in_progress' };
+        if (row?.status === 'completed') return row.response;
+        return { error: 'operation_in_progress' };
       }
     }
 
@@ -494,11 +530,12 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
     };
 
     if (operationId) {
+      const opKey = String(operationId).slice(0, 100);
       await client.query(`
         UPDATE operation_results
-        SET response = $3::jsonb
+        SET response = $3::jsonb, status = 'completed', updated_at = CURRENT_TIMESTAMP
         WHERE user_id = $1 AND operation_type = 'upgrade' AND operation_id = $2
-      `, [userId, String(operationId).slice(0, 100), JSON.stringify(response)]);
+      `, [userId, opKey, JSON.stringify(response)]);
     }
 
     await client.query('COMMIT');
@@ -522,24 +559,27 @@ async function sellInventoryItem(userId, inventoryItemId, operationId = null) {
     const normalizedOperationId = operationId ? String(operationId).slice(0, 100) : null;
     if (normalizedOperationId) {
       const opRes = await client.query(`
-        INSERT INTO operation_results (user_id, operation_type, operation_id, response)
-        VALUES ($1, 'sell', $2, '{}'::jsonb)
+        INSERT INTO operation_results (user_id, operation_type, operation_id, response, status)
+        VALUES ($1, 'sell', $2, '{}'::jsonb, 'pending')
         ON CONFLICT (user_id, operation_type, operation_id) DO NOTHING
-        RETURNING response
+        RETURNING response, status
       `, [userId, normalizedOperationId]);
 
       if (!opRes.rowCount) {
         const existing = await client.query(`
-          SELECT response FROM operation_results
+          SELECT response, status FROM operation_results
           WHERE user_id = $1 AND operation_type = 'sell' AND operation_id = $2
+          FOR UPDATE
         `, [userId, normalizedOperationId]);
+        const existingRow = existing.rows[0];
         await client.query('ROLLBACK');
-        return existing.rows[0]?.response || { error: 'operation_in_progress' };
+        if (existingRow?.status === 'completed') return existingRow.response;
+        return { error: 'operation_in_progress' };
       }
     }
 
     const ownedRes = await client.query(`
-      SELECT ui.id, i.name, i.price_stars
+      SELECT ui.id, i.id AS item_id, i.name, i.price_stars
       FROM user_inventory ui
       JOIN items i ON i.id = ui.item_id
       WHERE ui.id = $1 AND ui.user_id = $2
@@ -567,8 +607,13 @@ async function sellInventoryItem(userId, inventoryItemId, operationId = null) {
 
     if (normalizedOperationId) {
       await client.query(`
+        INSERT INTO balance_ledger (user_id, operation_type, operation_id, amount, balance_after, metadata)
+        VALUES ($1, 'sell', $2, $3, $4, $5::jsonb)
+        ON CONFLICT (user_id, operation_type, operation_id) DO NOTHING
+      `, [userId, normalizedOperationId, Number(row.price_stars), balRes.rows[0]?.balance ?? 0, JSON.stringify({ inventoryItemId, itemId: row.item_id || null })]);
+      await client.query(`
         UPDATE operation_results
-        SET response = $3::jsonb
+        SET response = $3::jsonb, status = 'completed', updated_at = CURRENT_TIMESTAMP
         WHERE user_id = $1 AND operation_type = 'sell' AND operation_id = $2
       `, [userId, normalizedOperationId, JSON.stringify(response)]);
     }
@@ -583,6 +628,35 @@ async function sellInventoryItem(userId, inventoryItemId, operationId = null) {
   }
 }
 
+// Учебное пополнение демо-баланса. Никаких платежей или конвертации реальных денег.
+async function grantDemoCredits(userId, amount = 1000, operationId = null) {
+  const safeAmount = Number(amount);
+  if (!Number.isInteger(safeAmount) || safeAmount < 1 || safeAmount > 10000) return { error: 'invalid_amount' };
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const opKey = String(operationId || `demo_${Date.now()}_${Math.random().toString(36).slice(2)}`).slice(0, 100);
+    const inserted = await client.query(`
+      INSERT INTO operation_results (user_id, operation_type, operation_id, response, status)
+      VALUES ($1, 'demo_topup', $2, '{}'::jsonb, 'pending')
+      ON CONFLICT (user_id, operation_type, operation_id) DO NOTHING
+      RETURNING operation_id
+    `, [userId, opKey]);
+    if (!inserted.rowCount) {
+      const existing = await client.query(`SELECT response, status FROM operation_results WHERE user_id=$1 AND operation_type='demo_topup' AND operation_id=$2`, [userId, opKey]);
+      await client.query('ROLLBACK');
+      return existing.rows[0]?.status === 'completed' ? existing.rows[0].response : { error: 'operation_in_progress' };
+    }
+    const updated = await client.query('UPDATE users SET balance = balance + $1 WHERE telegram_id = $2 RETURNING balance', [safeAmount, userId]);
+    if (!updated.rowCount) { await client.query('ROLLBACK'); return { error: 'user_not_found' }; }
+    const response = { credited: safeAmount, balance: updated.rows[0].balance, demo: true };
+    await client.query(`INSERT INTO balance_ledger (user_id, operation_type, operation_id, amount, balance_after, metadata) VALUES ($1,'demo_topup',$2,$3,$4,$5::jsonb) ON CONFLICT DO NOTHING`, [userId, opKey, safeAmount, updated.rows[0].balance, JSON.stringify({ demo: true })]);
+    await client.query(`UPDATE operation_results SET response=$3::jsonb,status='completed',updated_at=CURRENT_TIMESTAMP WHERE user_id=$1 AND operation_type='demo_topup' AND operation_id=$2`, [userId, opKey, JSON.stringify(response)]);
+    await client.query('COMMIT');
+    return response;
+  } catch (err) { await client.query('ROLLBACK'); throw err; } finally { client.release(); }
+}
+
 module.exports = {
   registerUser,
   getUser,
@@ -591,6 +665,7 @@ module.exports = {
   getUserInventoryCount,
   getReferralProgress,
   setTutorialCompleted,
+  grantDemoCredits,
   ensureUserExists,
   getCatalogItems,
   getItemById,

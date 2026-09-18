@@ -1,5 +1,7 @@
+const crypto = require('crypto');
+
 /**
- * ЛОГИКА АПГРЕЙДА (ЗАГЛУШКА)
+ * ЛОГИКА АПГРЕЙДА (SANDBOX)
  * В этом файле высчитывается шанс и определяется успех/неудача.
  */
 
@@ -49,8 +51,8 @@ function resolveUpgrade(sourceItem, targetItem, multiplier = 1) {
   const baseChance = clampChance(calculateBaseChance(sourceItem, targetItem));
   const finalChance = clampChance(applyMultiplier(baseChance, safeMultiplier));
   
-  // Бросаем кубик (случайное число от 0 до 100)
-  const roll = Math.random() * 100;
+  // Серверный случайный бросок. crypto.randomInt не зависит от Math.random().
+  const roll = crypto.randomInt(0, 1_000_000) / 10_000;
   
   // Успех, если выпавшее число меньше шанса
   const success = roll < finalChance;

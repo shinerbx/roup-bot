@@ -1,6 +1,7 @@
 const express = require('express');
 const path = require('path');
 const { Telegraf, Markup } = require('telegraf');
+const crypto = require('crypto');
 const {
   registerUser,
   getUser,
@@ -285,19 +286,28 @@ process.on('uncaughtException', (err) => console.error('Критическая �
 process.on('unhandledRejection', (reason) => console.error('Необработанный промис (UnhandledRejection):', reason));
 
 const app = express();
+app.disable('x-powered-by');
 app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  const allowedOrigin = process.env.WEB_APP_URL || '';
+  const origin = req.get('Origin');
+  if (origin && allowedOrigin && origin === allowedOrigin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Telegram-Init-Data, x-telegram-init-data');
-  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Telegram-Init-Data');
+  res.setHeader('Cache-Control', 'no-store');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
-app.use(express.json());
+app.use(express.json({ limit: '64kb' }));
 
-const WEBHOOK_PATH = `/telegraf/${BOT_TOKEN}`;
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || crypto.createHash('sha256').update(BOT_TOKEN || 'missing-token').digest('hex');
+const WEBHOOK_PATH = `/telegraf/${encodeURIComponent(WEBHOOK_SECRET)}`;
 app.use(bot.webhookCallback(WEBHOOK_PATH));
 app.use('/api', createWebappRouter(bot, BOT_TOKEN));
 app.get('/ping', (req, res) => res.status(200).send('pong'));
+app.get('/health', (req, res) => res.json({ ok: true, service: 'roup' }));
 
 const webappDist = path.join(__dirname, 'webapp', 'dist');
 
