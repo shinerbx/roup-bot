@@ -1,7 +1,8 @@
 const express = require('express');
 const path = require('path');
-const { Telegraf, Markup } = require('telegraf');
 const crypto = require('crypto');
+const compression = require('compression');
+const { Telegraf, Markup } = require('telegraf');
 const {
   registerUser,
   getUser,
@@ -19,6 +20,10 @@ const { createWebappRouter } = require('./webapp-api');
 const { registerBot } = require('./admin-notify');
 const { USER_LIMITS } = require('./house-config');
 
+// ═══════════════════════════════════════════════════════════════════════
+// КОНСТАНТЫ И ПРОВЕРКИ
+// ═══════════════════════════════════════════════════════════════════════
+
 const BOT_TOKEN = process.env.BOT_TOKEN;
 if (!BOT_TOKEN) console.error('❌ Не задана переменная окружения BOT_TOKEN — бот не запустится.');
 
@@ -28,6 +33,16 @@ const CHANNEL_USERNAME = '@ro_upgrade';
 const SHARE_BANNER_URL = 'https://i.ibb.co/Fq6L8G16/7007-D8-FC-C59-A-4-F72-B1-AB-C63-DFAA2-F87-A.png';
 const PRIVACY_POLICY_URL = 'https://telegra.ph/Polzovatelskoe-soglashenie-i-Usloviya-programmy-loyalnosti-RoUP-09-16';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID;
+
+const IS_PROD = process.env.NODE_ENV === 'production';
+
+function log(...args) {
+  if (!IS_PROD) console.log(...args);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════════════════
 
 function isAdmin(ctx) {
   return ADMIN_CHAT_ID && String(ctx.from?.id) === String(ADMIN_CHAT_ID);
@@ -52,15 +67,17 @@ function isWhitelistedId(userId, whitelist) {
   return false;
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// BOT INIT
+// ═══════════════════════════════════════════════════════════════════════
+
 const bot = new Telegraf(BOT_TOKEN);
 registerBot(bot);
 
 const pendingUsers = new Map();
 const userCooldowns = new Map();
 const actionLocks = new Set();
-
-// Состояние админ-флоу: adminId → { action, targetId? }
-const adminState = new Map();
+const adminState = new Map(); // adminId → { action, targetId? }
 
 const EMOJIS = [
   { name: 'пиццу 🍕', icon: '🍕' },
@@ -88,7 +105,10 @@ function getAdminPanel() {
   ]);
 }
 
-// ── Anti-spam middleware ─────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// ANTI-SPAM MIDDLEWARE
+// ═══════════════════════════════════════════════════════════════════════
+
 bot.use(async (ctx, next) => {
   const isPaymentUpdate = Boolean(ctx.preCheckoutQuery || ctx.shippingQuery || ctx.message?.successful_payment);
   if (isPaymentUpdate) return next();
@@ -218,7 +238,9 @@ bot.on('text', async (ctx, next) => {
     adminState.set(uid, { action: 'demo_amount', targetId });
 
     const target = await getUser(targetId);
-    const balanceInfo = target ? `\nТекущий баланс: <b>${target.balance || 0} ⭐</b>` : '\n<i>Игрок ещё не открывал бота — запись появится при выдаче.</i>';
+    const balanceInfo = target
+      ? `\nТекущий баланс: <b>${target.balance || 0} ⭐</b>`
+      : '\n<i>Игрок ещё не открывал бота — запись появится при выдаче.</i>';
 
     return ctx.reply(
       `🎁 <b>Выдача demo-баланса</b>\n\n` +
@@ -504,7 +526,10 @@ bot.hears('👤 Профиль', async (ctx) => {
       `💰 <b>Игровой баланс:</b> ${user.balance} ⭐\n` +
       `📅 <b>Дата регистрации:</b> ${String(user.created_at).split(' ')[0]}`;
 
-    ctx.reply(profileText, { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.webApp('🚀 Открыть инвентарь и каталог', WEB_APP_URL)]]) }).catch(() => {});
+    ctx.reply(profileText, {
+      parse_mode: 'HTML',
+      ...Markup.inlineKeyboard([[Markup.button.webApp('🚀 Открыть инвентарь и каталог', WEB_APP_URL)]])
+    }).catch(() => {});
   } catch (err) { console.error('Ошибка в Профиль:', err.message); }
 });
 
@@ -516,10 +541,13 @@ bot.hears('🎁 Подарок', async (ctx) => {
     const giftText =
       `🎁 <b>Бесплатный предмет за подписку!</b>\n\n` +
       `Подпишись на наш канал ${CHANNEL_USERNAME}, чтобы мгновенно получить случайный Roblox-предмет стоимостью <b>от 5 до 10 ⭐</b>!`;
-    ctx.reply(giftText, { parse_mode: 'HTML', ...Markup.inlineKeyboard([
-      [Markup.button.url('📢 Подписаться на канал', `https://t.me/${CHANNEL_USERNAME.replace('@', '')}`)],
-      [Markup.button.callback('✅ Проверить подписку', 'check_subscription')]
-    ]) }).catch(() => {});
+    ctx.reply(giftText, {
+      parse_mode: 'HTML',
+      ...Markup.inlineKeyboard([
+        [Markup.button.url('📢 Подписаться на канал', `https://t.me/${CHANNEL_USERNAME.replace('@', '')}`)],
+        [Markup.button.callback('✅ Проверить подписку', 'check_subscription')]
+      ])
+    }).catch(() => {});
   } catch (err) { console.error('Ошибка в Подарок:', err.message); }
 });
 
@@ -560,10 +588,13 @@ bot.hears('👥 Друзья', async (ctx) => {
       `⭐ Premium: <b>${progress.premium}/5</b>\n` +
       `👤 Без Premium: <b>${progress.regular}/10</b>\n\n` +
       `${status}\n\n🔗 Твоя ссылка:\n<code>${refLink}</code>`;
-    ctx.reply(text, { parse_mode: 'HTML', ...Markup.inlineKeyboard([
-      [Markup.button.switchToChat('📲 Пригласить друга', '')],
-      [Markup.button.webApp('🎮 Открыть RoUP', WEB_APP_URL)]
-    ]) }).catch(() => {});
+    ctx.reply(text, {
+      parse_mode: 'HTML',
+      ...Markup.inlineKeyboard([
+        [Markup.button.switchToChat('📲 Пригласить друга', '')],
+        [Markup.button.webApp('🎮 Открыть RoUP', WEB_APP_URL)]
+      ])
+    }).catch(() => {});
   } catch (err) { console.error('Ошибка в Друзья:', err.message); }
 });
 
@@ -576,7 +607,10 @@ bot.on('inline_query', async (ctx) => {
   }], { cache_time: 0 });
 });
 
-bot.hears('🆘 Помощь', (ctx) => ctx.reply(`❓ <b>Техническая поддержка</b>\n\nПо всем вопросам и проблемам с предметами:\n👉 @roup_support`, { parse_mode: 'HTML' }).catch(() => {}));
+bot.hears('🆘 Помощь', (ctx) => ctx.reply(
+  `❓ <b>Техническая поддержка</b>\n\nПо всем вопросам и проблемам с предметами:\n👉 @roup_support`,
+  { parse_mode: 'HTML' }
+).catch(() => {}));
 
 // ── Callback-кнопки заявок на вывод ─────────────────────────────────
 bot.action(/^wr:(paid|reject):(\d+)$/, async (ctx) => {
@@ -602,6 +636,7 @@ bot.action(/^wr:(paid|reject):(\d+)$/, async (ctx) => {
   }
 });
 
+// ── Payments ────────────────────────────────────────────────────────
 bot.on('pre_checkout_query', async (ctx) => {
   const payload = String(ctx.preCheckoutQuery?.invoice_payload || '');
   console.log('💳 pre_checkout_query от', ctx.from?.id, payload);
@@ -647,6 +682,9 @@ process.on('unhandledRejection', (reason) => console.error('Необработа
 
 const app = express();
 app.disable('x-powered-by');
+app.set('trust proxy', 1);
+
+// CORS + security headers
 app.use((req, res, next) => {
   const allowedOrigin = process.env.WEB_APP_URL || '';
   const origin = req.get('Origin');
@@ -656,19 +694,39 @@ app.use((req, res, next) => {
   }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Telegram-Init-Data');
-  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'no-referrer');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
+
+// Compression: gzip/brotli для текстовых ответов
+app.use(compression({
+  threshold: 512,
+  level: 6,
+  filter: (req, res) => {
+    if (req.headers['x-no-compression']) return false;
+    return compression.filter(req, res);
+  },
+}));
+
+// Body parser — 64kb хватает с запасом
 app.use(express.json({ limit: '64kb' }));
 
+// Логгер API-запросов (сокращённый: только в dev или долгие запросы)
 app.use('/api', (req, res, next) => {
-  const hasInit = Boolean(req.header('X-Telegram-Init-Data'));
-  const body = req.method === 'POST' ? JSON.stringify(req.body || {}).slice(0, 200) : '';
-  console.log(`[api] ${req.method} ${req.originalUrl} init=${hasInit} body=${body}`);
+  const t0 = Date.now();
+  res.on('finish', () => {
+    const dt = Date.now() - t0;
+    if (!IS_PROD || dt > 200 || res.statusCode >= 400) {
+      const hasInit = Boolean(req.header('X-Telegram-Init-Data'));
+      console.log(`[api] ${req.method} ${req.originalUrl} → ${res.statusCode} ${dt}ms init=${hasInit}`);
+    }
+  });
   next();
 });
 
+// Диагностика
 app.get('/api/diag', (req, res) => {
   const whitelist = buildWhitelistForDiag();
   const userId = req.query.userId ? String(req.query.userId).trim() : null;
@@ -682,42 +740,85 @@ app.get('/api/diag', (req, res) => {
   });
 });
 
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || crypto.createHash('sha256').update(BOT_TOKEN || 'missing-token').digest('hex');
+// Вебхук Telegram
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET
+  || crypto.createHash('sha256').update(BOT_TOKEN || 'missing-token').digest('hex');
 const WEBHOOK_PATH = `/telegraf/${encodeURIComponent(WEBHOOK_SECRET)}`;
 app.use(bot.webhookCallback(WEBHOOK_PATH));
+
+// Webapp router
 app.use('/api', createWebappRouter(bot, BOT_TOKEN));
 
+// Health
 app.get('/ping', (req, res) => res.status(200).send('pong'));
-app.get('/health', (req, res) => res.json({ ok: true, service: 'roup' }));
+app.get('/health', (req, res) => res.json({ ok: true, service: 'roup', uptime: process.uptime() }));
 
+// Статика
 const webappDist = path.join(__dirname, 'webapp', 'dist');
 
 app.use(express.static(webappDist, {
   maxAge: '30d',
-  setHeaders: (res, path) => {
-    if (path.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache');
-  }
+  etag: true,
+  lastModified: true,
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache');
+    }
+  },
 }));
 
+// SPA fallback
 app.use((req, res) => {
-  if (req.path.startsWith('/api') || req.path.startsWith('/telegraf')) return res.status(404).json({ error: 'Маршрут API не найден' });
+  if (req.path.startsWith('/api') || req.path.startsWith('/telegraf')) {
+    return res.status(404).json({ error: 'not_found' });
+  }
   res.sendFile(path.join(webappDist, 'index.html'));
 });
 
+// Error handler
+app.use((err, req, res, next) => {
+  console.error('[express] unhandled error:', err.message);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: 'server_error' });
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// START
+// ═══════════════════════════════════════════════════════════════════════
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, async () => {
-  console.log(`Render HTTP-сервер активен на порту ${PORT}`);
+
+const server = app.listen(PORT, async () => {
+  console.log(`Render HTTP-сервер активен на порту ${PORT} (${IS_PROD ? 'prod' : 'dev'})`);
   if (!ADMIN_CHAT_ID) console.warn('⚠️ ADMIN_CHAT_ID не задан — заявки на вывод и админ-панель недоступны.');
+
   try {
     const fullWebhookUrl = `${WEB_APP_URL}${WEBHOOK_PATH}`;
     await bot.telegram.setWebhook(fullWebhookUrl);
     console.log(`Вебхук Telegram зарегистрирован: ${fullWebhookUrl}`);
-  } catch (err) { console.error('Ошибка регистрации вебхука:', err.message); }
+  } catch (err) {
+    console.error('Ошибка регистрации вебхука:', err.message);
+  }
 });
 
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+// Graceful shutdown
+function shutdown(signal) {
+  console.log(`[shutdown] ${signal} received, closing...`);
+  server.close(() => {
+    console.log('[shutdown] http server closed');
+    bot.stop(signal);
+    process.exit(0);
+  });
+  setTimeout(() => process.exit(1), 10000).unref?.();
+}
 
+process.once('SIGINT', () => shutdown('SIGINT'));
+process.once('SIGTERM', () => shutdown('SIGTERM'));
+
+// Anti-sleep ping (Render free tier)
 if (WEB_APP_URL && !WEB_APP_URL.includes('localhost')) {
-  setInterval(() => { fetch(`${WEB_APP_URL}/ping`).catch(() => {}); }, 4 * 60 * 1000);
+  const pingInterval = setInterval(() => {
+    fetch(`${WEB_APP_URL}/ping`).catch(() => {});
+  }, 4 * 60 * 1000);
+  pingInterval.unref?.();
 }
