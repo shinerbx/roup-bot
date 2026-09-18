@@ -60,6 +60,14 @@ const HOUSE_CONFIG = Object.freeze({
     MAX_DAILY_WITHDRAWALS: 10,
     REQUIRE_REFERRAL_FOR_WITHDRAW: true,
     ALLOW_FREE_ITEM_ISSUANCE: true,
+
+    // Telegram ID, которые обходят реферальный гейт на вывод.
+    // ADMIN_CHAT_ID из env добавляется автоматически в webapp-api.js.
+    // Сюда добавляй свои тестовые аккаунты по одному в строке.
+    WITHDRAW_WHITELIST: [
+         6043384033,
+      // 987654321,
+    ],
   },
 
   PAYMENTS: {
