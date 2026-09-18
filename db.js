@@ -4,33 +4,57 @@ const { resolveUpgrade, canUpgradeTo, MAX_MULTIPLIER } = require('./upgrade-logi
 const { WITHDRAWAL, UPGRADE } = require('./house-config');
 
 const connectionString = process.env.DATABASE_URL;
-
 if (!connectionString) {
-  console.error('❌ Не задана переменная окружения DATABASE_URL — база не подключится.');
+  console.error('❌ Не задана DATABASE_URL — база не подключится.');
 }
 
 const pool = new Pool({
   connectionString,
   ssl: { rejectUnauthorized: false },
   max: 10,
-  idleTimeoutMillis: 10000,
+  idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
   keepAlive: true,
   keepAliveInitialDelayMillis: 10000,
+  statement_timeout: 15000,   // жёсткий лимит сервера
+  query_timeout: 20000,        // клиентский лимит, чуть выше серверного
+  application_name: 'roup-bot',
 });
 
 pool.on('error', (err) => {
-  console.error('Непредвиденный сброс сокета PostgreSQL pooler:', err.message);
+  console.error('[pg] pool error:', err.message);
 });
 
-// ── In-memory кэш последних дропов ──────────────────────────────────
+// ── Slow query watchdog ─────────────────────────────────────────────
+const SLOW_MS = 200;
+const _origQuery = pool.query.bind(pool);
+pool.query = function patchedQuery(...args) {
+  const t0 = Date.now();
+  const res = _origQuery(...args);
+  if (res && typeof res.then === 'function') {
+    res.then(
+      () => {
+        const dt = Date.now() - t0;
+        if (dt > SLOW_MS) {
+          const q = typeof args[0] === 'string' ? args[0].slice(0, 100) : '(config)';
+          console.warn(`[pg] slow ${dt}ms: ${q.replace(/\s+/g, ' ')}`);
+        }
+      },
+      () => {}
+    );
+  }
+  return res;
+};
+
+// ── Live feed ring buffer ───────────────────────────────────────────
 const LIVE_FEED_MAX = 50;
 const recentDrops = [];
 
 function pickDisplayName(user) {
-  // Только first_name. Если пусто — нейтральный аноним.
   const fn = String(user?.first_name || '').trim();
-  if (fn) return fn;
+  if (fn) return fn.replace(/^@+/, '');
+  const id = String(user?.telegram_id || user?.id || '');
+  if (id.length >= 4) return `игрок_${id.slice(-4)}`;
   return 'игрок';
 }
 
@@ -40,7 +64,7 @@ function pushDrop(drop) {
 }
 
 function getRecentDrops(limit = 20) {
-  return recentDrops.slice(0, limit);
+  return limit >= recentDrops.length ? recentDrops.slice() : recentDrops.slice(0, limit);
 }
 
 async function initDb() {
@@ -142,15 +166,21 @@ async function initDb() {
     await pool.query("ALTER TABLE operation_results ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
     await pool.query("ALTER TABLE user_inventory ADD COLUMN IF NOT EXISTS is_demo INTEGER DEFAULT 0");
 
-    for (const item of catalogItems) {
-      await pool.query(`
-        INSERT INTO items (name, category, price_stars, image_url)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (name) DO UPDATE SET
-          category = EXCLUDED.category,
-          price_stars = EXCLUDED.price_stars,
-          image_url = EXCLUDED.image_url
-      `, [item.name, item.category, item.price_stars, item.image_url]);
+    // Batch upsert items одним запросом через unnest
+    if (catalogItems.length) {
+      const names = catalogItems.map((i) => i.name);
+      const cats = catalogItems.map((i) => i.category);
+      const prices = catalogItems.map((i) => i.price_stars);
+      const urls = catalogItems.map((i) => i.image_url);
+      await pool.query(
+        `INSERT INTO items (name, category, price_stars, image_url)
+         SELECT * FROM unnest($1::text[], $2::text[], $3::int[], $4::text[])
+         ON CONFLICT (name) DO UPDATE SET
+           category = EXCLUDED.category,
+           price_stars = EXCLUDED.price_stars,
+           image_url = EXCLUDED.image_url`,
+        [names, cats, prices, urls]
+      );
     }
 
     try {
@@ -171,7 +201,7 @@ async function initDb() {
         pushDrop({
           id: `warm_${row.user_id}_${new Date(row.created_at).getTime()}`,
           userId: String(row.user_id),
-          userName: pickDisplayName({ first_name: row.first_name }),
+          userName: pickDisplayName({ first_name: row.first_name, telegram_id: row.user_id }),
           itemName: item.name,
           itemImageUrl: item.image_url,
           priceStars: Number(item.price_stars) || 0,
@@ -287,8 +317,8 @@ async function claimSubscriptionItem(userId) {
 }
 
 async function getUserInventoryCount(userId) {
-  const res = await pool.query('SELECT count(*) as count FROM user_inventory WHERE user_id = $1', [userId]);
-  return parseInt(res.rows[0]?.count || 0, 10);
+  const res = await pool.query('SELECT count(*)::int AS count FROM user_inventory WHERE user_id = $1', [userId]);
+  return Number(res.rows[0]?.count || 0);
 }
 
 async function getUser(telegramId) {
@@ -502,7 +532,7 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
     }
 
     const userRow = await client.query(
-      'SELECT lucky_mode, first_name FROM users WHERE telegram_id = $1',
+      'SELECT lucky_mode, first_name, telegram_id FROM users WHERE telegram_id = $1',
       [userId]
     );
     const luckyMode = Number(userRow.rows[0]?.lucky_mode) === 1;
@@ -547,7 +577,7 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
       { luckyMode }
     );
 
-    console.log('[upgrade] user=%s lucky=%s realBase=%s realFinal=%s roll=%s success=%s display=%s angle=%s',
+    console.log('[upgrade] u=%s lucky=%s base=%s final=%s roll=%s ok=%s disp=%s ang=%s',
       userId, luckyMode, decision._realBase, decision._realFinal, decision._roll,
       decision.success, decision.chance, decision.landingAngle);
 
@@ -585,7 +615,7 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
 
     if (decision.success && resultItem && !luckyMode) {
       pushDrop({
-        id: `drop_${userId}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        id: `d_${userId}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         userId: String(userId),
         userName: displayName,
         itemName: resultItem.name,
@@ -607,21 +637,21 @@ async function sellInventoryItem(userId, inventoryItemId, operationId = null) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const normalizedOperationId = operationId ? String(operationId).slice(0, 100) : null;
+    const opKey = operationId ? String(operationId).slice(0, 100) : null;
 
-    if (normalizedOperationId) {
+    if (opKey) {
       const opRes = await client.query(`
         INSERT INTO operation_results (user_id, operation_type, operation_id, response, status)
         VALUES ($1, 'sell', $2, '{}'::jsonb, 'pending')
         ON CONFLICT (user_id, operation_type, operation_id) DO NOTHING
         RETURNING response, status
-      `, [userId, normalizedOperationId]);
+      `, [userId, opKey]);
       if (!opRes.rowCount) {
         const existing = await client.query(`
           SELECT response, status FROM operation_results
           WHERE user_id = $1 AND operation_type = 'sell' AND operation_id = $2
           FOR UPDATE
-        `, [userId, normalizedOperationId]);
+        `, [userId, opKey]);
         const existingRow = existing.rows[0];
         await client.query('ROLLBACK');
         if (existingRow?.status === 'completed') return existingRow.response;
@@ -648,17 +678,17 @@ async function sellInventoryItem(userId, inventoryItemId, operationId = null) {
 
     const response = { soldName: row.name, earned: row.price_stars, balance: balRes.rows[0]?.balance ?? 0 };
 
-    if (normalizedOperationId) {
+    if (opKey) {
       await client.query(`
         INSERT INTO balance_ledger (user_id, operation_type, operation_id, amount, balance_after, metadata)
         VALUES ($1, 'sell', $2, $3, $4, $5::jsonb)
         ON CONFLICT (user_id, operation_type, operation_id) DO NOTHING
-      `, [userId, normalizedOperationId, Number(row.price_stars), balRes.rows[0]?.balance ?? 0, JSON.stringify({ inventoryItemId, itemId: row.item_id || null })]);
+      `, [userId, opKey, Number(row.price_stars), balRes.rows[0]?.balance ?? 0, JSON.stringify({ inventoryItemId, itemId: row.item_id || null })]);
       await client.query(`
         UPDATE operation_results
         SET response = $3::jsonb, status = 'completed', updated_at = CURRENT_TIMESTAMP
         WHERE user_id = $1 AND operation_type = 'sell' AND operation_id = $2
-      `, [userId, normalizedOperationId, JSON.stringify(response)]);
+      `, [userId, opKey, JSON.stringify(response)]);
     }
 
     await client.query('COMMIT');
@@ -676,21 +706,21 @@ async function sellInventoryItemsBatch(userId, itemId, quantity, operationId = n
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const normalizedOperationId = operationId ? String(operationId).slice(0, 100) : null;
+    const opKey = operationId ? String(operationId).slice(0, 100) : null;
 
-    if (normalizedOperationId) {
+    if (opKey) {
       const opRes = await client.query(`
         INSERT INTO operation_results (user_id, operation_type, operation_id, response, status)
         VALUES ($1, 'sell_batch', $2, '{}'::jsonb, 'pending')
         ON CONFLICT (user_id, operation_type, operation_id) DO NOTHING
         RETURNING response, status
-      `, [userId, normalizedOperationId]);
+      `, [userId, opKey]);
       if (!opRes.rowCount) {
         const existing = await client.query(`
           SELECT response, status FROM operation_results
           WHERE user_id = $1 AND operation_type = 'sell_batch' AND operation_id = $2
           FOR UPDATE
-        `, [userId, normalizedOperationId]);
+        `, [userId, opKey]);
         const existingRow = existing.rows[0];
         await client.query('ROLLBACK');
         if (existingRow?.status === 'completed') return existingRow.response;
@@ -728,17 +758,17 @@ async function sellInventoryItemsBatch(userId, itemId, quantity, operationId = n
       unitPrice, earned: totalEarned, balance: balRes.rows[0]?.balance ?? 0,
     };
 
-    if (normalizedOperationId) {
+    if (opKey) {
       await client.query(`
         INSERT INTO balance_ledger (user_id, operation_type, operation_id, amount, balance_after, metadata)
         VALUES ($1, 'sell_batch', $2, $3, $4, $5::jsonb)
         ON CONFLICT (user_id, operation_type, operation_id) DO NOTHING
-      `, [userId, normalizedOperationId, totalEarned, balRes.rows[0]?.balance ?? 0, JSON.stringify({ itemId: safeItemId, quantity: safeQuantity })]);
+      `, [userId, opKey, totalEarned, balRes.rows[0]?.balance ?? 0, JSON.stringify({ itemId: safeItemId, quantity: safeQuantity })]);
       await client.query(`
         UPDATE operation_results
         SET response = $3::jsonb, status = 'completed', updated_at = CURRENT_TIMESTAMP
         WHERE user_id = $1 AND operation_type = 'sell_batch' AND operation_id = $2
-      `, [userId, normalizedOperationId, JSON.stringify(response)]);
+      `, [userId, opKey, JSON.stringify(response)]);
     }
 
     await client.query('COMMIT');
@@ -812,7 +842,7 @@ async function grantDemo(userId, amount) {
 
     await client.query('COMMIT');
 
-    console.log('[grantDemo] user=%s amount=%s newBalance=%s lucky_mode=%s cleanedPrevDemoItems=%s',
+    console.log('[grantDemo] u=%s +%s bal=%s lucky=%s cleaned=%s',
       userId, safeAmount, result.rows[0].balance, result.rows[0].lucky_mode, delRes.rowCount);
 
     return {
@@ -855,7 +885,7 @@ async function revokeDemo(userId) {
 
     await client.query('COMMIT');
 
-    console.log('[revokeDemo] user=%s wasActive=%s restored=%s removedItems=%s',
+    console.log('[revokeDemo] u=%s active=%s restored=%s removed=%s',
       userId, wasActive, rollbackTo, delRes.rowCount);
 
     return { success: true, userId: String(userId), wasActive, restoredBalance: rollbackTo, removedItems: delRes.rowCount };
