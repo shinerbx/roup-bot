@@ -3,14 +3,6 @@ import { api } from '../api.js';
 
 const POLL_MS = 8000;
 
-function fmtTimeAgo(ts) {
-  const s = Math.max(1, Math.floor((Date.now() - ts) / 1000));
-  if (s < 60) return `${s} сек`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m} мин`;
-  return `${Math.floor(m / 60)} ч`;
-}
-
 export default function LiveFeedStrip() {
   const [drops, setDrops] = useState([]);
   const aliveRef = useRef(true);
@@ -22,7 +14,12 @@ export default function LiveFeedStrip() {
       try {
         const r = await api.getUpgradeFeed();
         if (aliveRef.current && Array.isArray(r?.drops)) {
-          setDrops(r.drops.slice(0, 20));
+          // Только first_name, без @
+          const clean = r.drops.slice(0, 20).map((d) => ({
+            ...d,
+            userName: String(d.userName || 'игрок').replace(/^@+/, ''),
+          }));
+          setDrops(clean);
         }
       } catch (_) { /* тихо */ }
     };
@@ -34,33 +31,39 @@ export default function LiveFeedStrip() {
 
   if (!drops.length) {
     return (
-      <div className="live-feed live-feed--empty">
-        <span className="live-feed__dot" />
-        <span className="live-feed__empty-text">Смотрим, кто сейчас в игре…</span>
+      <div className="live-strip live-strip--empty">
+        <span className="live-strip__dot" />
+        <span className="live-strip__empty-text">Смотрим, кто сейчас в игре…</span>
       </div>
     );
   }
 
+  // Дублируем массив для бесшовного loop
+  const loop = [...drops, ...drops];
+
   return (
-    <div className="live-feed">
-      <div className="live-feed__head">
-        <span className="live-feed__dot" />
-        <span className="live-feed__label">Live drops</span>
+    <div className="live-strip" aria-label="Live-лента дропов">
+      <div className="live-strip__head">
+        <span className="live-strip__dot" />
+        <span className="live-strip__label">Live drops</span>
       </div>
-      <div className="live-feed__track">
-        {drops.map((d) => (
-          <div key={d.id} className="live-feed__card">
-            {d.itemImageUrl && (
-              <img className="live-feed__img" src={d.itemImageUrl} alt="" loading="lazy" />
-            )}
-            <div className="live-feed__body">
-              <span className="live-feed__item" title={d.itemName}>{d.itemName}</span>
-              <span className="live-feed__meta">
-                <b>{d.chance}%</b> · {d.userName} · {fmtTimeAgo(d.ts)}
-              </span>
+
+      <div className="live-strip__viewport">
+        <div className="live-strip__track">
+          {loop.map((d, i) => (
+            <div key={`${d.id}_${i}`} className="live-strip__card">
+              {d.itemImageUrl && (
+                <img className="live-strip__img" src={d.itemImageUrl} alt="" loading="lazy" />
+              )}
+              <div className="live-strip__body">
+                <span className="live-strip__item" title={d.itemName}>{d.itemName}</span>
+                <span className="live-strip__meta">
+                  <b>{d.chance}%</b> · {d.userName}
+                </span>
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
     </div>
   );
