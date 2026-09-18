@@ -1,3 +1,6 @@
+// language: JavaScript, file: db.js, target: Node.js
+// *Работа с PostgreSQL. Правки: initDb экспортируется, авто-вызов при загрузке убран.*
+
 const { Pool } = require('pg');
 const catalogItems = require('./catalog');
 const { resolveUpgrade, canUpgradeTo, MAX_MULTIPLIER } = require('./upgrade-logic');
@@ -67,6 +70,9 @@ function getRecentDrops(limit = 20) {
   return limit >= recentDrops.length ? recentDrops.slice() : recentDrops.slice(0, limit);
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// INIT DB
+// ═══════════════════════════════════════════════════════════════════════
 async function initDb() {
   try {
     await pool.query(`
@@ -232,12 +238,12 @@ async function initDb() {
     }
 
     console.log('✅ База данных Supabase подключена и синхронизирована!');
+    return true;
   } catch (err) {
     console.error('Ошибка инициализации таблиц Supabase:', err.message);
+    throw err;
   }
 }
-
-initDb();
 
 // ═══════════════════════════════════════════════════════════════════════
 // USERS
@@ -584,7 +590,6 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
   try {
     await client.query('BEGIN');
 
-    // Идемпотентность по operationId
     if (operationId) {
       const opKey = String(operationId).slice(0, 100);
       const opRes = await client.query(`
@@ -619,9 +624,6 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
     const demoActive = userRow.rows[0].pre_demo_balance != null || luckyMode;
     const displayName = pickDisplayName(userRow.rows[0]);
 
-    // FOR UPDATE OF ui — защита от дабл-тапа:
-    // параллельный запрос на тот же inventoryItemId встанет в очередь
-    // и после первого коммита увидит 0 строк → item_not_owned
     const ownedRes = await client.query(`
       SELECT ui.id, ui.is_demo, i.id AS item_id, i.name, i.price_stars
       FROM user_inventory ui
@@ -719,7 +721,6 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
 
     await client.query('COMMIT');
 
-    // Live-feed push — вне транзакции
     if (decision.success && resultItem && !luckyMode) {
       pushDrop({
         id: `d_${userId}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -911,11 +912,6 @@ async function sellInventoryItemsBatch(userId, itemId, quantity, operationId = n
   } catch (err) { await client.query('ROLLBACK'); throw err; }
   finally { client.release(); }
 }
-
-// ═══════════════════════════════════════════════════════════════════════
-// DEMO CREDITS
-// ═══════════════════════════════════════════════════════════════════════
-
 
 // ═══════════════════════════════════════════════════════════════════════
 // DEMO / LUCKY
@@ -1220,13 +1216,37 @@ async function attachAdminMessage(requestId, adminMessageId) {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// EXPORTS
+// ═══════════════════════════════════════════════════════════════════════
+
 module.exports = {
-  registerUser, getUser, calculateTier, claimSubscriptionItem, getUserInventoryCount,
-  getReferralProgress, setTutorialCompleted, getUserDemoItemCount, ensureUserExists,
+  // init
+  initDb,
+
+  // users
+  registerUser, getUser, calculateTier, claimSubscriptionItem,
+  getUserInventoryCount, getUserDemoItemCount, ensureUserExists,
+  setTutorialCompleted, getReferralProgress,
+
+  // items / inventory
   getCatalogItems, getItemById, getUserInventory, addInventoryItem,
-  buyItemWithBalance, buyItemsWithBalance, upgradeItem,
+
+  // buy
+  buyItemWithBalance, buyItemsWithBalance,
+
+  // upgrade
+  upgradeItem,
+
+  // sell
   sellInventoryItem, sellInventoryItemsBatch,
+
+  // withdraw
   createWithdrawRequest, refundWithdrawRequest, markWithdrawPaid, attachAdminMessage,
+
+  // demo
   grantDemo, revokeDemo, getDemoStatus,
+
+  // live-feed
   getRecentDrops,
 };
