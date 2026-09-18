@@ -26,7 +26,7 @@ const SHARE_BANNER_URL = 'https://i.ibb.co/Fq6L8G16/7007-D8-FC-C59-A-4-F72-B1-AB
 const PRIVACY_POLICY_URL = 'https://telegra.ph/Polzovatelskoe-soglashenie-i-Usloviya-programmy-loyalnosti-RoUP-09-16';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID;
 
-// Диагностический хелпер для /api/diag
+// ── Хелпер для диагностики ──────────────────────────────────────────
 function buildWhitelistForDiag() {
   const set = new Set();
   const envRaw = String(process.env.ADMIN_CHAT_ID || '');
@@ -34,6 +34,16 @@ function buildWhitelistForDiag() {
   const cfgList = Array.isArray(USER_LIMITS.WITHDRAW_WHITELIST) ? USER_LIMITS.WITHDRAW_WHITELIST : [];
   cfgList.forEach((v) => { const s = String(v).trim(); if (s) set.add(s); });
   return [...set];
+}
+
+function isWhitelistedId(userId, whitelist) {
+  const asStr = String(userId).trim();
+  const asNum = Number(userId);
+  if (whitelist.includes(asStr)) return true;
+  if (Number.isFinite(asNum)) {
+    for (const e of whitelist) if (Number(e) === asNum) return true;
+  }
+  return false;
 }
 
 const bot = new Telegraf(BOT_TOKEN);
@@ -338,28 +348,41 @@ app.use((req, res, next) => {
 });
 app.use(express.json({ limit: '64kb' }));
 
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || crypto.createHash('sha256').update(BOT_TOKEN || 'missing-token').digest('hex');
-const WEBHOOK_PATH = `/telegraf/${encodeURIComponent(WEBHOOK_SECRET)}`;
-app.use(bot.webhookCallback(WEBHOOK_PATH));
-app.use('/api', createWebappRouter(bot, BOT_TOKEN));
-app.get('/ping', (req, res) => res.status(200).send('pong'));
-app.get('/health', (req, res) => res.json({ ok: true, service: 'roup' }));
+// ═════════════════════════════════════════════════════════════════════
+// ДИАГНОСТИКА — регистрируется ДО webapp-роутера, поэтому публичная.
+// Открывать: https://roup-bot.onrender.com/api/diag
+// Опционально: ?userId=6043384033 — проверить конкретного пользователя
+// ═════════════════════════════════════════════════════════════════════
+app.get('/api/diag', (req, res) => {
+  const whitelist = buildWhitelistForDiag();
+  const userId = req.query.userId ? String(req.query.userId).trim() : null;
 
-// Диагностика вайтлиста. Открывать: https://roup-bot.onrender.com/api/diag
-app.get('/api/diag', (_req, res) => {
   res.json({
     adminChatIdRaw: process.env.ADMIN_CHAT_ID || null,
     adminChatIdTrimmed: String(process.env.ADMIN_CHAT_ID || '').trim(),
     adminChatIdType: typeof process.env.ADMIN_CHAT_ID,
-    whitelist: buildWhitelistForDiag(),
+    whitelist,
     requireReferral: USER_LIMITS.REQUIRE_REFERRAL_FOR_WITHDRAW,
     configWhitelist: USER_LIMITS.WITHDRAW_WHITELIST || [],
     nodeEnv: process.env.NODE_ENV || null,
     botTokenPresent: Boolean(process.env.BOT_TOKEN),
     dbUrlPresent: Boolean(process.env.DATABASE_URL),
     webAppUrl: process.env.WEB_APP_URL || null,
+    // Если передан ?userId=... — показываем, попал ли он в вайтлист
+    checkedUserId: userId,
+    checkedUserInWhitelist: userId ? isWhitelistedId(userId, whitelist) : null,
   });
 });
+
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || crypto.createHash('sha256').update(BOT_TOKEN || 'missing-token').digest('hex');
+const WEBHOOK_PATH = `/telegraf/${encodeURIComponent(WEBHOOK_SECRET)}`;
+app.use(bot.webhookCallback(WEBHOOK_PATH));
+
+// Webapp-роутер монтируем ПОСЛЕ diag.
+app.use('/api', createWebappRouter(bot, BOT_TOKEN));
+
+app.get('/ping', (req, res) => res.status(200).send('pong'));
+app.get('/health', (req, res) => res.json({ ok: true, service: 'roup' }));
 
 const webappDist = path.join(__dirname, 'webapp', 'dist');
 
