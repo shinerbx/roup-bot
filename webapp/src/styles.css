@@ -274,7 +274,7 @@ button {
 .item-card__image {
   width: 100%;
   height: 100%;
-  object-fit: cover; /* Обновлено для полного покрытия квадрата */
+  object-fit: cover;
   filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.4));
 }
 
@@ -888,7 +888,7 @@ button {
 
 
 /* ==========================================================================
-   UPGRADE TAB (NEW MODERN STYLE) 
+   UPGRADE TAB (NEW MODERN STYLE)
    ========================================================================== */
 
 .upgrade-screen {
@@ -920,17 +920,17 @@ button {
   border-radius: 50%;
   opacity: 0;
   transform: scale(1);
-  box-shadow: 0 0 20px #fff, 
-              0 0 60px #ffc800, 
-              0 0 120px #ffc800, 
+  box-shadow: 0 0 20px #fff,
+              0 0 60px #ffc800,
+              0 0 120px #ffc800,
               0 0 200px #ffc800;
-  transition: transform 0.6s cubic-bezier(0.1, 0.8, 0.1, 1), 
+  transition: transform 0.6s cubic-bezier(0.1, 0.8, 0.1, 1),
               opacity 0.6s ease-out;
 }
 
 .neon-flash-overlay.active .neon-flash-circle {
   opacity: 1;
-  transform: scale(150); /* Вспышка заполняет весь экран */
+  transform: scale(150);
 }
 
 /* Основная раскладка (3 колонки) */
@@ -1031,24 +1031,24 @@ button {
 }
 
 .upgrade-slot__image {
-  width: 120px; /* Обновлено (было 68px) */
+  width: 120px;
   height: 120px;
-  object-fit: contain; /* Оставляем contain для шляп, чтобы не резались */
+  object-fit: contain;
   filter: drop-shadow(0 8px 14px rgba(0,0,0,.44));
   margin-bottom: 8px;
 }
 
 @media (max-width: 470px) {
-  .upgrade-slot__image { 
-    width: 90px; 
-    height: 90px; 
+  .upgrade-slot__image {
+    width: 90px;
+    height: 90px;
   }
 }
 
 @media (max-width: 360px) {
-  .upgrade-slot__image { 
-    width: 75px; 
-    height: 75px; 
+  .upgrade-slot__image {
+    width: 75px;
+    height: 75px;
   }
 }
 
@@ -1104,8 +1104,8 @@ button {
   stroke-width: 10;
 }
 
-.upgrade-gauge__track { 
-  stroke: rgba(255,255,255,.055); 
+.upgrade-gauge__track {
+  stroke: rgba(255,255,255,.055);
 }
 
 .upgrade-gauge__value-arc {
@@ -1156,14 +1156,14 @@ button {
   margin-top: 4px;
   border-left: 5px solid transparent;
   border-right: 5px solid transparent;
-  border-top: 13px solid #ffc800; /* Желтый индикатор */
+  border-top: 13px solid #ffc800;
   filter: drop-shadow(0 0 7px rgba(255, 200, 0, 0.85));
 }
 
 /* Кнопка "ПРОКАЧАТЬ" */
 .upgrade-action-button {
   margin-top: 16px;
-  background: #ffc800; /* Желтый цвет как в Upgrader */
+  background: #ffc800;
   color: #111;
   border: none;
   border-radius: 12px;
@@ -1262,7 +1262,7 @@ button {
 
 
 /* ==========================================================================
-   СТИЛИ ОКНА ВЫБОРА ПРЕДМЕТА (ФИКС ОГРОМНЫХ КАРТИНОК)
+   СТИЛИ ОКНА ВЫБОРА ПРЕДМЕТА
    ========================================================================== */
 
 .upgrade-picker-sheet__header {
@@ -1335,11 +1335,10 @@ button {
   margin-bottom: 4px;
 }
 
-/* Обновлено (было contain) */
 .upgrade-picker-item__image-wrap img {
   width: 100%;
   height: 100%;
-  object-fit: cover; 
+  object-fit: cover;
   filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.5));
 }
 
@@ -1378,7 +1377,6 @@ button {
   to { transform: rotate(calc(var(--needle-angle) + 1800deg)); }
 }
 
-/* Успешный апгрейд: оба слота загораются красным неоном */
 .slot-success-red {
   border-color: #ff003c !important;
   background: rgba(255, 0, 60, 0.15) !important;
@@ -1391,14 +1389,12 @@ button {
   to { box-shadow: 0 0 40px rgba(255, 0, 60, 0.8), inset 0 0 30px rgba(255, 0, 60, 0.4); }
 }
 
-/* Проваленный апгрейд: левый слот тускнеет (предмет сгорел) */
 .slot-fail-dim {
   border-color: rgba(255, 255, 255, 0.05) !important;
   background: rgba(0, 0, 0, 0.4) !important;
   opacity: 0.6;
 }
 
-/* Проваленный апгрейд: правый слот показывает надпись НЕУДАЧА */
 .upgrade-slot-fail {
   display: flex;
   align-items: center;
@@ -1424,7 +1420,6 @@ button {
   75% { transform: translateX(-5px); }
 }
 
-/* Неоновое конфетти при успехе */
 .confetti-container {
   position: fixed;
   top: 50%;
@@ -1443,7 +1438,7 @@ button {
   background: var(--color);
   box-shadow: 0 0 10px var(--color), 0 0 20px var(--color);
   border-radius: 4px;
-  top: 0; 
+  top: 0;
   left: 0;
   animation: confetti-explode var(--duration) cubic-bezier(0.25, 1, 0.5, 1) var(--delay) forwards;
   opacity: 0;
@@ -1460,7 +1455,6 @@ button {
   }
 }
 
-/* ---------- Надпись результата по центру колеса ---------- */
 .upgrade-result-center {
   position: absolute;
   top: 40%;
@@ -1479,10 +1473,10 @@ button {
   font-weight: 900;
   font-size: 26px;
   letter-spacing: 2px;
-  text-shadow: 
-    0 0 10px #ff003c, 
-    0 0 20px #ff003c, 
-    0 0 40px #ff003c, 
+  text-shadow:
+    0 0 10px #ff003c,
+    0 0 20px #ff003c,
+    0 0 40px #ff003c,
     0 0 80px #ff003c;
   animation: result-pop 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
 }
@@ -1493,25 +1487,25 @@ button {
   font-weight: 900;
   font-size: 20px;
   letter-spacing: 2px;
-  text-shadow: 
-    0 0 10px #ff4a4a, 
-    0 0 20px #ff4a4a, 
+  text-shadow:
+    0 0 10px #ff4a4a,
+    0 0 20px #ff4a4a,
     0 0 40px #ff4a4a;
   animation: result-pop 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
 }
 
 @keyframes result-pop {
-  0% { 
-    opacity: 0; 
-    transform: scale(0.3) translateY(20px); 
+  0% {
+    opacity: 0;
+    transform: scale(0.3) translateY(20px);
   }
-  50% { 
-    opacity: 1; 
-    transform: scale(1.1) translateY(-5px); 
+  50% {
+    opacity: 1;
+    transform: scale(1.1) translateY(-5px);
   }
-  100% { 
-    opacity: 1; 
-    transform: scale(1) translateY(0); 
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
   }
 }
 
@@ -1906,12 +1900,12 @@ button {
 }
 
 .upgrade-gauge.spinning .upgrade-needle {
-  animation: upgrade-roulette-spin var(--spin-duration) cubic-bezier(.08,.72,.18,1) both;
+  animation: upgrade-roulette-spin var(--spin-duration, 3600ms) var(--spin-easing, cubic-bezier(.08,.72,.18,1)) both;
 }
 
 @keyframes upgrade-roulette-spin {
   from { transform: rotate(0deg); }
-  to { transform: rotate(calc(var(--needle-angle) + 1440deg)); }
+  to { transform: rotate(var(--spin-total-angle, 1440deg)); }
 }
 
 .upgrade-action-button {
@@ -2126,8 +2120,7 @@ img {
 }
 
 /* --------------------------------------------------------------------------
-   Final mobile polish: prevent text collisions and make purchase/upgrade
-   controls comfortable on narrow Telegram WebViews.
+   Final mobile polish
    -------------------------------------------------------------------------- */
 
 .screen-title,
@@ -2435,7 +2428,7 @@ img {
   .item-card__buy-group .item-card__buy { width: 100%; }
 }
 
-/* Upgrade result lighting: strictly tied to the active upgrade/result state. */
+/* Upgrade result lighting */
 .upgrade-stage-modern {
   position: relative;
   overflow: hidden;
@@ -2480,7 +2473,6 @@ img {
   50% { opacity: .62; transform: scale(1); }
 }
 
-/* Result state replaces the gold animation completely. */
 .upgrade-slot--success {
   border-color: rgba(48, 255, 143, .9) !important;
   background: rgba(48, 255, 143, .055) !important;
@@ -2842,7 +2834,7 @@ img {
   letter-spacing: .04em;
 }
 
-/* Robust long-name fitting for every item surface. */
+/* Robust long-name fitting */
 .item-card__name,
 .sheet__item-name,
 .upgrade-slot__name,
@@ -3088,8 +3080,15 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   font-size: 13.5px;
   color: var(--text-muted);
 }
-.withdraw-calc__row b { color: var(--text-primary); font-weight: 800; font-variant-numeric: tabular-nums; }
-.withdraw-calc__fee { color: var(--ember); font-weight: 700; }
+.withdraw-calc__row b {
+  color: var(--text-primary);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.withdraw-calc__fee {
+  color: var(--ember);
+  font-weight: 700;
+}
 .withdraw-calc__row--total {
   padding-top: 10px;
   border-top: 1px dashed var(--hairline);
@@ -3121,4 +3120,110 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .withdraw-error {
   padding: 12px 14px;
   border-radius: 12px;
-  background: rgba(239, 
+  background: rgba(239, 59, 79, .12);
+  border: 1px solid rgba(239, 59, 79, .35);
+  color: var(--crimson-bright);
+  font-size: 13px;
+  font-weight: 700;
+  animation: withdraw-error-in 0.32s cubic-bezier(.36,.07,.19,.97) both;
+}
+
+@keyframes withdraw-error-in {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(4px); }
+}
+
+.withdraw-warning {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(232, 184, 74, .08);
+  border: 1px solid rgba(232, 184, 74, .28);
+  color: var(--gold);
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.withdraw-success {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+  padding: 40px 16px 20px;
+  animation: fade-in .35s ease both;
+}
+.withdraw-success__icon {
+  width: 72px;
+  height: 72px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(48, 255, 143, .12);
+  color: #30ff8f;
+  font-size: 34px;
+  font-weight: 900;
+  box-shadow: 0 0 32px rgba(48, 255, 143, .25);
+  animation: splash-logo-in .5s cubic-bezier(.16, 1.6, .3, 1);
+}
+.withdraw-success__amount {
+  margin: 6px 0 0;
+  font-family: 'Unbounded', sans-serif;
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--gold);
+  letter-spacing: -.02em;
+}
+.withdraw-success__text {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.withdraw-success__text b { color: var(--text-primary); }
+.withdraw-success__note {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  color: var(--text-faint);
+  font-weight: 600;
+}
+
+.payment-method__label small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.payment-method__badge {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-faint);
+  background: transparent;
+  padding: 0;
+  min-width: 14px;
+  text-align: center;
+}
+
+.withdraw-field + .withdraw-field {
+  margin-top: 4px;
+}
+
+.topup-overlay > .sheet__confirm {
+  margin-top: auto;
+}
+
+@media (max-width: 380px) {
+  .withdraw-calc__row--total b {
+    font-size: 16px;
+  }
+  .withdraw-presets {
+    gap: 6px;
+  }
+  .withdraw-presets .topup-chip {
+    padding: 10px 0;
+    font-size: 12px;
+  }
+}
