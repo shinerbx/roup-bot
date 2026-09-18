@@ -42,8 +42,8 @@ async function request(path, options = {}, { retries = 5, baseDelayMs = 1200, ti
           headers: {
             'Content-Type': 'application/json',
             'X-Telegram-Init-Data': initData,
-            ...(options.headers || {})
-          }
+            ...(options.headers || {}),
+          },
         },
         timeoutMs
       );
@@ -82,7 +82,7 @@ export const api = {
 
   buy: (itemId, quantity = 1) => request('/buy', {
     method: 'POST',
-    body: JSON.stringify({ itemId, quantity, operationId: createOperationId() })
+    body: JSON.stringify({ itemId, quantity, operationId: createOperationId() }),
   }, { retries: 2 }),
 
   createSupportInvoice: (amount) =>
@@ -91,27 +91,29 @@ export const api = {
   getUpgradeConfig: () => request('/upgrade/config'),
 
   upgrade: (inventoryItemId, targetItemId, multiplier = 1) =>
-    request(
-      '/upgrade',
-      { method: 'POST', body: JSON.stringify({ inventoryItemId, targetItemId, multiplier, operationId: createOperationId() }) },
-      { retries: 2 }
-    ),
+    request('/upgrade', {
+      method: 'POST',
+      body: JSON.stringify({ inventoryItemId, targetItemId, multiplier, operationId: createOperationId() }),
+    }, { retries: 0 }), // анти-флуд: не ретраим
+
+  getUpgradeFeed: () => request('/upgrade/feed', {}, { retries: 1 }),
+  getOnline: () => request('/online', {}, { retries: 1 }),
 
   sell: (inventoryItemId) =>
     request('/sell', {
       method: 'POST',
-      body: JSON.stringify({ inventoryItemId, operationId: createOperationId() })
+      body: JSON.stringify({ inventoryItemId, operationId: createOperationId() }),
     }, { retries: 2 }),
 
   sellMany: (itemId, quantity) =>
     request('/sell-many', {
       method: 'POST',
-      body: JSON.stringify({ itemId, quantity, operationId: createOperationId() })
+      body: JSON.stringify({ itemId, quantity, operationId: createOperationId() }),
     }, { retries: 2 }),
 
   getWithdrawMethods: () => request('/withdraw/methods'),
   createWithdrawRequest: (payload) => request('/withdraw/request', {
     method: 'POST',
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
   }, { retries: 0 }),
 };
