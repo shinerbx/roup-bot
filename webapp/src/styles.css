@@ -3029,201 +3029,226 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 }
 
 /* ==========================================================================
-   WITHDRAW SCREEN
+   INVENTORY SCREEN — финальный дизайн
    ========================================================================== */
 
-.withdraw-field {
+.inventory-screen {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 14px;
+  min-width: 0;
 }
 
-.withdraw-field__label {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-muted);
-  letter-spacing: .02em;
-}
+/* ---------- Шапка инвентаря ---------- */
 
-.withdraw-field__hint {
-  margin: 0;
-  font-size: 11.5px;
-  color: var(--text-faint);
-}
-.withdraw-field__hint b { color: var(--text-primary); }
-
-.withdraw-presets {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 7px;
-  margin-top: 4px;
-}
-.withdraw-presets .topup-chip {
-  padding: 12px 0;
-  font-size: 13px;
-  border-radius: 12px;
-}
-
-.withdraw-calc {
+.inventory-header {
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 14px 16px;
-  background: var(--bg-panel-2);
-  border: 1px solid var(--hairline);
-  border-radius: 14px;
-}
-.withdraw-calc__row {
-  display: flex;
+  align-items: center;
   justify-content: space-between;
-  align-items: baseline;
-  font-size: 13.5px;
-  color: var(--text-muted);
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid var(--hairline);
+  background:
+    radial-gradient(circle at 100% 0%, rgba(232, 184, 74, .10), transparent 55%),
+    linear-gradient(150deg, var(--bg-panel-3), var(--bg-panel));
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .30);
 }
-.withdraw-calc__row b {
-  color: var(--text-primary);
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
+
+.inventory-header__left {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
-.withdraw-calc__fee {
-  color: var(--ember);
-  font-weight: 700;
-}
-.withdraw-calc__row--total {
-  padding-top: 10px;
-  border-top: 1px dashed var(--hairline);
-  font-size: 14px;
-}
-.withdraw-calc__row--total b {
-  color: var(--gold);
-  font-size: 18px;
-  font-weight: 900;
+
+.inventory-header__title {
+  margin: 0;
   font-family: 'Unbounded', sans-serif;
-}
-
-.withdraw-legal {
-  padding: 13px 15px;
-  border: 1px solid rgba(232, 184, 74, .22);
-  border-radius: 14px;
-  background: linear-gradient(180deg, rgba(232, 184, 74, .05), transparent);
-  font-size: 12px;
-  line-height: 1.55;
-  color: var(--text-muted);
-}
-.withdraw-legal p { margin: 0; }
-.withdraw-legal p + p { margin-top: 8px; }
-.withdraw-legal__note {
-  font-weight: 700;
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: -.01em;
   color: var(--text-primary);
 }
 
-.withdraw-error {
-  padding: 12px 14px;
-  border-radius: 12px;
-  background: rgba(239, 59, 79, .12);
-  border: 1px solid rgba(239, 59, 79, .35);
-  color: var(--crimson-bright);
+.inventory-header__meta {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* ---------- Кнопка ВЫВОД ---------- */
+
+.inventory-withdraw-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 11px 16px;
+  border: 1px solid rgba(232, 184, 74, .45);
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(232, 184, 74, .18), rgba(239, 59, 79, .14));
+  color: var(--gold);
+  font: inherit;
   font-size: 13px;
-  font-weight: 700;
-  animation: withdraw-error-in 0.32s cubic-bezier(.36,.07,.19,.97) both;
+  font-weight: 800;
+  letter-spacing: .01em;
+  cursor: pointer;
+  transition: transform .14s ease, background .18s ease, border-color .18s ease, box-shadow .18s ease;
+  box-shadow: 0 6px 18px -6px rgba(232, 184, 74, .35);
+  white-space: nowrap;
 }
 
-@keyframes withdraw-error-in {
-  0%, 100% { transform: translateX(0); }
-  20% { transform: translateX(-6px); }
-  40% { transform: translateX(6px); }
-  60% { transform: translateX(-4px); }
-  80% { transform: translateX(4px); }
+.inventory-withdraw-btn:active {
+  transform: translateY(1px) scale(.97);
+  background: linear-gradient(135deg, rgba(232, 184, 74, .28), rgba(239, 59, 79, .22));
+  box-shadow: 0 3px 10px -3px rgba(232, 184, 74, .45);
 }
 
-.withdraw-warning {
+.inventory-withdraw-btn__icon {
+  font-size: 15px;
+  line-height: 1;
+}
+
+.inventory-withdraw-btn--locked {
+  border-color: rgba(232, 184, 74, .22);
+  background: rgba(232, 184, 74, .06);
+  color: var(--text-muted);
+  box-shadow: none;
+}
+
+.inventory-withdraw-btn--locked .inventory-withdraw-btn__icon {
+  filter: grayscale(.4) opacity(.7);
+}
+
+/* ---------- Алерт про разблокировку ---------- */
+
+.inventory-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
   padding: 12px 14px;
-  border-radius: 12px;
-  background: rgba(232, 184, 74, .08);
+  border-radius: 14px;
   border: 1px solid rgba(232, 184, 74, .28);
+  background: linear-gradient(180deg, rgba(232, 184, 74, .08), rgba(232, 184, 74, .02));
+}
+
+.inventory-alert__icon {
+  flex: none;
+  font-size: 17px;
+  line-height: 1;
+  margin-top: 1px;
+}
+
+.inventory-alert__text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.inventory-alert__text strong {
   color: var(--gold);
   font-size: 12.5px;
-  font-weight: 700;
-  line-height: 1.5;
+  font-weight: 800;
 }
 
-.withdraw-success {
+.inventory-alert__text b {
+  color: var(--text-primary);
+  font-weight: 800;
+}
+
+/* ---------- Пустое состояние ---------- */
+
+.inventory-empty {
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
-  gap: 12px;
-  padding: 40px 16px 20px;
-  animation: fade-in .35s ease both;
+  gap: 6px;
+  padding: 44px 20px;
+  border-radius: 18px;
+  border: 1px dashed var(--hairline);
+  background: linear-gradient(160deg, var(--bg-panel-2), transparent);
 }
-.withdraw-success__icon {
-  width: 72px;
-  height: 72px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: rgba(48, 255, 143, .12);
-  color: #30ff8f;
-  font-size: 34px;
-  font-weight: 900;
-  box-shadow: 0 0 32px rgba(48, 255, 143, .25);
-  animation: splash-logo-in .5s cubic-bezier(.16, 1.6, .3, 1);
+
+.inventory-empty__icon {
+  font-size: 44px;
+  margin-bottom: 6px;
+  filter: drop-shadow(0 6px 14px rgba(0, 0, 0, .45));
 }
-.withdraw-success__amount {
-  margin: 6px 0 0;
-  font-family: 'Unbounded', sans-serif;
-  font-size: 26px;
-  font-weight: 800;
-  color: var(--gold);
-  letter-spacing: -.02em;
-}
-.withdraw-success__text {
+
+.inventory-empty__title {
   margin: 0;
+  font-family: 'Unbounded', sans-serif;
   font-size: 14px;
-  color: var(--text-muted);
-  line-height: 1.5;
+  font-weight: 800;
+  color: var(--text-primary);
 }
-.withdraw-success__text b { color: var(--text-primary); }
-.withdraw-success__note {
-  margin: 10px 0 0;
+
+.inventory-empty__text {
+  margin: 0;
+  max-width: 260px;
   font-size: 12.5px;
-  color: var(--text-faint);
-  font-weight: 600;
+  line-height: 1.5;
+  color: var(--text-muted);
 }
 
-.payment-method__label small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* ---------- Кнопка продажи на карточке ---------- */
 
-.payment-method__badge {
-  font-size: 14px;
+.item-card__sell {
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 7px 14px;
+  font-size: 12.5px;
   font-weight: 700;
-  color: var(--text-faint);
-  background: transparent;
-  padding: 0;
-  min-width: 14px;
-  text-align: center;
+  color: var(--gold);
+  background: rgba(232, 184, 74, 0.10);
+  transition: filter 0.15s ease, transform 0.1s ease, background .15s ease;
 }
 
-.withdraw-field + .withdraw-field {
-  margin-top: 4px;
+.item-card__sell:active:not(:disabled) {
+  transform: scale(0.96);
+  filter: brightness(1.15);
+  background: rgba(232, 184, 74, 0.18);
 }
 
-.topup-overlay > .sheet__confirm {
-  margin-top: auto;
+.item-card__sell:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
-@media (max-width: 380px) {
-  .withdraw-calc__row--total b {
-    font-size: 16px;
+/* ---------- Мобильная адаптация ---------- */
+
+@media (max-width: 390px) {
+  .inventory-header {
+    padding: 12px 14px;
+    border-radius: 16px;
   }
-  .withdraw-presets {
-    gap: 6px;
+  .inventory-header__title {
+    font-size: 15px;
   }
-  .withdraw-presets .topup-chip {
-    padding: 10px 0;
+  .inventory-withdraw-btn {
+    padding: 10px 13px;
     font-size: 12px;
+    gap: 5px;
+  }
+  .inventory-withdraw-btn__icon {
+    font-size: 14px;
+  }
+}
+
+@media (max-width: 340px) {
+  .inventory-withdraw-btn__label {
+    display: none;
+  }
+  .inventory-withdraw-btn {
+    padding: 11px 13px;
+  }
+  .inventory-withdraw-btn__icon {
+    font-size: 16px;
   }
 }
