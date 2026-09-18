@@ -8,8 +8,8 @@ import UpgradeTab from './components/UpgradeTab.jsx';
 import InventoryTab from './components/InventoryTab.jsx';
 import ProfileTab from './components/ProfileTab.jsx';
 import PurchaseSheet from './components/PurchaseSheet.jsx';
-import TopUpScreen from './components/TopUpScreen.jsx';
 import WithdrawScreen from './components/WithdrawScreen.jsx';
+import TopUpScreen from './components/TopUpScreen.jsx';
 import Toast from './components/Toast.jsx';
 import TutorialOverlay from './components/TutorialOverlay.jsx';
 
@@ -23,8 +23,8 @@ const SCREEN_META = {
 export default function App() {
   const [showSplash, setShowSplash] = useState(true);
   const [tab, setTab] = useState('catalog');
-  const [showTopUp, setShowTopUp] = useState(false);
   const [showWithdraw, setShowWithdraw] = useState(false);
+  const [showTopUp, setShowTopUp] = useState(false);
   const [catalog, setCatalog] = useState([]);
   const [inventory, setInventory] = useState([]);
   const [profile, setProfile] = useState(null);
@@ -120,7 +120,7 @@ export default function App() {
 
   const handleBuy = (item, quantity = 1) => {
     haptic('light');
-    setSheetQuantity(Math.min(9999, Math.max(1, Number.isInteger(quantity) ? quantity : 1)));
+    setSheetQuantity(Math.min(100, Math.max(1, Number.isInteger(quantity) ? quantity : 1)));
     setSheetItem(item);
   };
 
@@ -140,6 +140,9 @@ export default function App() {
       hapticNotify('error');
       if (err.code === 'insufficient_balance') {
         setToast('Недостаточно ⭐ на балансе.');
+        setSheetItem(null);
+        setSheetQuantity(1);
+        setShowTopUp(true);
       } else {
         setToast('Не получилось купить предмет.');
       }
@@ -235,19 +238,18 @@ export default function App() {
     );
   }
 
-  if (showWithdraw) {
+  if (showTopUp) {
     return (
       <div className="app">
-        <WithdrawScreen onClose={() => setShowWithdraw(false)} />
+        <TopUpScreen onClose={() => setShowTopUp(false)} />
       </div>
     );
   }
 
-  if (showTopUp) {
+  if (showWithdraw) {
     return (
       <div className="app">
-        <TopUpScreen onClose={() => setShowTopUp(false)} onError={setToast} />
-        <Toast message={toast} />
+        <WithdrawScreen onClose={() => setShowWithdraw(false)} />
       </div>
     );
   }
@@ -258,13 +260,11 @@ export default function App() {
         <div className="top-nav__brand">
           <img className="top-nav__logo" src="/logo.png" alt="RoUP" />
         </div>
-        <div className="balance-pill">
+        <button type="button" className="balance-pill" onClick={() => setShowTopUp(true)} aria-label="Пополнить баланс">
           <span className="balance-pill__icon">★</span>
           <span className="balance-pill__value">{profile?.balance ?? 0}</span>
-          <button className="balance-pill__add" onClick={() => setShowTopUp(true)} aria-label="Пополнить баланс">
-            +
-          </button>
-        </div>
+          <span className="balance-pill__add" aria-hidden="true">+</span>
+        </button>
       </header>
 
       {(meta.title || meta.subtitle) && (
@@ -310,10 +310,6 @@ export default function App() {
         balance={profile?.balance ?? 0}
         onCancel={() => { if (!buying) { setSheetItem(null); setSheetQuantity(1); } }}
         onConfirm={handleConfirmPurchase}
-        onTopUp={() => {
-          setSheetItem(null);
-          setShowTopUp(true);
-        }}
       />
 
       <Toast message={toast} />
