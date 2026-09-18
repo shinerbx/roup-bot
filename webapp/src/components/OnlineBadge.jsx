@@ -7,12 +7,14 @@ export default function OnlineBadge() {
 
   useEffect(() => {
     aliveRef.current = true;
+
     const load = async () => {
       try {
         const r = await api.getOnline();
         if (aliveRef.current && typeof r?.online === 'number') setOnline(r.online);
-      } catch (_) {}
+      } catch (_) { /* тихо */ }
     };
+
     load();
     const t = setInterval(load, 15000);
     return () => { aliveRef.current = false; clearInterval(t); };
