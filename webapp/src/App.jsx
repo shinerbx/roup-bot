@@ -41,8 +41,6 @@ export default function App() {
     initTelegram();
   }, []);
 
-  // Каждый эндпоинт грузится независимо: если упал один,
-  // остальные всё равно отрисуются, а не обнулится весь экран.
   const loadAll = useCallback(async () => {
     setLoading(true);
     setLoadFailed(false);
@@ -56,8 +54,6 @@ export default function App() {
     if (catalogRes.status === 'fulfilled') {
       const fetchedItems = catalogRes.value.items || [];
       setCatalog(fetchedItems);
-
-      // МГНОВЕННАЯ ПРЕДЗАГРУЗКА КАРТИНОК В КЭШ
       fetchedItems.forEach(item => {
         if (item.image_url) {
           const img = new window.Image();
@@ -86,13 +82,10 @@ export default function App() {
     if (profileRes.status === 'fulfilled') setProfile(profileRes.value);
   }, []);
 
-  // Данные начинают грузиться сразу, параллельно со сплэш-анимацией —
-  // к моменту, когда заставка закрывается, обычно уже всё готово.
   useEffect(() => {
     loadAll();
   }, [loadAll]);
 
-  // Telegram выгружает WebView в фоне — при возврате обновляем данные.
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState === 'visible') refreshInventoryAndProfile();
@@ -107,7 +100,6 @@ export default function App() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  // Первый запуск привязан к аккаунту Telegram, а не к конкретному устройству.
   useEffect(() => {
     if (showSplash || !profile || tutorialStep !== null) return;
     if (!profile.tutorial_completed) {
@@ -151,19 +143,22 @@ export default function App() {
     }
   };
 
-  const handleSell = async (item) => {
-    if (!item) return;
-    setSellingId(item.inventory_id);
+  const handleSellMany = async (itemId, quantity) => {
+    if (!itemId || !quantity) return;
+    setSellingId(itemId);
     haptic('light');
     try {
-      const res = await api.sell(item.inventory_id);
+      const res = await api.sellMany(itemId, quantity);
       hapticNotify('success');
-      setToast(`Продано: ${res.soldName} · +${res.earned} ★`);
+      setToast(`Продано: ${res.soldName} × ${res.quantity} · +${res.earned} ★`);
       await refreshInventoryAndProfile();
     } catch (err) {
       console.error(err);
       hapticNotify('error');
-      setToast('Не получилось продать предмет.');
+      const msg = err?.code === 'not_enough_items'
+        ? 'Недостаточно предметов для продажи.'
+        : 'Не получилось продать.';
+      setToast(msg);
     } finally {
       setSellingId(null);
     }
@@ -171,32 +166,17 @@ export default function App() {
 
   const handleTabChange = (nextTab) => {
     if (tutorialStep === 1) {
-      if (nextTab === 'catalog') {
-        haptic('light');
-        setTab('catalog');
-        setTutorialStep(2);
-      }
+      if (nextTab === 'catalog') { haptic('light'); setTab('catalog'); setTutorialStep(2); }
       return;
     }
-
     if (tutorialStep === 2) {
-      if (nextTab === 'upgrade') {
-        haptic('light');
-        setTab('upgrade');
-        setTutorialStep(3);
-      }
+      if (nextTab === 'upgrade') { haptic('light'); setTab('upgrade'); setTutorialStep(3); }
       return;
     }
-
     if (tutorialStep === 3) {
-      if (nextTab === 'inventory') {
-        haptic('light');
-        setTab('inventory');
-        setTutorialStep(4);
-      }
+      if (nextTab === 'inventory') { haptic('light'); setTab('inventory'); setTutorialStep(4); }
       return;
     }
-
     if (tutorialStep === 4) return;
     setTab(nextTab);
   };
@@ -205,7 +185,6 @@ export default function App() {
     try {
       await api.completeTutorial();
     } catch (err) {
-      // Локальный UI не должен зависеть от временного сбоя сервера.
       console.warn('Не удалось сохранить завершение туториала:', err);
     }
     setProfile((prev) => (prev ? { ...prev, tutorial_completed: true } : prev));
@@ -251,7 +230,7 @@ export default function App() {
         <WithdrawScreen
           onClose={() => setShowWithdraw(false)}
           balance={profile?.balance ?? 0}
-          canWithdraw={Boolean(profile?.can_withdraw)}
+          canWithdraw={profile?.can_withdraw !== false}
         />
       </div>
     );
@@ -293,7 +272,7 @@ export default function App() {
         <InventoryTab
           items={inventory}
           loading={loading}
-          onSell={handleSell}
+          onSell={handleSellMany}
           sellingId={sellingId}
           canWithdraw={Boolean(profile?.can_withdraw)}
           referralProgress={profile?.referral_progress}
