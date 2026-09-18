@@ -67,7 +67,6 @@ function findClosestTarget(catalog, desiredPrice, sourceItem) {
   return winners[Math.floor(Math.random() * winners.length)];
 }
 
-// Случайный профиль с джиттером — каждая крутка отличается
 function pickSpinProfile(profiles, jitter) {
   const list = Array.isArray(profiles) && profiles.length ? profiles : DEFAULT_CONFIG.spinProfiles;
   const j = jitter || DEFAULT_CONFIG.spinJitter;
@@ -81,22 +80,12 @@ function pickSpinProfile(profiles, jitter) {
   };
 }
 
-/**
- * Угол приземления стрелки.
- *
- * Зона успеха — [0, chance × 3.6] градусов (рисуется сверху по часовой).
- * Проигрыш — вне этой зоны. Чтобы картинка не была однообразной, промах
- * может падать как ЗА зоной (zone + gap), так и ПЕРЕД ней (360 − gap),
- * что визуально тоже "почти попал", но с другой стороны арки.
- */
 function computeLandingAngle(success, displayChance, nearMiss) {
   const zone = clamp(displayChance, 0, 100) * 3.6;
 
-  // Совсем узкая зона: игрок всё равно не попадёт внутрь, кидаем куда угодно
   if (zone < 0.5) return Math.random() * 360;
 
   if (success) {
-    // Внутри зелёной зоны, но без прилипания к одной точке
     return zone * (0.08 + Math.random() * 0.84);
   }
 
@@ -106,17 +95,14 @@ function computeLandingAngle(success, displayChance, nearMiss) {
   let offset;
 
   if (r < (weights.MILLIMETER || 0)) {
-    // Впритык к границе зоны — либо сразу за концом, либо перед началом
     const before = Math.random() < 0.5;
     const gap = 0.4 + Math.random() * 1.8;
     offset = before ? (missArc - gap) : gap;
   } else if (r < ((weights.MILLIMETER || 0) + (weights.CLOSE || 0))) {
-    // Близко, но не впритык — тоже с двух сторон
     const before = Math.random() < 0.5;
     const gap = 2 + Math.random() * 8;
     offset = before ? (missArc - gap) : gap;
   } else {
-    // Далеко — разброс по всей оставшейся дуге
     offset = missArc * (0.15 + Math.random() * 0.7);
   }
 
