@@ -231,6 +231,8 @@ export default function App() {
           onClose={() => setShowWithdraw(false)}
           balance={profile?.balance ?? 0}
           canWithdraw={profile?.can_withdraw !== false}
+          demoActive={Boolean(profile?.demo_active)}
+          referralProgress={profile?.referral_progress}
         />
       </div>
     );
