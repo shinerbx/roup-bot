@@ -765,11 +765,13 @@ async function createWithdrawRequest(userId, { method, amountStars, contactUsern
     await client.query('BEGIN');
 
     const opKey = String(operationId).slice(0, 100);
+    // В operation_results нет колонки id — используем составной ключ.
+    // RETURNING operation_id — валидная колонка, идемпотентность сохраняется.
     const opRes = await client.query(
       `INSERT INTO operation_results (user_id, operation_type, operation_id, response, status)
        VALUES ($1, 'withdraw_request', $2, '{}'::jsonb, 'pending')
        ON CONFLICT (user_id, operation_type, operation_id) DO NOTHING
-       RETURNING id`,
+       RETURNING operation_id`,
       [userId, opKey]
     );
     if (!opRes.rowCount) {
