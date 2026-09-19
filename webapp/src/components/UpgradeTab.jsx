@@ -26,6 +26,8 @@ const DEFAULT_CONFIG = {
 
 function clamp(v, min, max) { return Math.min(max, Math.max(min, v)); }
 
+// Честный ценовой ratio: source.price / target.price × 100 (с учётом config).
+// НЕ зависит от множителя — одна пара предметов даёт один и тот же процент.
 function calcDisplayChance(source, target, config) {
   if (!source || !target) return 0;
   const s = Number(source.price_stars);
@@ -36,15 +38,9 @@ function calcDisplayChance(source, target, config) {
   return clamp(base * (1 - config.displayHouseEdge), config.minChance, config.maxChance);
 }
 
-function calculateExpectedChance(multiplier) {
-  const m = Number(multiplier);
-  if (!Number.isFinite(m) || m < 1) return 0;
-  return Math.min(100, 100 / m);
-}
-
 function formatChance(c) {
   const n = Number(c);
-  if (!Number.isFinite(n)) return '0.0%';
+  if (!Number.isFinite(n) || n <= 0) return '0.0%';
   return `${n.toFixed(1)}%`;
 }
 
@@ -63,6 +59,17 @@ function findClosestTarget(catalog, desiredPrice, sourceItem) {
   return winners.length ? winners[Math.floor(Math.random() * winners.length)] : null;
 }
 
+// Приводит пару (source, target) к состоянию UI множителя:
+// округляет ratio до 0.1, ищет пресет, при промахе ставит «Своя».
+function ratioToUi(sourceItem, targetItem) {
+  if (!sourceItem || !targetItem) return { kind: 'preset', value: 2 };
+  const ratio = Number(targetItem.price_stars) / Number(sourceItem.price_stars);
+  const rounded = Math.round(ratio * 10) / 10;
+  const preset = PRESETS.find((p) => Math.abs(p - rounded) < 0.05);
+  if (preset) return { kind: 'preset', value: preset };
+  return { kind: 'custom', value: rounded };
+}
+
 function pickSpinProfile(profiles, jitter) {
   const list = Array.isArray(profiles) && profiles.length ? profiles : DEFAULT_CONFIG.spinProfiles;
   const j = jitter || DEFAULT_CONFIG.spinJitter;
@@ -72,7 +79,6 @@ function pickSpinProfile(profiles, jitter) {
   return { duration: Math.round(base.duration * jf), turns: base.turns + extra, easing: base.easing };
 }
 
-// ── Memoized Slot ───────────────────────────────────────────────────
 const Slot = memo(function Slot({ item, placeholder, onOpen, spinning, side, title, resultStatus }) {
   const failedTarget = side === 'target' && resultStatus === 'fail';
   return (
@@ -104,7 +110,6 @@ const Slot = memo(function Slot({ item, placeholder, onOpen, spinning, side, tit
   );
 });
 
-// ── Memoized Picker ─────────────────────────────────────────────────
 const PickerSheet = memo(function PickerSheet({ title, items, selectedId, getId, onSelect, onClose, disabledReason }) {
   return (
     <>
@@ -194,16 +199,13 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
      selectedMultiplier <= config.maxMultiplier &&
      Math.abs(selectedMultiplier * 10 - Math.round(selectedMultiplier * 10)) < 1e-9);
 
-  const expectedChance = useMemo(
-    () => calculateExpectedChance(selectedMultiplier),
-    [selectedMultiplier]
-  );
-
-  // Шанс показываем только когда выбраны ОБА компонента:
-  // исходный предмет И множитель (значит и целевой предмет).
-  // До этого wheelChance = 0 и ползунок пустой.
-  const bothChosen = Boolean(owned && target);
-  const wheelChance = bothChosen && Number.isFinite(expectedChance) ? expectedChance : 0;
+  // Главный фикс: шанс вычисляется из ВЫБРАННОЙ ПАРЫ предметов, а не из нажатой
+  // кнопки множителя. Одна пара = один процент на экране, независимо от того,
+  // сколько раз игрок переключал пресеты.
+  const wheelChance = useMemo(() => {
+    if (!owned || !target) return 0;
+    return calcDisplayChance(owned, target, config);
+  }, [owned, target, config]);
 
   const targetItems = useMemo(() => {
     if (!owned) return catalog;
@@ -213,11 +215,22 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
 
   useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
 
-  // Единый резолвер: по источнику и множителю находит ближайший по цене
-  // целевой предмет. Возвращает null, если ничего не подходит.
-  const pickTargetFor = useCallback((sourceItem, mult, customM) => {
+  // Приводит состояние множителя к фактическому ratio пары. Вызывается после
+  // любого автоподбора целевого предмета, чтобы кнопка множителя не врала.
+  const syncMultiplierToPair = useCallback((sourceItem, targetItem) => {
+    const ui = ratioToUi(sourceItem, targetItem);
+    if (ui.kind === 'preset') {
+      setMultiplier(ui.value);
+      setCustomMultiplier('');
+    } else {
+      setMultiplier('custom');
+      setCustomMultiplier(String(ui.value));
+    }
+  }, []);
+
+  const pickTargetFor = useCallback((sourceItem, mult) => {
     if (!sourceItem) return null;
-    const mNum = mult === 'custom' ? Number(customM) : Number(mult);
+    const mNum = Number(mult);
     if (!Number.isFinite(mNum) || mNum < 1) return null;
     const desired = Number(sourceItem.price_stars) * mNum;
     return findClosestTarget(catalog, desired, sourceItem);
@@ -227,27 +240,51 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
     setOwnedId(item.inventory_id);
     setPicker(null);
     haptic('light');
-    // Автоподбор целевого под текущий множитель.
-    const pick = pickTargetFor(item, multiplier, customMultiplier);
-    setTargetId(pick ? pick.id : null);
-  }, [pickTargetFor, multiplier, customMultiplier]);
+
+    // Автоподбор цели под текущий множитель, затем синхронизация UI.
+    const mNum = multiplier === 'custom' ? Number(customMultiplier) : Number(multiplier);
+    if (Number.isFinite(mNum) && mNum >= 1) {
+      const pick = pickTargetFor(item, mNum);
+      if (pick) {
+        setTargetId(pick.id);
+        syncMultiplierToPair(item, pick);
+        return;
+      }
+    }
+    setTargetId(null);
+  }, [multiplier, customMultiplier, pickTargetFor, syncMultiplierToPair]);
 
   const chooseTarget = useCallback((item) => {
     if (!owned || Number(item.price_stars) <= Number(owned.price_stars)) return;
     setTargetId(item.id);
+    syncMultiplierToPair(owned, item);
     setPicker(null);
     haptic('light');
-  }, [owned]);
+  }, [owned, syncMultiplierToPair]);
 
   const chooseMultiplier = useCallback((value) => {
-    // Без исходного предмета множитель не переключается.
     if (spinning || busy || result || !owned) return;
-    setMultiplier(value);
     haptic('light');
-    if (value === 'custom') return;
-    const pick = pickTargetFor(owned, value, customMultiplier);
-    setTargetId(pick ? pick.id : null);
-  }, [spinning, busy, result, owned, pickTargetFor, customMultiplier]);
+
+    if (value === 'custom') {
+      setMultiplier('custom');
+      return;
+    }
+
+    const mNum = Number(value);
+    if (!Number.isFinite(mNum) || mNum < 1) return;
+
+    const pick = pickTargetFor(owned, mNum);
+    if (!pick) {
+      setMultiplier(value);
+      setTargetId(null);
+      return;
+    }
+    setTargetId(pick.id);
+    // Кнопка подсветится фактическим ratio пары, а не тем, что нажал игрок.
+    // Если под ×4 нет цели и берётся ×3 — кнопка переключится на «Своя ×3».
+    syncMultiplierToPair(owned, pick);
+  }, [spinning, busy, result, owned, pickTargetFor, syncMultiplierToPair]);
 
   const handleCustom = useCallback(() => {
     if (spinning || busy || result || !owned) return;
@@ -263,7 +300,7 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
       setTargetId(null);
       return;
     }
-    const pick = pickTargetFor(owned, 'custom', val);
+    const pick = pickTargetFor(owned, m);
     setTargetId(pick ? pick.id : null);
   }, [owned, pickTargetFor, config.maxMultiplier]);
 
@@ -286,7 +323,6 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
     try {
       const res = await api.upgrade(owned.inventory_id, target.id, selectedMultiplier);
       const success = Boolean(res.success);
-      const serverExpectedChance = Number(res.expectedChance);
       const landing = Number.isFinite(Number(res.landingAngle)) ? Number(res.landingAngle) : 0;
       const profile = pickSpinProfile(config.spinProfiles, config.spinJitter);
 
@@ -302,7 +338,7 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
       });
 
       hapticNotify(success ? 'success' : 'error');
-      setResult({ sourceItem: owned, targetItem: target, success, item: res.item, expectedChance: Number.isFinite(serverExpectedChance) ? serverExpectedChance : expectedChance });
+      setResult({ sourceItem: owned, targetItem: target, success, item: res.item, expectedChance: wheelChance });
       await onUpgraded?.();
     } catch (err) {
       console.error(err);
@@ -326,7 +362,7 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
       setBusy(false);
       setSpinning(false);
     }
-  }, [owned, target, customValid, spinning, busy, result, selectedMultiplier, config, onUpgraded, onError, expectedChance]);
+  }, [owned, target, customValid, spinning, busy, result, selectedMultiplier, config, onUpgraded, onError, wheelChance]);
 
   if (loading) return <div className="skeleton upgrade-skeleton" />;
 
