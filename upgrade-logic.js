@@ -69,8 +69,10 @@ function applyLucky(realChance, luckyMode) {
 /**
  * Угол приземления стрелки (0–360°), рисуется по часовой от верха.
  * Визуальный сектор выигрыша = expectedChance × 3.6°.
- * Реальный серверный шанс не используется для отрисовки и не раскрывается клиенту как
- * пользовательский шанс. При этом визуальный исход всегда совпадает с success.
+ *
+ * Проигрыш: угол попадает в зону проигрыша со смещением от края.
+ * Минимальный зазор MIN_GAP_DEG убирает «почти повезло»,
+ * BIAS_POW < 1 раскидывает остановки по всей ширине зоны проигрыша.
  */
 function pickLandingAngle(success, displayChance) {
   const zone = Math.max(0.5, clampChance(displayChance) * 3.6);
@@ -80,21 +82,24 @@ function pickLandingAngle(success, displayChance) {
     return Number((zone * (0.05 + Math.random() * 0.9)).toFixed(2));
   }
 
-  const weights = ROULETTE.NEAR_MISS;
-  const r = Math.random();
-  let gap;
-
-  if (r < weights.MILLIMETER) {
-    gap = 0.15 + Math.random() * 0.95;     // практически у самой границы
-  } else if (r < weights.MILLIMETER + weights.CLOSE) {
-    gap = 1.2 + Math.random() * 3.8;
-  } else {
-    gap = 5 + Math.random() * 15;
+  const missArc = 360 - zone;
+  if (missArc <= 2) {
+    // Практически не бывает: слишком узкая зона проигрыша.
+    const fallback = Math.random() < 0.5 ? 359.5 : zone + 0.5;
+    return Number((fallback % 360).toFixed(2));
   }
 
-  const missArc = 360 - zone;
+  const cfg = ROULETTE.NEAR_MISS || {};
+  const minGap = Math.max(0.5, Math.min(Number(cfg.MIN_GAP_DEG) || 3, missArc * 0.10));
+  const maxGap = Math.max(minGap + 0.1, missArc - minGap);
+  const biasPow = Number(cfg.BIAS_POW) || 0.7;
+
+  const u = Math.random();
+  const t = Math.pow(u, biasPow);
+  const gap = minGap + t * (maxGap - minGap);
+
   const before = Math.random() < 0.5;
-  const offset = Math.min(gap, Math.max(0.2, missArc - 0.3));
+  const offset = Math.min(gap, missArc - 0.2);
   const angle = before ? (360 - offset) : (zone + offset);
 
   return Number((angle % 360).toFixed(2));
@@ -113,8 +118,32 @@ function resolveUpgrade(sourceItem, targetItem, multiplier = 1, opts = {}) {
   }
 
   const luckyMode = Boolean(opts?.luckyMode);
+  const cheapCount = Number(opts?.cheapUpgradesCount) || 0;
 
-  const realBase = calculateRealChance(sourceItem, targetItem, safeMultiplier);
+  let realBase = calculateRealChance(sourceItem, targetItem, safeMultiplier);
+
+  // ── Динамика дешёвых апгрейдов ────────────────────────────────────
+  const cheap = UPGRADE.CHEAP || null;
+  const sourcePrice = Number(sourceItem.price_stars);
+  const isCheap = cheap
+    && Number.isFinite(sourcePrice)
+    && sourcePrice <= Number(cheap.THRESHOLD);
+
+  let cheapPhase = null;
+  if (isCheap && !luckyMode) {
+    if (cheapCount < Number(cheap.HONEYMOON_COUNT)) {
+      const lo = Number(cheap.HONEYMOON_MIN) || 88;
+      const hi = Number(cheap.HONEYMOON_MAX) || 96;
+      realBase = lo + Math.random() * (hi - lo);
+      cheapPhase = 'honeymoon';
+    } else {
+      const mult = Number(cheap.AFTER_MULTIPLIER) || 0.35;
+      const cap = Number(cheap.AFTER_MAX) || 30;
+      realBase = Math.min(cap, realBase * mult);
+      cheapPhase = 'shaved';
+    }
+  }
+
   const realFinal = applyLucky(realBase, luckyMode);
 
   const roll = crypto.randomInt(0, 1_000_000) / 10_000;
@@ -122,19 +151,16 @@ function resolveUpgrade(sourceItem, targetItem, multiplier = 1, opts = {}) {
 
   const displayChance = calculateDisplayChance(sourceItem, targetItem, safeMultiplier);
   const expectedChance = calculateExpectedChance(safeMultiplier);
-  // Visual-only landing uses the expected multiplier-based chance.
-  // The actual success decision above remains based on realFinal.
   const landingAngle = pickLandingAngle(success, expectedChance);
 
   return {
     success,
     resultItemId: success ? targetItem.id : null,
-    // Keep chance for backwards compatibility/server diagnostics, but expose
-    // a separate explicit expectedChance for the client-facing UI.
     chance: Number((luckyMode ? realFinal : displayChance).toFixed(1)),
     expectedChance: Number(expectedChance.toFixed(1)),
     multiplier: safeMultiplier,
     landingAngle,
+    cheapPhase,
     _realBase: Number(realBase.toFixed(2)),
     _realFinal: Number(realFinal.toFixed(2)),
     _roll: Number(roll.toFixed(2)),
