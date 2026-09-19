@@ -1,7 +1,7 @@
 const { Pool } = require('pg');
 const catalogItems = require('./catalog');
 const { resolveUpgrade, canUpgradeTo, MAX_MULTIPLIER } = require('./upgrade-logic');
-const { WITHDRAWAL } = require('./house-config');
+const { WITHDRAWAL, UPGRADE } = require('./house-config');
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {
@@ -76,6 +76,7 @@ async function initDb() {
         first_name TEXT,
         balance INTEGER DEFAULT 0,
         upgrades_count INTEGER DEFAULT 0,
+        cheap_upgrades_count INTEGER DEFAULT 0,
         is_vip INTEGER DEFAULT 0,
         subscribed_reward_claimed INTEGER DEFAULT 0,
         invited_by BIGINT DEFAULT NULL,
@@ -162,6 +163,7 @@ async function initDb() {
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS tutorial_completed INTEGER DEFAULT 0');
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS pre_demo_balance INTEGER DEFAULT NULL');
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS lucky_mode INTEGER DEFAULT 0');
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS cheap_upgrades_count INTEGER DEFAULT 0');
     await pool.query("ALTER TABLE operation_results ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending'");
     await pool.query("ALTER TABLE operation_results ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
     await pool.query("ALTER TABLE user_inventory ADD COLUMN IF NOT EXISTS is_demo INTEGER DEFAULT 0");
@@ -608,7 +610,7 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
     }
 
     const userRow = await client.query(
-      'SELECT lucky_mode, pre_demo_balance, first_name, telegram_id FROM users WHERE telegram_id = $1 FOR UPDATE',
+      'SELECT lucky_mode, pre_demo_balance, first_name, telegram_id, cheap_upgrades_count FROM users WHERE telegram_id = $1 FOR UPDATE',
       [userId]
     );
     if (!userRow.rowCount) {
@@ -618,6 +620,7 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
     const luckyMode = Number(userRow.rows[0].lucky_mode) === 1;
     const demoActive = userRow.rows[0].pre_demo_balance != null || luckyMode;
     const displayName = pickDisplayName(userRow.rows[0]);
+    const cheapUpgradesCount = Number(userRow.rows[0].cheap_upgrades_count) || 0;
 
     // FOR UPDATE OF ui — защита от дабл-тапа:
     // параллельный запрос на тот же inventoryItemId встанет в очередь
@@ -673,16 +676,24 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
       { id: sourceItem.item_id, name: sourceItem.name, price_stars: sourceItem.price_stars },
       targetItem,
       safeMultiplier,
-      { luckyMode }
+      { luckyMode, cheapUpgradesCount }
     );
 
-    console.log('[upgrade] u=%s lucky=%s base=%s final=%s roll=%s ok=%s disp=%s ang=%s',
-      userId, luckyMode, decision._realBase, decision._realFinal, decision._roll,
-      decision.success, decision.chance, decision.landingAngle);
+    console.log('[upgrade] u=%s lucky=%s cheap=%s base=%s final=%s roll=%s ok=%s disp=%s ang=%s',
+      userId, luckyMode, decision.cheapPhase || '-', decision._realBase, decision._realFinal,
+      decision._roll, decision.success, decision.chance, decision.landingAngle);
 
     await client.query('DELETE FROM user_inventory WHERE id = $1', [inventoryItemId]);
+
     if (!demoActive) {
       await client.query('UPDATE users SET upgrades_count = upgrades_count + 1 WHERE telegram_id = $1', [userId]);
+      const cheapThreshold = Number(UPGRADE?.CHEAP?.THRESHOLD) || 500;
+      if (decision.success && Number(sourceItem.price_stars) <= cheapThreshold) {
+        await client.query(
+          'UPDATE users SET cheap_upgrades_count = cheap_upgrades_count + 1 WHERE telegram_id = $1',
+          [userId]
+        );
+      }
     }
 
     let resultItem = null;
@@ -911,11 +922,6 @@ async function sellInventoryItemsBatch(userId, itemId, quantity, operationId = n
   } catch (err) { await client.query('ROLLBACK'); throw err; }
   finally { client.release(); }
 }
-
-// ═══════════════════════════════════════════════════════════════════════
-// DEMO CREDITS
-// ═══════════════════════════════════════════════════════════════════════
-
 
 // ═══════════════════════════════════════════════════════════════════════
 // DEMO / LUCKY
