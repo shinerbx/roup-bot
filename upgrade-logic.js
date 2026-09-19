@@ -48,7 +48,6 @@ function calculateRealChance(sourceItem, targetItem, multiplier = 1) {
 
 // Клиентский дисплей-шанс = честный ценовой ratio (s/t) без множителя.
 // Множитель влияет только на реальный (серверный) шанс, не на отображение.
-// Это гарантирует: одна пара предметов = один и тот же процент на экране.
 function calculateDisplayChance(sourceItem, targetItem) {
   if (!canUpgradeTo(sourceItem, targetItem)) return 0;
   const s = Number(sourceItem.price_stars);
@@ -75,9 +74,13 @@ function applyLucky(realChance, luckyMode) {
 
 /**
  * Угол приземления стрелки (0–360°), по часовой от верха.
- * Визуальный сектор выигрыша = displayChance × 3.6°, где displayChance —
- * честный ценовой ratio выбранной пары. Стрелка и SVG-дуга на клиенте
- * используют одно и то же число.
+ * Визуальный сектор выигрыша = displayChance × 3.6°.
+ *
+ * Проигрыш:
+ *   1) С шансом BAIT_CHANCE — «байт-зона»: 2–9° от границы выигрышного сектора.
+ *      Стрелка визуально почти попала, но не дотянула.
+ *   2) Иначе — сглаженное распределение по всей зоне проигрыша.
+ *      BIAS_POW > 1 слегка подтягивает остановки к границе, но без клина.
  */
 function pickLandingAngle(success, displayChance) {
   const zone = Math.max(0.5, clampChance(displayChance) * 3.6);
@@ -93,13 +96,26 @@ function pickLandingAngle(success, displayChance) {
   }
 
   const cfg = ROULETTE.NEAR_MISS || {};
-  const minGap = Math.max(0.5, Math.min(Number(cfg.MIN_GAP_DEG) || 3, missArc * 0.10));
+  const rawMin = Number(cfg.MIN_GAP_DEG) || 2;
+  const minGap = Math.max(0.5, Math.min(rawMin, missArc * 0.10));
   const maxGap = Math.max(minGap + 0.1, missArc - minGap);
-  const biasPow = Number(cfg.BIAS_POW) || 0.7;
 
-  const u = Math.random();
-  const t = Math.pow(u, biasPow);
-  const gap = minGap + t * (maxGap - minGap);
+  let gap;
+
+  const baitChance = Math.max(0, Math.min(1, Number(cfg.BAIT_CHANCE) || 0));
+  const baitMax = Math.max(minGap + 0.5, Number(cfg.BAIT_MAX_GAP_DEG) || 9);
+  const biasPow = Number(cfg.BIAS_POW) || 1.4;
+
+  if (baitChance > 0 && Math.random() < baitChance && baitMax > minGap) {
+    // Байт-зона: 2–9° от границы. Ощущение «чуть-чуть не дотянуло».
+    gap = minGap + Math.random() * (baitMax - minGap);
+    if (gap > maxGap) gap = maxGap;
+  } else {
+    // Обычное распределение — по всей зоне проигрыша.
+    const u = Math.random();
+    const t = Math.pow(u, biasPow);
+    gap = minGap + t * (maxGap - minGap);
+  }
 
   const before = Math.random() < 0.5;
   const offset = Math.min(gap, missArc - 0.2);
@@ -125,6 +141,7 @@ function resolveUpgrade(sourceItem, targetItem, multiplier = 1, opts = {}) {
 
   let realBase = calculateRealChance(sourceItem, targetItem, safeMultiplier);
 
+  // ── Динамика дешёвых апгрейдов ────────────────────────────────────
   const cheap = UPGRADE.CHEAP || null;
   const sourcePrice = Number(sourceItem.price_stars);
   const isCheap = cheap
@@ -150,8 +167,7 @@ function resolveUpgrade(sourceItem, targetItem, multiplier = 1, opts = {}) {
   const roll = crypto.randomInt(0, 1_000_000) / 10_000;
   const success = roll < realFinal;
 
-  // Единый источник для UI: честный ценовой ratio пары. Не зависит от того,
-  // какую кнопку множителя нажал игрок.
+  // Единый источник для UI: честный ценовой ratio пары.
   const displayChance = calculateDisplayChance(sourceItem, targetItem);
   const landingAngle = pickLandingAngle(success, displayChance);
 
