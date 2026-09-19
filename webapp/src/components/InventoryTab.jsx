@@ -127,6 +127,7 @@ export default function InventoryTab({
   sellingId,
   canWithdraw,
   referralProgress,
+  isWhitelisted = false,
   onWithdraw,
   demoActive = false,
 }) {
@@ -170,14 +171,17 @@ export default function InventoryTab({
         <button
           type="button"
           className={`inventory-withdraw-btn${canWithdraw === false ? ' inventory-withdraw-btn--locked' : ''}`}
-          onClick={() => { haptic('medium'); onWithdraw?.(); }}
+          onClick={() => { if (canWithdraw === false) return; haptic('medium'); onWithdraw?.(); }}
+          disabled={canWithdraw === false}
+          aria-disabled={canWithdraw === false}
+          title={canWithdraw === false ? 'Вывод пока недоступен' : 'Вывести Robux'}
         >
           <span className="inventory-withdraw-btn__icon" aria-hidden="true">💸</span>
           <span className="inventory-withdraw-btn__label">Вывод</span>
         </button>
       </header>
 
-      {canWithdraw === false && (
+      {canWithdraw === false && !isWhitelisted && (
         <div className="inventory-alert">
           <span className="inventory-alert__icon" aria-hidden="true">🔒</span>
           <div className="inventory-alert__text">
@@ -185,8 +189,7 @@ export default function InventoryTab({
             {referralProgress && (
               <span>
                 Пригласи ещё <b>{referralProgress.premiumRemaining}</b> Premium
-                или <b>{referralProgress.regularRemaining}</b> обычных пользователей —
-                или оформи заявку сейчас, менеджер проверит вручную.
+                или <b>{referralProgress.regularRemaining}</b> обычных пользователей.
               </span>
             )}
           </div>

@@ -47,7 +47,7 @@ export default function ProfileTab({ profile, loading, onOpenWithdrawRequests })
           ⭐ — внутренняя учётная единица, не деньги и не платёжное средство.
         </span>
         <span className="app-footer__line">
-          Вывод обрабатывается вручную и может быть ограничен.
+          Доступ к выводу зависит от выполнения условий сервиса.
           <span className="app-footer__sep">·</span>
           Сервис <b>18+</b>.
         </span>

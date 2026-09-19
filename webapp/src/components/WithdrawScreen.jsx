@@ -66,7 +66,7 @@ function mapError(code, details) {
     invalid_amount: 'Некорректная сумма.',
     daily_withdrawal_limit: 'Достигнут дневной лимит заявок на вывод.',
     user_not_found: 'Не удалось найти ваш профиль. Откройте приложение из Telegram и попробуйте снова.',
-    demo_active: 'Включён Demo-Режим. Для его отключения напишите своему менеджеру.',
+    demo_active: 'Вывод сейчас недоступен для этого аккаунта.',
     server_error: details?.detail ? `Сервер не смог создать заявку: ${details.detail}` : 'Сервис временно не смог создать заявку. Попробуйте ещё раз.',
   };
   return map[code] || 'Не удалось создать заявку. Попробуйте позже.';
@@ -107,6 +107,7 @@ export default function WithdrawScreen({
   canWithdraw = false,
   demoActive = false,
   referralProgress = null,
+  isWhitelisted = false,
 }) {
   const [rate, setRate] = useState(STARS_TO_ROBUX_RATE);
   const [commissionPct, setCommissionPct] = useState(COMMISSION_FALLBACK);
@@ -222,7 +223,7 @@ export default function WithdrawScreen({
         <div className="withdraw-demo-lock">
           <div className="withdraw-demo-lock__icon">🔒</div>
           <p className="withdraw-demo-lock__title">Включён Demo-Режим</p>
-          <p className="withdraw-demo-lock__text">Для его отключения напишите своему менеджеру.</p>
+          <p className="withdraw-demo-lock__text">Вывод сейчас недоступен для этого аккаунта.</p>
         </div>
         <WithdrawFooter />
       </div>
@@ -286,7 +287,7 @@ export default function WithdrawScreen({
             </div>
           </div>
 
-          {!canWithdraw && (
+          {!canWithdraw && !isWhitelisted && (
             <div className="withdraw-warning">
               <b>Вывод пока недоступен.</b>{' '}
               {referralProgress
