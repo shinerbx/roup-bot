@@ -66,7 +66,7 @@ function isWhitelisted(userId, whitelist) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// ONLINE — O(1) на запрос, cleanup по таймеру
+// ONLINE — реальный счётчик (для логов) + симуляция по времени суток
 // ═══════════════════════════════════════════════════════════════════════
 
 const onlineMap = new Map();
@@ -91,6 +91,66 @@ setInterval(() => {
   }
   if (removed > 0) console.log(`[online] cleanup removed ${removed}, left ${onlineMap.size}`);
 }, 60000).unref?.();
+
+// ── Симуляция онлайна: пик днём 70–90, вечер 40–60, ночь 10–25 ───────
+// Опорные точки кривой в часах суток; между ними — косинусная интерполяция.
+// Медленные волны дают живые колебания без рывков на 15-сек поллинге.
+// Жёсткий потолок 100.
+
+function _cosineInterp(t) { return 0.5 - 0.5 * Math.cos(Math.PI * t); }
+
+const _ONLINE_ANCHORS = [
+  { h: 3,  v: 0.00 },  // глубокая ночь
+  { h: 13, v: 1.00 },  // пик дня
+  { h: 19, v: 0.50 },  // вечер
+  { h: 23, v: 0.15 },  // поздний вечер → ночь
+  { h: 27, v: 0.00 },  // следующая ночь (wrap 3:00)
+];
+
+function _levelAtHour(hour) {
+  let h = hour;
+  if (h < _ONLINE_ANCHORS[0].h) h += 24;
+  for (let i = 0; i < _ONLINE_ANCHORS.length - 1; i++) {
+    const a = _ONLINE_ANCHORS[i];
+    const b = _ONLINE_ANCHORS[i + 1];
+    if (h >= a.h && h <= b.h) {
+      const t = (h - a.h) / (b.h - a.h);
+      return a.v + (b.v - a.v) * _cosineInterp(t);
+    }
+  }
+  return 0.15;
+}
+
+function _rangeFromLevel(level) {
+  // 0.0 → [10,25]  ·  0.5 → [40,60]  ·  1.0 → [70,90]
+  if (level <= 0.5) {
+    const t = Math.max(0, Math.min(1, level / 0.5));
+    return [10 + 30 * t, 25 + 35 * t];
+  }
+  const t = Math.max(0, Math.min(1, (level - 0.5) / 0.5));
+  return [40 + 30 * t, 60 + 30 * t];
+}
+
+function getSimulatedOnline() {
+  const now = new Date();
+  const hour = now.getHours() + now.getMinutes() / 60;
+  const level = _levelAtHour(hour);
+  const [lo, hi] = _rangeFromLevel(level);
+  const mid = (lo + hi) / 2;
+  const halfSpan = (hi - lo) / 2;
+
+  const tSec = now.getTime() / 1000;
+  const wave =
+    Math.sin(tSec / 90) * 0.55 +
+    Math.sin(tSec / 300) * 0.30 +
+    Math.sin(tSec / 45) * 0.15;
+
+  let value = mid + wave * halfSpan;
+  value += (Math.random() - 0.5) * 1.2;
+  value = Math.round(value);
+
+  return Math.max(1, Math.min(100, value));
+}
 
 // ═══════════════════════════════════════════════════════════════════════
 // RATE LIMITER per-user (sliding window)
@@ -119,7 +179,7 @@ setInterval(() => {
 }, 30000).unref?.();
 
 // ═══════════════════════════════════════════════════════════════════════
-// FAKE DROPS — пул без повторов, перегенерация раз в минуту
+// FAKE DROPS — генератор имён + пул без повторов, перегенерация раз в минуту
 // ═══════════════════════════════════════════════════════════════════════
 
 const FAKE_FIRST_NAMES = [
@@ -130,10 +190,73 @@ const FAKE_FIRST_NAMES = [
   'Ваня', 'Гоша', 'Слава', 'Толя', 'Женя', 'Мирон',
 ];
 
+const FAKE_LAST_NAMES = [
+  'Иванов', 'Петров', 'Смирнов', 'Кузнецов', 'Соколов', 'Попов',
+  'Лебедев', 'Козлов', 'Новиков', 'Морозов', 'Волков', 'Соловьёв',
+  'Васильев', 'Зайцев', 'Павлов', 'Семёнов', 'Голубев', 'Виноградов',
+  'Богданов', 'Воробьёв', 'Фёдоров', 'Михайлов', 'Беляев', 'Тарасов',
+  'Белов', 'Комаров', 'Орлов', 'Киселёв',
+];
+
+const FAKE_NICK_A = [
+  'Shadow', 'Dark', 'Iron', 'Neo', 'Cyber', 'Ghost', 'Storm', 'Frost',
+  'Void', 'Wolf', 'Blood', 'Swift', 'Silent', 'Mad', 'Wild', 'Night',
+  'Dead', 'Red', 'Black', 'Silver', 'Golden', 'Turbo', 'Killer', 'Fatal',
+  'Savage', 'Prime', 'Alpha', 'Zero', 'Nova', 'Lucky', 'Crazy', 'Epic', 'Mega',
+];
+
+const FAKE_NICK_B = [
+  'Fiend', 'Wolf', 'Blade', 'King', 'Lord', 'Sniper', 'Knight', 'Hunter',
+  'Reaper', 'Phantom', 'Strike', 'Fury', 'Storm', 'Soul', 'Beast', 'Dragon',
+  'Tiger', 'Falcon', 'Ninja', 'Master', 'Boss', 'Chief', 'Slayer', 'Mage',
+  'Rogue', 'Rider', 'Warden', 'Ghost', 'Bolt', 'Pulse',
+];
+
+const FAKE_LATIN_NAMES = [
+  'Alex', 'Max', 'Mike', 'Nick', 'Dan', 'Vlad', 'Sam', 'Chris',
+  'John', 'Mark', 'Paul', 'Eric', 'Adam', 'Ron', 'Tim', 'Tom',
+  'Leo', 'Ray', 'Jay', 'Kai', 'Nate', 'Ryan', 'Cody', 'Josh',
+];
+
 const FAKE_POOL_SIZE = 200;
 let fakePool = [];
 let fakePoolBuiltAt = 0;
 let fakePoolCatalogVersion = '';
+
+function _pick(arr) { return arr[(Math.random() * arr.length) | 0]; }
+
+// Микс реальных имён (с фамилией/инициалом), латинских ников,
+// ников с цифрами — разный регистр, разные стили.
+function generateDisplayName() {
+  const roll = Math.random();
+
+  if (roll < 0.28) {
+    return `${_pick(FAKE_FIRST_NAMES)}_${_pick(FAKE_LAST_NAMES)}`;
+  }
+  if (roll < 0.42) {
+    const fn = _pick(FAKE_FIRST_NAMES);
+    const ln = _pick(FAKE_LAST_NAMES);
+    return `${fn}_${ln[0].toUpperCase()}`;
+  }
+  if (roll < 0.56) {
+    const nick = _pick(FAKE_NICK_A) + _pick(FAKE_NICK_B);
+    const c = Math.random();
+    if (c < 0.12) return nick.toUpperCase();
+    if (c < 0.24) return nick.toLowerCase();
+    return nick;
+  }
+  if (roll < 0.72) {
+    const fn = _pick(FAKE_FIRST_NAMES);
+    const n = Math.floor(Math.random() < 0.4 ? 10 + Math.random() * 89 : 100 + Math.random() * 9899);
+    return `${fn}${n}`;
+  }
+  if (roll < 0.86) {
+    return `${_pick(FAKE_FIRST_NAMES)}_${_pick(FAKE_NICK_A)}`;
+  }
+  const ln = _pick(FAKE_LATIN_NAMES);
+  const n = Math.floor(Math.random() * 999);
+  return `${ln}${n}`;
+}
 
 function shuffle(arr) {
   const a = arr.slice();
@@ -147,13 +270,20 @@ function shuffle(arr) {
 function rebuildFakePool(catalog) {
   if (!catalog.length) return [];
   const items = shuffle(catalog);
-  const names = shuffle(FAKE_FIRST_NAMES);
   const out = [];
   const now = Date.now();
+  const usedNames = new Set();
 
   for (let i = 0; i < FAKE_POOL_SIZE; i++) {
     const item = items[i % items.length];
-    const name = names[i % names.length];
+    let name;
+    let guard = 0;
+    do {
+      name = generateDisplayName();
+      guard++;
+    } while (usedNames.has(name) && guard < 8);
+    usedNames.add(name);
+
     out.push({
       id: `fake_${now}_${i}`,
       userId: `fake_u_${now}_${i}`,
@@ -400,12 +530,9 @@ function createWebappRouter(bot, botToken) {
   });
 
   router.get('/online', (_req, res) => {
-    const real = getRealOnline();
-    const mult = Number(LIVE_FEED.ONLINE_MULTIPLIER) || 100;
-    const fake = Math.max(real * mult, 1);
-    const jitter = Math.floor(fake * (Math.random() * 0.1 - 0.05));
+    const online = getSimulatedOnline();
     res.set('Cache-Control', 'public, max-age=10');
-    res.json({ online: Math.max(1, fake + jitter) });
+    res.json({ online });
   });
 
   router.post('/upgrade', async (req, res) => {
