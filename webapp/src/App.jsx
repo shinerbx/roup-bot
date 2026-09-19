@@ -9,6 +9,7 @@ import InventoryTab from './components/InventoryTab.jsx';
 import ProfileTab from './components/ProfileTab.jsx';
 import PurchaseSheet from './components/PurchaseSheet.jsx';
 import WithdrawScreen from './components/WithdrawScreen.jsx';
+import WithdrawRequestsPanel from './components/WithdrawRequestsPanel.jsx';
 import TopUpScreen from './components/TopUpScreen.jsx';
 import Toast from './components/Toast.jsx';
 import TutorialOverlay from './components/TutorialOverlay.jsx';
@@ -25,6 +26,7 @@ export default function App() {
   const [tab, setTab] = useState('catalog');
   const [showWithdraw, setShowWithdraw] = useState(false);
   const [showTopUp, setShowTopUp] = useState(false);
+  const [showWithdrawRequests, setShowWithdrawRequests] = useState(false);
   const [catalog, setCatalog] = useState([]);
   const [inventory, setInventory] = useState([]);
   const [profile, setProfile] = useState(null);
@@ -220,6 +222,14 @@ export default function App() {
     );
   }
 
+  if (showWithdrawRequests) {
+    return (
+      <div className="app">
+        <WithdrawRequestsPanel onClose={() => setShowWithdrawRequests(false)} />
+      </div>
+    );
+  }
+
   if (showTopUp) {
     return (
       <div className="app">
@@ -232,7 +242,7 @@ export default function App() {
     return (
       <div className="app">
         <WithdrawScreen
-          onClose={() => setShowWithdraw(false)}
+          onClose={async () => { setShowWithdraw(false); await refreshInventoryAndProfile(); }}
           balance={profile?.balance ?? 0}
           canWithdraw={profile?.can_withdraw !== false}
           demoActive={Boolean(profile?.demo_active)}
@@ -287,7 +297,7 @@ export default function App() {
           onWithdraw={() => setShowWithdraw(true)}
         />
       )}
-      {tab === 'profile' && <ProfileTab profile={profile} loading={loading} />}
+      {tab === 'profile' && <ProfileTab profile={profile} loading={loading} onOpenWithdrawRequests={() => setShowWithdrawRequests(true)} />}
 
       <TabBar active={tab} onChange={setTab} />
 

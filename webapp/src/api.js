@@ -161,6 +161,7 @@ export const api = {
     }, { retries: 2 }),
 
   getWithdrawMethods: () => request('/withdraw/methods', {}, { dedupe: true }),
+  getWithdrawRequests: () => request('/withdraw/requests', {}, { dedupe: true }),
   createWithdrawRequest: (payload) => request('/withdraw/request', {
     method: 'POST',
     body: JSON.stringify(payload),

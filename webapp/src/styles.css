@@ -4303,3 +4303,40 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   font-size: 19px;
   white-space: nowrap;
 }
+
+
+/* Withdraw requests */
+.profile-requests-button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0;
+  padding: 14px 16px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 16px;
+  background: rgba(255,255,255,.045);
+  color: inherit;
+  text-align: left;
+}
+.profile-requests-button > span:first-child { font-size: 22px; }
+.profile-requests-button b { display:block; font-size:15px; }
+.profile-requests-button small { display:block; margin-top:3px; opacity:.58; font-size:12px; }
+.profile-requests-button__arrow { margin-left:auto; font-size:25px; opacity:.5; }
+.withdraw-requests-screen { padding-bottom: 24px; }
+.withdraw-requests-list { display:flex; flex-direction:column; gap:10px; padding: 8px 0 14px; overflow:auto; }
+.withdraw-request-card { padding:15px; border-radius:17px; background:rgba(255,255,255,.045); border:1px solid rgba(255,255,255,.07); }
+.withdraw-request-card__top { display:flex; justify-content:space-between; gap:10px; align-items:flex-start; margin-bottom:12px; }
+.withdraw-request-card__top > div { display:flex; flex-direction:column; gap:4px; }
+.withdraw-request-card__id { font-size:11px; opacity:.48; }
+.withdraw-request-card__top strong { font-size:19px; }
+.withdraw-request-status { padding:5px 8px; border-radius:999px; font-size:11px; white-space:nowrap; }
+.withdraw-request-status--pending { background:rgba(255,190,70,.12); color:#ffc15a; }
+.withdraw-request-status--completed { background:rgba(80,210,130,.12); color:#72d89b; }
+.withdraw-request-status--rejected { background:rgba(255,90,90,.12); color:#ff8a8a; }
+.withdraw-request-card__row { display:flex; justify-content:space-between; gap:12px; padding:7px 0; font-size:13px; border-top:1px solid rgba(255,255,255,.05); }
+.withdraw-request-card__row span { opacity:.55; }
+.withdraw-request-card__row b { text-align:right; overflow-wrap:anywhere; }
+.withdraw-request-card__date { margin-top:7px; font-size:11px; opacity:.38; }
+.withdraw-request-card__note { margin-top:10px; padding:10px 11px; border-radius:12px; background:rgba(255,255,255,.055); font-size:12px; line-height:1.4; overflow-wrap:anywhere; }
+.withdraw-success__back { margin-top:18px; }
