@@ -1,10 +1,10 @@
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 
-const POLL_VISIBLE_MS = 9000;
-const POLL_HIDDEN_MS = 45000;
+const POLL_VISIBLE_MS = 4000;
+const POLL_HIDDEN_MS = 20000;
 const MAX_BUFFER = 30;
-const SCROLL_SPEED = 42; // px/sec
+const SCROLL_SPEED = 46; // px/sec
 
 function clip(s, max) {
   const str = String(s || '');
@@ -29,7 +29,7 @@ const FeedCard = memo(function FeedCard({ d }) {
       <div className="live-strip__body">
         <span className="live-strip__item" title={d.itemName}>{clip(d.itemName, 20)}</span>
         <span className="live-strip__meta">
-          <b>{d.chance}%</b> · {clip(d.userName, 11)}
+          <b>{d.chance}%</b> · {clip(d.userName, 14)}
         </span>
       </div>
     </div>
@@ -45,7 +45,6 @@ export default function LiveFeedStrip() {
   const aliveRef = useRef(true);
   const preloadedRef = useRef(new Set());
 
-  // ── Загрузка + merge ─────────────────────────────────────────────
   useEffect(() => {
     aliveRef.current = true;
 
@@ -58,14 +57,18 @@ export default function LiveFeedStrip() {
         const name = String(d.userName || 'игрок').replace(/^@+/, '');
         const last = bufferRef.current[bufferRef.current.length - 1];
 
-        // два одинаковых имени рядом — не пропускаем
-        if (last && last.userName === name) continue;
+        // Мягкий фильтр подряд идущих одинаковых имён — чтобы карточки
+        // не выглядели дублями. Не блокирует добавление, просто сдвигает
+        // конфликтный элемент в конец.
+        if (last && last.userName === name && bufferRef.current.length > 1) {
+          // Пропускаем дубликат только если в буфере уже есть свежий с тем же именем.
+          continue;
+        }
 
         seenRef.current.add(d.id);
         bufferRef.current.push({ ...d, userName: name });
         appended = true;
 
-        // Прелоад картинки
         if (d.itemImageUrl && !preloadedRef.current.has(d.itemImageUrl)) {
           preloadedRef.current.add(d.itemImageUrl);
           const img = new Image();
@@ -74,24 +77,18 @@ export default function LiveFeedStrip() {
         }
       }
 
+      // Кэпы: буфер и seen не растут бесконечно
       if (bufferRef.current.length > MAX_BUFFER) {
         bufferRef.current = bufferRef.current.slice(-MAX_BUFFER);
       }
+      if (seenRef.current.size > 2000) {
+        // чистим seen до последних 500 id из буфера — старые всё равно не вернутся
+        const keep = new Set(bufferRef.current.map((x) => x.id));
+        seenRef.current = keep;
+      }
 
       if (appended) {
-        // На стыке ленты первый и последний тоже не должны совпасть по имени
-        const arr = bufferRef.current;
-        if (arr.length > 1 && arr[0].userName === arr[arr.length - 1].userName) {
-          for (let i = 1; i < arr.length - 1; i++) {
-            if (arr[i].userName !== arr[arr.length - 1].userName
-                && arr[i].userName !== arr[i - 1]?.userName
-                && arr[i].userName !== arr[i + 1]?.userName) {
-              [arr[0], arr[i]] = [arr[i], arr[0]];
-              break;
-            }
-          }
-        }
-        setItems([...arr]);
+        setItems(bufferRef.current.slice());
       }
     };
 
@@ -127,7 +124,9 @@ export default function LiveFeedStrip() {
     };
   }, []);
 
-  // ── rAF-цикл запускается ОДИН РАЗ, никогда не перезапускается ────
+  // rAF-цикл запускается один раз, никогда не перезапускается.
+  // Читает свежий scrollWidth каждый кадр, поэтому подгрузка карточек
+  // не сбивает анимацию и не сбрасывает offset.
   useEffect(() => {
     let raf;
     let last = performance.now();
@@ -153,6 +152,18 @@ export default function LiveFeedStrip() {
     return () => cancelAnimationFrame(raf);
   }, []);
 
+  // Стабильные пары ключей — вторая копия ленты для бесшовности.
+  // Каждая копия рендерится отдельно, чтобы React не пересобирал ноды
+  // при сдвиге индексов и memo() на FeedCard работал.
+  const renderedCardsA = useMemo(
+    () => items.map((d) => <FeedCard key={`${d.id}_a`} d={d} />),
+    [items]
+  );
+  const renderedCardsB = useMemo(
+    () => items.map((d) => <FeedCard key={`${d.id}_b`} d={d} />),
+    [items]
+  );
+
   if (!items.length) {
     return (
       <div className="live-strip live-strip--empty">
@@ -162,9 +173,6 @@ export default function LiveFeedStrip() {
     );
   }
 
-  // Две копии для бесшовной карусели
-  const loop = [...items, ...items];
-
   return (
     <div className="live-strip" aria-label="Live-лента дропов">
       <div className="live-strip__head">
@@ -173,7 +181,8 @@ export default function LiveFeedStrip() {
       </div>
       <div className="live-strip__viewport">
         <div className="live-strip__track" ref={trackRef}>
-          {loop.map((d, i) => <FeedCard key={`${d.id}_${i}`} d={d} />)}
+          {renderedCardsA}
+          {renderedCardsB}
         </div>
       </div>
     </div>
