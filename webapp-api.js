@@ -681,12 +681,32 @@ function createWebappRouter(bot, botToken) {
         gamePassPrice: result.gamePassPrice,
         createdAt: result.createdAt,
       });
-      if (adminMsgId) await attachAdminMessage(result.requestId, adminMsgId);
+      if (adminMsgId) {
+        try {
+          await attachAdminMessage(result.requestId, adminMsgId);
+        } catch (attachErr) {
+          // Заявка уже создана и баланс списан. Ошибка привязки Telegram-сообщения
+          // не должна превращать успешный вывод в HTTP 500.
+          console.error('Не удалось сохранить admin_message_id:', {
+            requestId: result.requestId,
+            message: attachErr?.message,
+            code: attachErr?.code,
+          });
+        }
+      }
 
       res.json(result);
     } catch (err) {
-      console.error('Ошибка /api/withdraw/request:', err.message);
-      res.status(500).json({ error: 'server_error' });
+      console.error('Ошибка /api/withdraw/request:', {
+        message: err?.message,
+        code: err?.code,
+        detail: err?.detail,
+        constraint: err?.constraint,
+        table: err?.table,
+        column: err?.column,
+        stack: err?.stack,
+      });
+      res.status(500).json({ error: 'server_error', retryable: true });
     }
   });
 

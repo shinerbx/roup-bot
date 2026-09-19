@@ -188,6 +188,9 @@ async function initDb() {
     await pool.query('ALTER TABLE withdraw_requests ADD COLUMN IF NOT EXISTS robux_commission NUMERIC(12,2)');
     await pool.query('ALTER TABLE withdraw_requests ADD COLUMN IF NOT EXISTS robux_payout NUMERIC(12,2)');
     await pool.query('ALTER TABLE withdraw_requests ADD COLUMN IF NOT EXISTS game_pass_price INTEGER');
+    await pool.query('ALTER TABLE withdraw_requests ADD COLUMN IF NOT EXISTS admin_message_id BIGINT');
+    await pool.query('ALTER TABLE withdraw_requests ADD COLUMN IF NOT EXISTS admin_note TEXT');
+    await pool.query('ALTER TABLE withdraw_requests ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
     await pool.query("ALTER TABLE operation_results ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending'");
     await pool.query("ALTER TABLE operation_results ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
     await pool.query("ALTER TABLE user_inventory ADD COLUMN IF NOT EXISTS is_demo INTEGER DEFAULT 0");

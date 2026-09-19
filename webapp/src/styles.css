@@ -4277,3 +4277,29 @@ button:focus-visible, input:focus-visible, select:focus-visible {
     height: 26px;
   }
 }
+
+/* Withdraw UX simplification */
+.withdraw-info-card__icon--img {
+  object-fit: contain;
+  padding: 6px;
+}
+
+.withdraw-payout-card--simple {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.withdraw-payout-card--simple > span {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.withdraw-payout-card--simple > strong {
+  color: var(--gold);
+  font-family: 'Unbounded', sans-serif;
+  font-size: 19px;
+  white-space: nowrap;
+}

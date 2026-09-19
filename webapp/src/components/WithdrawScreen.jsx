@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { haptic, hapticNotify } from '../telegram.js';
+import robuxIcon from '../public/robux.png';
 
 // Значение-заглушка для первого рендера. Сервер отдаёт актуальный курс после загрузки.
 const STARS_TO_ROBUX_RATE = 0.2;
@@ -10,8 +11,8 @@ const MIN_STARS_FALLBACK = 100;
 const MAX_STARS_FALLBACK = 100000;
 const GAME_PASS_TUTORIAL_URL = import.meta.env.VITE_GAME_PASS_TUTORIAL_URL || '';
 
-const robuxIconStyle = { width: 18, height: 18, verticalAlign: '-3px', marginLeft: 5 };
-const robuxIconBigStyle = { width: 34, height: 34, verticalAlign: '-8px', marginLeft: 8 };
+const robuxIconStyle = { width: 17, height: 17, verticalAlign: '-3px', marginLeft: 5, objectFit: 'contain' };
+const robuxIconBigStyle = { width: 31, height: 31, verticalAlign: '-8px', marginLeft: 7, objectFit: 'contain' };
 
 const fmtRobux = (value) => Math.max(0, Math.round(Number(value) || 0)).toLocaleString('ru-RU');
 const fmtStars = (value) => Math.max(0, Math.floor(Number(value) || 0)).toLocaleString('ru-RU');
@@ -19,7 +20,7 @@ const fmtStars = (value) => Math.max(0, Math.floor(Number(value) || 0)).toLocale
 function RobuxIcon({ big = false }) {
   return (
     <img
-      src="/robux.png"
+      src={robuxIcon}
       alt="R$"
       draggable={false}
       style={big ? robuxIconBigStyle : robuxIconStyle}
@@ -63,8 +64,9 @@ function mapError(code, details) {
     missing_operation_id: 'Ошибка сессии. Обновите страницу и попробуйте снова.',
     invalid_amount: 'Некорректная сумма.',
     daily_withdrawal_limit: 'Достигнут дневной лимит заявок на вывод.',
+    user_not_found: 'Не удалось найти ваш профиль. Откройте приложение из Telegram и попробуйте снова.',
     demo_active: 'Включён Demo-Режим. Для его отключения напишите своему менеджеру.',
-    server_error: 'Ошибка на сервере. Попробуйте позже.',
+    server_error: 'Сервис временно не смог создать заявку. Попробуйте ещё раз.',
   };
   return map[code] || 'Не удалось создать заявку. Попробуйте позже.';
 }
@@ -184,7 +186,7 @@ export default function WithdrawScreen({
     try {
       const normalized = username.trim();
       const res = await api.createWithdrawRequest({
-        method: 'crypto',
+        method: 'robux',
         amountStars: calc.stars,
         robloxUsername: normalized,
         operationId: operationIdRef.current || createOperationId(),
@@ -251,10 +253,10 @@ export default function WithdrawScreen({
   }
 
   const stepTitle = step === 1
-    ? 'Шаг 1: Укажите сумму для вывода'
+    ? 'Шаг 1: Сумма'
     : step === 2
-      ? 'Шаг 2: Укажите ваш аккаунт'
-      : 'Шаг 3: Настройка Game Pass';
+      ? 'Шаг 2: Roblox Username'
+      : 'Шаг 3: Game Pass';
 
   return (
     <div className="topup-overlay withdraw-screen">
@@ -269,10 +271,10 @@ export default function WithdrawScreen({
       {step === 1 && (
         <>
           <div className="withdraw-info-card">
-            <span className="withdraw-info-card__icon">💱</span>
+            <img className="withdraw-info-card__icon withdraw-info-card__icon--img" src={robuxIcon} alt="Robux" draggable={false} />
             <div>
               <b>Текущий курс</b>
-              <span>1 ⭐ = {rate} R$</span>
+              <span>1 ⭐ = {rate} <RobuxIcon /></span>
             </div>
           </div>
 
@@ -330,23 +332,9 @@ export default function WithdrawScreen({
             </p>
           </div>
 
-          <div className="withdraw-payout-card">
-            <div className="withdraw-payout-card__row">
-              <span>Без комиссии</span>
-              <b><RobuxAmount value={calc.grossRobux} /></b>
-            </div>
-            <div className="withdraw-payout-card__row withdraw-payout-card__row--fee">
-              <span>Комиссия сервиса · {commissionPct}%</span>
-              <b>− <RobuxAmount value={calc.commissionRobux} /></b>
-            </div>
-            <div className="withdraw-payout-card__total">
-              <span>Вы получите чистыми</span>
-              <strong><RobuxAmount value={calc.payoutRobux} /></strong>
-            </div>
-          </div>
-
-          <div className="withdraw-formula">
-            Расчёт: ({fmtStars(calc.stars)} ⭐ × {rate}) × {((100 - commissionPct) / 100).toFixed(2)} = {fmtRobux(calc.payoutRobux)} R$
+          <div className="withdraw-payout-card withdraw-payout-card--simple">
+            <span>Вы получите после комиссии {commissionPct}%</span>
+            <strong><RobuxAmount value={calc.payoutRobux} /></strong>
           </div>
 
           {error && <div className="withdraw-error">{error}</div>}
@@ -364,11 +352,6 @@ export default function WithdrawScreen({
 
       {step === 2 && (
         <>
-          <div className="withdraw-step-intro">
-            <span>🎮</span>
-            <p>Нужен именно тот Username Roblox, на который вы хотите получить Robux.</p>
-          </div>
-
           <div className="withdraw-field withdraw-field--spacious">
             <label className="withdraw-field__label" htmlFor="wd-user">Roblox Username</label>
             <div className={`topup-custom${username.length > 0 && !usernameOk ? ' invalid' : ''}`}>
@@ -399,12 +382,6 @@ export default function WithdrawScreen({
             <strong>⚠️ Вводите именно ваш Username (уникальный ник), а НЕ Display Name (отображаемое имя)!</strong>
           </div>
 
-          <div className="withdraw-preview-card">
-            <span>На аккаунт</span>
-            <b>@{username || 'username'}</b>
-            <small>Вы получите {fmtRobux(calc.payoutRobux)} R$</small>
-          </div>
-
           {error && <div className="withdraw-error">{error}</div>}
 
           <button
@@ -421,14 +398,14 @@ export default function WithdrawScreen({
       {step === 3 && (
         <>
           <div className="withdraw-step-intro">
-            <span>🛠️</span>
-            <p>Перед созданием заявки подготовьте Game Pass в Roblox. Цена уже рассчитана за вас.</p>
+            <span>1</span>
+            <p>Сделайте Game Pass по инструкции ниже. Цена уже рассчитана за вас.</p>
           </div>
 
           <div className="withdraw-instruction">
             <div className="withdraw-instruction__step">
               <span>1</span>
-              <p>Перейдите на сайт: <a href="https://www.roblox.com/" target="_blank" rel="noopener noreferrer">roblox.com</a></p>
+              <p>Перейдите на сайт: <a href="https://create.roblox.com/dashboard/creations" target="_blank" rel="noopener noreferrer">create.roblox.com</a></p>
             </div>
             <div className="withdraw-instruction__step">
               <span>2</span>

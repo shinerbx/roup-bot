@@ -95,7 +95,7 @@ const HOUSE_CONFIG = Object.freeze({
     MAX_STARS: 100000,
     MAX_OPEN_REQUESTS: 3,
     METHODS: {
-      crypto: { enabled: true,  label: 'Криптовалюта',     icon: '₿',  hint: 'USDT TRC20 · до 48ч' },
+      robux:  { enabled: true,  label: 'Robux',             icon: 'R$', hint: 'Вывод на Roblox · до 48ч' },
       card:   { enabled: false, label: 'Банковская карта', icon: '💳', hint: 'Скоро'              },
       sbp:    { enabled: false, label: 'СБП',              icon: '⚡', hint: 'Скоро'              },
     },
