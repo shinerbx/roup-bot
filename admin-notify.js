@@ -2,9 +2,10 @@
 // Env: ADMIN_CHAT_ID=<telegram_id админа>
 
 const { WITHDRAWAL } = require('./house-config');
+const { ADMIN_IDS } = require('./access-control');
 
 let _bot = null;
-const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID;
+const ADMIN_CHAT_ID = ADMIN_IDS[0] || null;
 
 function registerBot(bot) {
   _bot = bot;
@@ -53,29 +54,37 @@ async function notifyWithdrawRequest(req) {
 
   const telegramUsername = req?.telegramUsername ? `@${String(req.telegramUsername).replace(/^@+/, '')}` : 'не указан';
   const text =
-    `====================================\n` +
-    `🔔 <b>НОВАЯ ЗАЯВКА НА ВЫВОД ROBUX</b>\n` +
-    `====================================\n` +
-    `👤 Пользователь (Telegram): <b>${escapeHtml(telegramUsername)}</b> / ID: <code>${escapeHtml(req.userId)}</code>\n` +
-    `🎮 Ник в Roblox: <b>${escapeHtml(req.robloxUsername)}</b>\n` +
-    `⭐ Списано внутренних звезд: <b>${escapeHtml(req.amountStars)}</b> ⭐\n\n` +
-    `💵 Чистыми игрок получит: <b>${escapeHtml(req.payoutRobux)} R$</b>\n` +
-    `🏷️ Цена Game Pass (с учетом +${escapeHtml(WITHDRAWAL.GAME_PASS_MARKUP_PERCENT)}%): <b>${escapeHtml(req.gamePassPrice)} R$</b>\n\n` +
-    `📆 Дата и время: <b>${escapeHtml(formatDateTime(req.createdAt))}</b>\n` +
-    `====================================`;
+    `🔔 <b>Новая заявка на вывод</b>\n\n` +
+    `👤 Telegram: <b>${escapeHtml(telegramUsername)}</b> / <code>${escapeHtml(req.userId)}</code>\n` +
+    `🎮 Roblox: <b>${escapeHtml(req.robloxUsername)}</b>\n` +
+    `⭐ Списано: <b>${escapeHtml(req.amountStars)} ⭐</b>\n` +
+    `💰 Итог: <b>${escapeHtml(req.payoutRobux)} R$</b>`;
 
   try {
-    const msg = await _bot.telegram.sendMessage(ADMIN_CHAT_ID, text, {
+    const keyboard = {
       parse_mode: 'HTML',
       reply_markup: {
-        inline_keyboard: [[
-          { text: '✅ Выплачено', callback_data: `wr:paid:${req.requestId}` },
-          { text: '❌ Отклонить', callback_data: `wr:reject:${req.requestId}` },
-        ]],
+        inline_keyboard: [
+          [
+            { text: '✅ Выплачено', callback_data: `wr:paid:${req.requestId}` },
+            { text: '❌ Отклонить', callback_data: `wr:reject:${req.requestId}` },
+          ],
+          [{ text: '💬 Комментарий', callback_data: `wr:comment:${req.requestId}` }],
+        ],
       },
-    });
-    console.log('[admin-notify] sent OK. messageId =', msg?.message_id);
-    return msg?.message_id || null;
+    };
+
+    let firstMessageId = null;
+    for (const adminId of ADMIN_IDS) {
+      try {
+        const msg = await _bot.telegram.sendMessage(adminId, text, keyboard);
+        if (!firstMessageId) firstMessageId = msg?.message_id || null;
+      } catch (err) {
+        console.error('[admin-notify] SEND FAILED:', { adminId, message: err.message, code: err.code, description: err.description });
+      }
+    }
+    console.log('[admin-notify] sent. messageId =', firstMessageId);
+    return firstMessageId;
   } catch (err) {
     console.error('[admin-notify] SEND FAILED:', {
       message: err.message,

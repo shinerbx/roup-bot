@@ -192,6 +192,8 @@ async function initDb() {
         ON operation_results (user_id, operation_type, status, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_wr_user_status
         ON withdraw_requests (user_id, status);
+      CREATE INDEX IF NOT EXISTS idx_wr_user_created
+        ON withdraw_requests (user_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_wr_status_created
         ON withdraw_requests (status, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_users_last_active
@@ -1150,26 +1152,44 @@ async function createWithdrawRequest(userId, { method, amountStars, contactUsern
       return { error: 'demo_active' };
     }
 
-    const dailyRes = await client.query(
-      `SELECT COUNT(*)::int AS cnt
+    // Ограничение вывода: не более одной новой заявки за 24 часа.
+    // Если предыдущая заявка уже рассмотрена (completed/rejected), новую
+    // можно создать сразу — пользователь не должен ждать окончания 24 часов.
+    // Проверка выполняется внутри транзакции после блокировки строки пользователя,
+    // поэтому два параллельных запроса одного пользователя не смогут обойти лимит.
+    const cooldownHours = Math.max(1, Number(WITHDRAWAL.WITHDRAWAL_COOLDOWN_HOURS || 24));
+    const recentRes = await client.query(
+      `SELECT id, status, created_at
        FROM withdraw_requests
-       WHERE user_id = $1 AND created_at >= CURRENT_DATE`,
-      [userId]
+       WHERE user_id = $1
+         AND created_at >= CURRENT_TIMESTAMP - ($2::int * INTERVAL '1 hour')
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [userId, cooldownHours]
     );
-    if (Number(dailyRes.rows[0]?.cnt) >= WITHDRAWAL.MAX_DAILY_WITHDRAWALS) {
-      await client.query('ROLLBACK');
-      return { error: 'daily_withdrawal_limit' };
+
+    if (recentRes.rowCount) {
+      const recent = recentRes.rows[0];
+      if (['pending', 'processing'].includes(String(recent.status))) {
+        await client.query('ROLLBACK');
+        return {
+          error: 'withdrawal_pending_review',
+          requestId: recent.id,
+          cooldownHours,
+        };
+      }
     }
 
+    // Дополнительная защита от нескольких одновременно открытых заявок.
     const openRes = await client.query(
       `SELECT COUNT(*)::int AS cnt
        FROM withdraw_requests
        WHERE user_id = $1 AND status IN ('pending', 'processing')`,
       [userId]
     );
-    if (Number(openRes.rows[0]?.cnt) >= WITHDRAWAL.MAX_OPEN_REQUESTS) {
+    if (Number(openRes.rows[0]?.cnt) >= 1) {
       await client.query('ROLLBACK');
-      return { error: 'too_many_open_requests' };
+      return { error: 'withdrawal_pending_review' };
     }
 
     const balance = Number(user.balance) || 0;
@@ -1328,6 +1348,56 @@ async function markWithdrawPaid(requestId) {
   return Boolean(res.rowCount);
 }
 
+async function getUserWithdrawRequests(userId, limit = 20) {
+  const safeLimit = Math.min(50, Math.max(1, Number(limit) || 20));
+  const res = await pool.query(
+    `SELECT id, amount_stars, robux_payout, game_pass_price, roblox_username,
+            status, admin_note, created_at, updated_at
+     FROM withdraw_requests
+     WHERE user_id = $1
+     ORDER BY created_at DESC
+     LIMIT $2`,
+    [userId, safeLimit]
+  );
+  return res.rows.map((r) => ({
+    id: Number(r.id),
+    amountStars: Number(r.amount_stars) || 0,
+    payoutRobux: Number(r.robux_payout) || 0,
+    gamePassPrice: Number(r.game_pass_price) || 0,
+    robloxUsername: r.roblox_username || '',
+    status: r.status,
+    adminNote: r.admin_note || '',
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  }));
+}
+
+async function addWithdrawAdminNote(requestId, adminNote) {
+  const note = String(adminNote || '').trim().slice(0, 1000);
+  if (!note) return { error: 'empty_note' };
+  const res = await pool.query(
+    `UPDATE withdraw_requests
+     SET admin_note = $2, updated_at = CURRENT_TIMESTAMP
+     WHERE id = $1
+     RETURNING id, user_id, status, admin_note`,
+    [requestId, note]
+  );
+  if (!res.rowCount) return { error: 'not_found' };
+  return { success: true, ...res.rows[0] };
+}
+
+async function getWithdrawRequest(requestId) {
+  const res = await pool.query(
+    `SELECT wr.*, u.username AS telegram_username
+     FROM withdraw_requests wr
+     JOIN users u ON u.telegram_id = wr.user_id
+     WHERE wr.id = $1
+     LIMIT 1`,
+    [requestId]
+  );
+  return res.rows[0] || null;
+}
+
 async function attachAdminMessage(requestId, adminMessageId) {
   await pool.query(
     `UPDATE withdraw_requests SET admin_message_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
@@ -1437,6 +1507,7 @@ module.exports = {
   buyItemWithBalance, buyItemsWithBalance, upgradeItem,
   sellInventoryItem, sellInventoryItemsBatch,
   createWithdrawRequest, refundWithdrawRequest, markWithdrawPaid, attachAdminMessage,
+  getUserWithdrawRequests, addWithdrawAdminNote, getWithdrawRequest,
   grantDemo, revokeDemo, getDemoStatus,
   getRecentDrops,
   // BROADCAST

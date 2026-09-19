@@ -14,11 +14,14 @@ const {
   markWithdrawPaid,
   grantDemo,
   revokeDemo,
-  getDemoStatus
+  getDemoStatus,
+  getUserWithdrawRequests, addWithdrawAdminNote, getWithdrawRequest
 } = require('./db');
 const { createWebappRouter } = require('./webapp-api');
 const { registerBot } = require('./admin-notify');
 const { USER_LIMITS } = require('./house-config');
+const { ADMIN_IDS, isAdmin, isWhitelisted } = require('./access-control');
+const { TERMS_URL, SUPPORT_URL } = require('./links-config');
 
 // ═══════════════════════════════════════════════════════════════════════
 // КОНСТАНТЫ И ПРОВЕРКИ
@@ -31,8 +34,7 @@ const BOT_USERNAME = 'roupgrade_bot';
 const WEB_APP_URL = process.env.WEB_APP_URL || 'https://roup-bot.onrender.com';
 const CHANNEL_USERNAME = '@ro_upgrade';
 const SHARE_BANNER_URL = 'https://i.ibb.co/Fq6L8G16/7007-D8-FC-C59-A-4-F72-B1-AB-C63-DFAA2-F87-A.png';
-const PRIVACY_POLICY_URL = 'https://telegra.ph/Polzovatelskoe-soglashenie-i-Usloviya-ispolzovaniya-RoUP-09-19';
-const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID;
+const PRIVACY_POLICY_URL = TERMS_URL;
 
 const IS_PROD = process.env.NODE_ENV === 'production';
 
@@ -44,27 +46,16 @@ function log(...args) {
 // HELPERS
 // ═══════════════════════════════════════════════════════════════════════
 
-function isAdmin(ctx) {
-  return ADMIN_CHAT_ID && String(ctx.from?.id) === String(ADMIN_CHAT_ID);
+function isAdminCtx(ctx) {
+  return isAdmin(ctx.from?.id);
 }
 
 function buildWhitelistForDiag() {
-  const set = new Set();
-  const envRaw = String(process.env.ADMIN_CHAT_ID || '');
-  if (envRaw) envRaw.split(',').forEach((p) => { const v = String(p).trim(); if (v) set.add(v); });
-  const cfgList = Array.isArray(USER_LIMITS.WITHDRAW_WHITELIST) ? USER_LIMITS.WITHDRAW_WHITELIST : [];
-  cfgList.forEach((v) => { const s = String(v).trim(); if (s) set.add(s); });
-  return [...set];
+  return [...ADMIN_IDS];
 }
 
-function isWhitelistedId(userId, whitelist) {
-  const asStr = String(userId).trim();
-  const asNum = Number(userId);
-  if (whitelist.includes(asStr)) return true;
-  if (Number.isFinite(asNum)) {
-    for (const e of whitelist) if (Number(e) === asNum) return true;
-  }
-  return false;
+function isWhitelistedId(userId) {
+  return isWhitelisted(userId);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -90,10 +81,11 @@ const EMOJIS = [
 function getMainMenu(ctx) {
   const rows = [
     [Markup.button.webApp('🎮 Играть', WEB_APP_URL)],
-    ['👤 Профиль', '👥 Друзья'],
+    ['👤 Профиль', '📋 МОИ ЗАЯВКИ'],
+    ['👥 Друзья'],
     ['🎁 Подарок', '🆘 Помощь']
   ];
-  if (isAdmin(ctx)) rows.push(['⚙️ Админ-панель']);
+  if (isAdminCtx(ctx)) rows.push(['⚙️ Админ-панель']);
   return Markup.keyboard(rows).resize();
 }
 
@@ -133,7 +125,7 @@ bot.use(async (ctx, next) => {
 // ═══════════════════════════════════════════════════════════════════════
 
 bot.hears('⚙️ Админ-панель', async (ctx) => {
-  if (!isAdmin(ctx)) return;
+  if (!isAdminCtx(ctx)) return;
   adminState.delete(ctx.from.id);
 
   await ctx.reply(
@@ -145,7 +137,7 @@ bot.hears('⚙️ Админ-панель', async (ctx) => {
 });
 
 bot.action('admin_panel', async (ctx) => {
-  if (!isAdmin(ctx)) return ctx.answerCbQuery('Нет доступа', { show_alert: true }).catch(() => {});
+  if (!isAdminCtx(ctx)) return ctx.answerCbQuery('Нет доступа', { show_alert: true }).catch(() => {});
   adminState.delete(ctx.from.id);
   await ctx.editMessageText(
     `⚙️ <b>Админ-панель</b>\n\n` +
@@ -157,7 +149,7 @@ bot.action('admin_panel', async (ctx) => {
 });
 
 bot.action('admin_cancel', async (ctx) => {
-  if (!isAdmin(ctx)) return ctx.answerCbQuery().catch(() => {});
+  if (!isAdminCtx(ctx)) return ctx.answerCbQuery().catch(() => {});
   adminState.delete(ctx.from.id);
   await ctx.editMessageText(
     `⚙️ <b>Админ-панель</b>\n\nОперация отменена.`,
@@ -167,7 +159,7 @@ bot.action('admin_cancel', async (ctx) => {
 });
 
 bot.action('admin_demo_grant', async (ctx) => {
-  if (!isAdmin(ctx)) return ctx.answerCbQuery('Нет доступа', { show_alert: true }).catch(() => {});
+  if (!isAdminCtx(ctx)) return ctx.answerCbQuery('Нет доступа', { show_alert: true }).catch(() => {});
   adminState.set(ctx.from.id, { action: 'demo_id' });
 
   await ctx.editMessageText(
@@ -183,7 +175,7 @@ bot.action('admin_demo_grant', async (ctx) => {
 });
 
 bot.action('admin_demo_revoke', async (ctx) => {
-  if (!isAdmin(ctx)) return ctx.answerCbQuery('Нет доступа', { show_alert: true }).catch(() => {});
+  if (!isAdminCtx(ctx)) return ctx.answerCbQuery('Нет доступа', { show_alert: true }).catch(() => {});
   adminState.set(ctx.from.id, { action: 'demo_off_id' });
 
   await ctx.editMessageText(
@@ -199,7 +191,7 @@ bot.action('admin_demo_revoke', async (ctx) => {
 });
 
 bot.action('admin_demo_status', async (ctx) => {
-  if (!isAdmin(ctx)) return ctx.answerCbQuery('Нет доступа', { show_alert: true }).catch(() => {});
+  if (!isAdminCtx(ctx)) return ctx.answerCbQuery('Нет доступа', { show_alert: true }).catch(() => {});
   adminState.set(ctx.from.id, { action: 'demo_status_id' });
 
   await ctx.editMessageText(
@@ -214,7 +206,7 @@ bot.action('admin_demo_status', async (ctx) => {
 });
 
 bot.hears('/cancel', async (ctx) => {
-  if (!isAdmin(ctx)) return;
+  if (!isAdminCtx(ctx)) return;
   if (!adminState.has(ctx.from.id)) return;
   adminState.delete(ctx.from.id);
   await ctx.reply('❌ Операция отменена.', getAdminPanel()).catch(() => {});
@@ -223,12 +215,30 @@ bot.hears('/cancel', async (ctx) => {
 // Текстовый обработчик шагов админ-флоу
 bot.on('text', async (ctx, next) => {
   const uid = ctx.from?.id;
-  if (!uid || !isAdmin(ctx)) return next();
+  if (!uid || !isAdminCtx(ctx)) return next();
   const state = adminState.get(uid);
   if (!state) return next();
 
   const text = String(ctx.message?.text || '').trim();
   if (!text || text.startsWith('/')) return next();
+
+  if (state.action === 'withdraw_comment') {
+    const note = text.slice(0, 1000);
+    const result = await addWithdrawAdminNote(state.requestId, note);
+    adminState.delete(uid);
+    if (result.error) {
+      return ctx.reply(`❌ Не удалось сохранить комментарий: ${result.error}`, getAdminPanel()).catch(() => {});
+    }
+    const request = await getWithdrawRequest(state.requestId);
+    if (request) {
+      await bot.telegram.sendMessage(
+        request.user_id,
+        `💬 <b>Комментарий по заявке #${state.requestId}</b>\n\n${note.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}`,
+        { parse_mode: 'HTML' }
+      ).catch(() => {});
+    }
+    return ctx.reply(`✅ Комментарий к заявке #${state.requestId} сохранён.`, getAdminPanel()).catch(() => {});
+  }
 
   if (state.action === 'demo_id') {
     const targetId = Number(text);
@@ -343,7 +353,7 @@ bot.on('text', async (ctx, next) => {
 
 // ── Быстрые команды ─────────────────────────────────────────────────
 bot.command('demo', async (ctx) => {
-  if (!isAdmin(ctx)) return;
+  if (!isAdminCtx(ctx)) return;
   const args = (ctx.message.text || '').split(/\s+/).slice(1);
   let targetId = null;
   let amount = null;
@@ -374,7 +384,7 @@ bot.command('demo', async (ctx) => {
 });
 
 bot.command('demo_off', async (ctx) => {
-  if (!isAdmin(ctx)) return;
+  if (!isAdminCtx(ctx)) return;
   const args = (ctx.message.text || '').split(/\s+/).slice(1);
   let targetId = ctx.message.reply_to_message?.from?.id || (args.length === 1 ? Number(args[0]) : ctx.from.id);
 
@@ -393,7 +403,7 @@ bot.command('demo_off', async (ctx) => {
 });
 
 bot.command('demo_status', async (ctx) => {
-  if (!isAdmin(ctx)) return;
+  if (!isAdminCtx(ctx)) return;
   const args = (ctx.message.text || '').split(/\s+/).slice(1);
   let targetId = ctx.message.reply_to_message?.from?.id || (args.length === 1 ? Number(args[0]) : ctx.from.id);
 
@@ -503,6 +513,32 @@ bot.action('accept_tos', async (ctx) => {
   finally { actionLocks.delete(lockKey); }
 });
 
+bot.hears('📋 МОИ ЗАЯВКИ', async (ctx) => {
+  try {
+    const requests = await getUserWithdrawRequests(ctx.from.id, 20);
+    if (!requests.length) {
+      return ctx.reply(
+        `📋 <b>Мои заявки</b>\n\nУ вас пока нет заявок на вывод.`,
+        { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.webApp('🎮 Открыть RoUP', WEB_APP_URL)]]) }
+      );
+    }
+
+    const statusMap = { pending: '🟡 В обработке', processing: '🟡 В обработке', completed: '🟢 Выполнена', rejected: '🔴 Отклонена' };
+    const lines = requests.map((r, i) => {
+      const note = r.adminNote ? `\n💬 Комментарий: <i>${String(r.adminNote).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</i>` : '';
+      return `#${i + 1} · <b>${r.payoutRobux} R$</b>\n🎮 ${String(r.robloxUsername).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')} · ⭐ ${r.amountStars}\n${statusMap[r.status] || r.status}${note}`;
+    });
+
+    await ctx.reply(
+      `📋 <b>Мои заявки</b>\n\n${lines.join('\n\n')}`,
+      { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.webApp('🎮 Открыть RoUP', WEB_APP_URL)]]) }
+    );
+  } catch (err) {
+    console.error('Ошибка в Мои заявки:', err.message);
+    ctx.reply('Не удалось загрузить заявки. Попробуйте позже.').catch(() => {});
+  }
+});
+
 bot.hears('👤 Профиль', async (ctx) => {
   try {
     const user = await getUser(ctx.from.id);
@@ -608,27 +644,49 @@ bot.on('inline_query', async (ctx) => {
 });
 
 bot.hears('🆘 Помощь', (ctx) => ctx.reply(
-  `❓ <b>Техническая поддержка</b>\n\nПо всем вопросам и проблемам с предметами:\n👉 @roup_support`,
+  `❓ <b>Техническая поддержка</b>\n\nПо всем вопросам и проблемам с предметами:\n👉 <a href="${SUPPORT_URL}">@roup_support</a>`,
   { parse_mode: 'HTML' }
 ).catch(() => {}));
 
 // ── Callback-кнопки заявок на вывод ─────────────────────────────────
-bot.action(/^wr:(paid|reject):(\d+)$/, async (ctx) => {
+bot.action(/^wr:(paid|reject|comment):(\d+)$/, async (ctx) => {
   const action = ctx.match[1];
   const requestId = Number(ctx.match[2]);
 
-  if (!ADMIN_CHAT_ID || String(ctx.from.id) !== String(ADMIN_CHAT_ID)) {
+  if (!isAdminCtx(ctx)) {
     return ctx.answerCbQuery('Нет доступа', { show_alert: true }).catch(() => {});
   }
 
   try {
+    if (action === 'comment') {
+      adminState.set(ctx.from.id, { action: 'withdraw_comment', requestId });
+      await ctx.answerCbQuery().catch(() => {});
+      return ctx.reply(
+        `💬 <b>Комментарий к заявке #${requestId}</b>\n\nОтправь текст комментария одним сообщением.\nДля отмены: /cancel`,
+        { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Отмена', 'admin_cancel')]]) }
+      ).catch(() => {});
+    }
+
     if (action === 'paid') {
       const ok = await markWithdrawPaid(requestId);
-      await ctx.answerCbQuery(ok ? '✅ Отмечено как выплачено' : 'Заявка уже обработана').catch(() => {});
+      await ctx.answerCbQuery(ok ? '✅ Выплачено' : 'Заявка уже обработана').catch(() => {});
+      if (ok) {
+        const request = await getWithdrawRequest(requestId);
+        if (request) {
+          await bot.telegram.sendMessage(request.user_id, `🟢 <b>Заявка #${requestId} выполнена</b>\n\nРобуксы по заявке поступят на указанный аккаунт.`, { parse_mode: 'HTML' }).catch(() => {});
+        }
+      }
     } else if (action === 'reject') {
-      const r = await refundWithdrawRequest(requestId, 'rejected_by_admin');
-      await ctx.answerCbQuery(r.error ? `Ошибка: ${r.error}` : '↩️ Возвращено на баланс').catch(() => {});
+      const r = await refundWithdrawRequest(requestId, 'Отклонено администратором');
+      await ctx.answerCbQuery(r.error ? `Ошибка: ${r.error}` : '↩️ Отклонено, звёзды возвращены').catch(() => {});
+      if (!r.error) {
+        const request = await getWithdrawRequest(requestId);
+        if (request) {
+          await bot.telegram.sendMessage(request.user_id, `🔴 <b>Заявка #${requestId} отклонена</b>\n\nСписанные ⭐ возвращены на баланс.`, { parse_mode: 'HTML' }).catch(() => {});
+        }
+      }
     }
+
     await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
   } catch (err) {
     console.error('Ошибка обработки wr callback:', err.message);
@@ -778,7 +836,7 @@ const PORT = process.env.PORT || 3000;
 
 const server = app.listen(PORT, async () => {
   console.log(`Render HTTP-сервер активен на порту ${PORT} (${IS_PROD ? 'prod' : 'dev'})`);
-  if (!ADMIN_CHAT_ID) console.warn('⚠️ ADMIN_CHAT_ID не задан — заявки на вывод и админ-панель недоступны.');
+  if (!ADMIN_IDS.length) console.warn('⚠️ ADMIN_IDS/ADMIN_CHAT_ID не задан — админ-панель недоступна.');
 
   try {
     const fullWebhookUrl = `${WEB_APP_URL}${WEBHOOK_PATH}`;

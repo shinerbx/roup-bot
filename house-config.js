@@ -75,10 +75,9 @@ const HOUSE_CONFIG = Object.freeze({
     MAX_WITHDRAW_VALUE_MULTIPLIER: 1.0,
     MAX_ITEM_VALUE: 50000,
     MIN_DEPOSIT_FOR_WITHDRAW: 0,
-    MAX_DAILY_WITHDRAWALS: 10,
+    MAX_DAILY_WITHDRAWALS: 1,
     REQUIRE_REFERRAL_FOR_WITHDRAW: true,
     ALLOW_FREE_ITEM_ISSUANCE: true,
-    WITHDRAW_WHITELIST: [],
   },
 
   PAYMENTS: {
@@ -94,6 +93,7 @@ const HOUSE_CONFIG = Object.freeze({
     MIN_STARS: 100,
     MAX_STARS: 100000,
     MAX_OPEN_REQUESTS: 3,
+    WITHDRAWAL_COOLDOWN_HOURS: 24,
     METHODS: {
       robux:  { enabled: true,  label: 'Robux',             icon: 'R$', hint: 'Вывод на Roblox · до 48ч' },
       card:   { enabled: false, label: 'Банковская карта', icon: '💳', hint: 'Скоро'              },

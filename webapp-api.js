@@ -4,9 +4,10 @@ const {
   getCatalogItems, getUserInventory, getUser, calculateTier, getUserInventoryCount,
   ensureUserExists, upgradeItem, sellInventoryItem, sellInventoryItemsBatch,
   buyItemsWithBalance, getReferralProgress, setTutorialCompleted, getUserDemoItemCount,
-  createWithdrawRequest, attachAdminMessage, getRecentDrops,
+  createWithdrawRequest, attachAdminMessage, getRecentDrops, getUserWithdrawRequests,
 } = require('./db');
 const { WITHDRAWAL, USER_LIMITS, UPGRADE, ROULETTE, LIVE_FEED } = require('./house-config');
+const { isWhitelisted } = require('./access-control');
 const { notifyWithdrawRequest } = require('./admin-notify');
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -46,23 +47,8 @@ function verifyInitData(initData, botToken) {
   }
 }
 
-function buildWithdrawWhitelist() {
-  const set = new Set();
-  const envRaw = String(process.env.ADMIN_CHAT_ID || '');
-  if (envRaw) envRaw.split(',').forEach((p) => { const v = String(p).trim(); if (v) set.add(v); });
-  const cfgList = Array.isArray(USER_LIMITS.WITHDRAW_WHITELIST) ? USER_LIMITS.WITHDRAW_WHITELIST : [];
-  cfgList.forEach((v) => { const s = String(v).trim(); if (s) set.add(s); });
-  return set;
-}
-
-function isWhitelisted(userId, whitelist) {
-  const asStr = String(userId).trim();
-  const asNum = Number(userId);
-  if (whitelist.has(asStr)) return true;
-  for (const entry of whitelist) {
-    if (Number(entry) === asNum && Number.isFinite(asNum)) return true;
-  }
-  return false;
+function isWithdrawWhitelisted(userId) {
+  return isWhitelisted(userId);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -373,8 +359,7 @@ function createWebappRouter(bot, botToken) {
       const itemsCount = await getUserInventoryCount(req.tgUser.id);
       const referralProgress = await getReferralProgress(req.tgUser.id);
 
-      const whitelist = buildWithdrawWhitelist();
-      const whitelisted = isWhitelisted(req.tgUser.id, whitelist);
+      const whitelisted = isWithdrawWhitelisted(req.tgUser.id);
 
       const demoItemCount = await getUserDemoItemCount(req.tgUser.id);
       const demoActive = user.pre_demo_balance != null || Number(user.lucky_mode) > 0 || demoItemCount > 0;
@@ -609,6 +594,17 @@ function createWebappRouter(bot, botToken) {
     }
   });
 
+  router.get('/withdraw/requests', async (req, res) => {
+    try {
+      const requests = await getUserWithdrawRequests(req.tgUser.id, 20);
+      res.set('Cache-Control', 'private, max-age=10');
+      res.json({ requests });
+    } catch (err) {
+      console.error('Ошибка /api/withdraw/requests:', err.message);
+      res.status(500).json({ error: 'server_error' });
+    }
+  });
+
   router.get('/withdraw/methods', (_req, res) => {
     const methods = Object.entries(WITHDRAWAL.METHODS)
       .filter(([, cfg]) => cfg.enabled)
@@ -649,8 +645,7 @@ function createWebappRouter(bot, botToken) {
         return res.status(403).json({ error: 'demo_active' });
       }
 
-      const whitelist = buildWithdrawWhitelist();
-      const whitelisted = isWhitelisted(req.tgUser.id, whitelist);
+      const whitelisted = isWithdrawWhitelisted(req.tgUser.id);
 
       if (!whitelisted && USER_LIMITS.REQUIRE_REFERRAL_FOR_WITHDRAW) {
         const progress = await getReferralProgress(req.tgUser.id);
