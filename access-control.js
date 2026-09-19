@@ -13,7 +13,7 @@ const ADMIN_IDS = Object.freeze([
     ...parseIds(process.env.ADMIN_IDS),
     ...parseIds(process.env.ADMIN_CHAT_ID),
     // Добавляй постоянные ID админов сюда при необходимости:
-    // '123456789',
+    '6043384033',
   ]),
 ]);
 
