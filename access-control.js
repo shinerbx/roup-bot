@@ -21,7 +21,7 @@ const WITHDRAW_WHITELIST = Object.freeze([
   ...new Set([
     ...parseIds(process.env.WITHDRAW_WHITELIST),
     // ID пользователей, которым доступен вывод без реферального ограничения:
-    // '123456789',
+    '6043384033',
   ]),
 ]);
 
