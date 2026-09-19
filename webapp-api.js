@@ -513,7 +513,7 @@ function createWebappRouter(bot, botToken) {
         }
 
         const body = JSON.stringify({ drops: unique });
-        feedCache = { data: body, etag: etagOf(body), expiresAt: now + 2000 };
+        feedCache = { data: body, etag: etagOf(body), expiresAt: now + 1000 };
       }
 
       if (req.header('If-None-Match') === feedCache.etag) {
