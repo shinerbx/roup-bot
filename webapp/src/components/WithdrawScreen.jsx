@@ -57,7 +57,8 @@ function mapError(code, details) {
     amount_below_min: `Минимальная сумма — ${details?.min || MIN_STARS_FALLBACK} ⭐.`,
     amount_above_max: `Максимум за одну заявку — ${Number(details?.max || MAX_STARS_FALLBACK).toLocaleString('ru-RU')} ⭐.`,
     invalid_username: 'Проверьте Roblox Username: от 3 до 20 символов, только латиница, цифры и максимум один знак _.',
-    too_many_open_requests: 'У вас уже есть открытые заявки. Дождитесь их обработки.',
+    too_many_open_requests: 'У вас уже есть открытая заявка. Дождитесь её обработки.',
+    withdrawal_pending_review: 'У вас уже есть заявка на вывод в обработке. После её рассмотрения можно создать новую заявку.',
     referral_gate: 'Условия по приглашениям ещё не выполнены.',
     operation_in_progress: 'Заявка уже создаётся, подождите.',
     method_not_available: 'Вывод временно недоступен.',
@@ -246,6 +247,13 @@ export default function WithdrawScreen({
           <p className="withdraw-success__note">
             Срок выплаты и проверки занимает до 48 часов. Вы получите уведомление в боте, как только Робуксы поступят на ваш аккаунт.
           </p>
+          <button
+            type="button"
+            className="sheet__confirm withdraw-action withdraw-success__back"
+            onClick={onClose}
+          >
+            Вернуться назад
+          </button>
         </div>
         <WithdrawFooter />
       </div>
@@ -479,7 +487,7 @@ function WithdrawFooter() {
         <span className="app-footer__sep">·</span>
         <a
           className="app-footer__link"
-          href="https://telegra.ph/Polzovatelskoe-soglashenie-i-Usloviya-ispolzovaniya-RoUP-09-18"
+          href="https://telegra.ph/Polzovatelskoe-soglashenie-i-Usloviya-ispolzovaniya-RoUP-09-19"
           target="_blank"
           rel="noopener noreferrer"
         >

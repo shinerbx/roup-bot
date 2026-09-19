@@ -543,7 +543,7 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
           <span className="app-footer__sep">·</span>
           <a
             className="app-footer__link"
-            href="https://telegra.ph/Polzovatelskoe-soglashenie-i-Usloviya-ispolzovaniya-RoUP-09-18"
+            href="https://telegra.ph/Polzovatelskoe-soglashenie-i-Usloviya-ispolzovaniya-RoUP-09-19"
             target="_blank"
             rel="noopener noreferrer"
           >

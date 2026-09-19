@@ -1,4 +1,4 @@
-export default function ProfileTab({ profile, loading }) {
+export default function ProfileTab({ profile, loading, onOpenWithdrawRequests }) {
   if (loading || !profile) {
     return <div className="skeleton" style={{ height: 220 }} />;
   }
@@ -28,6 +28,20 @@ export default function ProfileTab({ profile, loading }) {
         </div>
       </div>
 
+
+      <button
+        type="button"
+        className="profile-requests-button"
+        onClick={onOpenWithdrawRequests}
+      >
+        <span>📋</span>
+        <span>
+          <b>Мои заявки</b>
+          <small>Статусы и комментарии по выводу</small>
+        </span>
+        <span className="profile-requests-button__arrow">›</span>
+      </button>
+
       <footer className="app-footer">
         <span className="app-footer__line">
           ⭐ — внутренняя учётная единица, не деньги и не платёжное средство.
@@ -40,7 +54,7 @@ export default function ProfileTab({ profile, loading }) {
         <span className="app-footer__line">
           <a
             className="app-footer__link"
-            href="https://telegra.ph/Polzovatelskoe-soglashenie-i-Usloviya-ispolzovaniya-RoUP-09-18"
+            href="https://telegra.ph/Polzovatelskoe-soglashenie-i-Usloviya-ispolzovaniya-RoUP-09-19"
             target="_blank"
             rel="noopener noreferrer"
           >
