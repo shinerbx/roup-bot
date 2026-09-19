@@ -46,13 +46,20 @@ function calculateRealChance(sourceItem, targetItem, multiplier = 1) {
   return applyRollNoise(base);
 }
 
-function calculateDisplayChance(sourceItem, targetItem, multiplier = 1) {
-  return _calcWithParams(sourceItem, targetItem, multiplier,
-    UPGRADE.DISPLAY_GAMMA, UPGRADE.DISPLAY_BASE_CHANCE_MULTIPLIER, UPGRADE.DISPLAY_HOUSE_EDGE);
+// Клиентский дисплей-шанс = честный ценовой ratio (s/t) без множителя.
+// Множитель влияет только на реальный (серверный) шанс, не на отображение.
+// Это гарантирует: одна пара предметов = один и тот же процент на экране.
+function calculateDisplayChance(sourceItem, targetItem) {
+  if (!canUpgradeTo(sourceItem, targetItem)) return 0;
+  const s = Number(sourceItem.price_stars);
+  const t = Number(targetItem.price_stars);
+  const ratio = Math.pow(s / t, UPGRADE.DISPLAY_GAMMA);
+  const base = ratio * 100 * UPGRADE.DISPLAY_BASE_CHANCE_MULTIPLIER;
+  const withEdge = base * (1 - UPGRADE.DISPLAY_HOUSE_EDGE);
+  return clampChance(withEdge);
 }
 
-// User-facing expected chance is derived only from the selected multiplier.
-// It intentionally does not expose the server's real/effective odds.
+// Оставлено для обратной совместимости; не используется в новом resolver.
 function calculateExpectedChance(multiplier = 1) {
   const safeMult = Math.max(1, Number(multiplier) || 1);
   return Math.min(100, Math.max(MIN_CHANCE, 100 / safeMult));
@@ -67,24 +74,20 @@ function applyLucky(realChance, luckyMode) {
 }
 
 /**
- * Угол приземления стрелки (0–360°), рисуется по часовой от верха.
- * Визуальный сектор выигрыша = expectedChance × 3.6°.
- *
- * Проигрыш: угол попадает в зону проигрыша со смещением от края.
- * Минимальный зазор MIN_GAP_DEG убирает «почти повезло»,
- * BIAS_POW < 1 раскидывает остановки по всей ширине зоны проигрыша.
+ * Угол приземления стрелки (0–360°), по часовой от верха.
+ * Визуальный сектор выигрыша = displayChance × 3.6°, где displayChance —
+ * честный ценовой ratio выбранной пары. Стрелка и SVG-дуга на клиенте
+ * используют одно и то же число.
  */
 function pickLandingAngle(success, displayChance) {
   const zone = Math.max(0.5, clampChance(displayChance) * 3.6);
 
   if (success) {
-    // 5%..95% от ширины зоны — стрелка точно в зелёном секторе
     return Number((zone * (0.05 + Math.random() * 0.9)).toFixed(2));
   }
 
   const missArc = 360 - zone;
   if (missArc <= 2) {
-    // Практически не бывает: слишком узкая зона проигрыша.
     const fallback = Math.random() < 0.5 ? 359.5 : zone + 0.5;
     return Number((fallback % 360).toFixed(2));
   }
@@ -122,7 +125,6 @@ function resolveUpgrade(sourceItem, targetItem, multiplier = 1, opts = {}) {
 
   let realBase = calculateRealChance(sourceItem, targetItem, safeMultiplier);
 
-  // ── Динамика дешёвых апгрейдов ────────────────────────────────────
   const cheap = UPGRADE.CHEAP || null;
   const sourcePrice = Number(sourceItem.price_stars);
   const isCheap = cheap
@@ -145,19 +147,19 @@ function resolveUpgrade(sourceItem, targetItem, multiplier = 1, opts = {}) {
   }
 
   const realFinal = applyLucky(realBase, luckyMode);
-
   const roll = crypto.randomInt(0, 1_000_000) / 10_000;
   const success = roll < realFinal;
 
-  const displayChance = calculateDisplayChance(sourceItem, targetItem, safeMultiplier);
-  const expectedChance = calculateExpectedChance(safeMultiplier);
-  const landingAngle = pickLandingAngle(success, expectedChance);
+  // Единый источник для UI: честный ценовой ratio пары. Не зависит от того,
+  // какую кнопку множителя нажал игрок.
+  const displayChance = calculateDisplayChance(sourceItem, targetItem);
+  const landingAngle = pickLandingAngle(success, displayChance);
 
   return {
     success,
     resultItemId: success ? targetItem.id : null,
-    chance: Number((luckyMode ? realFinal : displayChance).toFixed(1)),
-    expectedChance: Number(expectedChance.toFixed(1)),
+    chance: Number(displayChance.toFixed(1)),
+    expectedChance: Number(displayChance.toFixed(1)),
     multiplier: safeMultiplier,
     landingAngle,
     cheapPhase,
@@ -169,7 +171,7 @@ function resolveUpgrade(sourceItem, targetItem, multiplier = 1, opts = {}) {
 }
 
 function calculateBaseChance(sourceItem, targetItem) {
-  return calculateDisplayChance(sourceItem, targetItem, 1);
+  return calculateDisplayChance(sourceItem, targetItem);
 }
 function applyMultiplier(baseChance, multiplier = 1) {
   const safe = Math.max(1, Number(multiplier) || 1);
@@ -178,8 +180,8 @@ function applyMultiplier(baseChance, multiplier = 1) {
 function applyHouseEdge(chance) {
   return clampChance(Number(chance) * (1 - UPGRADE.DISPLAY_HOUSE_EDGE));
 }
-function displayPercent(sourceItem, targetItem, multiplier = 1) {
-  return Number(calculateDisplayChance(sourceItem, targetItem, multiplier).toFixed(1));
+function displayPercent(sourceItem, targetItem) {
+  return Number(calculateDisplayChance(sourceItem, targetItem).toFixed(1));
 }
 
 module.exports = {
