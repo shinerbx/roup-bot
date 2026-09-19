@@ -155,22 +155,6 @@ async function initDb() {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
-      CREATE INDEX IF NOT EXISTS idx_inventory_user_created
-        ON user_inventory (user_id, created_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_referrals_invited_by
-        ON users (invited_by);
-      CREATE INDEX IF NOT EXISTS idx_operations_created
-        ON operation_results (created_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_operations_pending
-        ON operation_results (user_id, operation_type, status, created_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_wr_user_status
-        ON withdraw_requests (user_id, status);
-      CREATE INDEX IF NOT EXISTS idx_wr_status_created
-        ON withdraw_requests (status, created_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_users_last_active
-        ON users (last_active_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_users_broadcast
-        ON users (broadcast_opt_out, last_active_at DESC);
     `);
 
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS is_premium INTEGER DEFAULT 0');
@@ -194,6 +178,27 @@ async function initDb() {
     await pool.query("ALTER TABLE operation_results ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending'");
     await pool.query("ALTER TABLE operation_results ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
     await pool.query("ALTER TABLE user_inventory ADD COLUMN IF NOT EXISTS is_demo INTEGER DEFAULT 0");
+
+    // Индексы создаём ПОСЛЕ миграций. Это важно для старых БД: иначе индекс
+    // на ещё не существующую колонку мог остановить initDb до выполнения ALTER TABLE.
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_inventory_user_created
+        ON user_inventory (user_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_referrals_invited_by
+        ON users (invited_by);
+      CREATE INDEX IF NOT EXISTS idx_operations_created
+        ON operation_results (created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_operations_pending
+        ON operation_results (user_id, operation_type, status, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_wr_user_status
+        ON withdraw_requests (user_id, status);
+      CREATE INDEX IF NOT EXISTS idx_wr_status_created
+        ON withdraw_requests (status, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_users_last_active
+        ON users (last_active_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_users_broadcast
+        ON users (broadcast_opt_out, last_active_at DESC);
+    `);
 
     // Batch upsert items через unnest
     if (catalogItems.length) {
@@ -1072,48 +1077,82 @@ async function createWithdrawRequest(userId, { method, amountStars, contactUsern
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const opKey = String(operationId).slice(0, 100);
+    const opKey = String(operationId || '').slice(0, 100);
 
-    const opRes = await client.query(
-      `INSERT INTO operation_results (user_id, operation_type, operation_id, response, status)
-       VALUES ($1, 'withdraw_request', $2, '{}'::jsonb, 'pending')
-       ON CONFLICT (user_id, operation_type, operation_id) DO NOTHING
-       RETURNING operation_id`,
-      [userId, opKey]
-    );
-    if (!opRes.rowCount) {
-      const ex = await client.query(
-        `SELECT response, status FROM operation_results
-         WHERE user_id = $1 AND operation_type = 'withdraw_request' AND operation_id = $2
-         FOR UPDATE`,
-        [userId, opKey]
-      );
+    if (!opKey) {
       await client.query('ROLLBACK');
-      return ex.rows[0]?.status === 'completed'
-        ? ex.rows[0].response
-        : { error: 'operation_in_progress' };
+      return { error: 'missing_operation_id' };
     }
 
-    const demoCheck = await client.query(
-      'SELECT pre_demo_balance, lucky_mode FROM users WHERE telegram_id = $1 FOR UPDATE',
+    // Сначала проверяем уже созданную заявку по operation_id.
+    // Это делает повторный клик/сетевой retry безопасным и не зависит
+    // от отдельной таблицы operation_results.
+    const existingRes = await client.query(
+      `SELECT id, user_id, method, amount_stars, amount_rub, commission_rub, payout_rub,
+              contact_username, roblox_username, robux_gross, robux_commission,
+              robux_payout, game_pass_price, status, created_at
+       FROM withdraw_requests
+       WHERE operation_id = $1
+       LIMIT 1`,
+      [opKey]
+    );
+    if (existingRes.rowCount) {
+      const ex = existingRes.rows[0];
+      if (String(ex.user_id) !== String(userId)) {
+        await client.query('ROLLBACK');
+        return { error: 'operation_conflict' };
+      }
+      await client.query('ROLLBACK');
+      return {
+        success: true,
+        requestId: ex.id,
+        amountStars: Number(ex.amount_stars) || 0,
+        amountRub: Number(ex.amount_rub) || 0,
+        commissionRub: Number(ex.commission_rub) || 0,
+        payoutRub: Number(ex.payout_rub) || 0,
+        robuxGross: Number(ex.robux_gross ?? ex.amount_rub) || 0,
+        robuxCommission: Number(ex.robux_commission ?? ex.commission_rub) || 0,
+        payoutRobux: Number(ex.robux_payout ?? ex.payout_rub) || 0,
+        robloxUsername: ex.roblox_username || '',
+        gamePassPrice: Number(ex.game_pass_price) || 0,
+        createdAt: ex.created_at,
+        method: ex.method,
+        contactUsername: ex.contact_username,
+      };
+    }
+
+    const userRes = await client.query(
+      `SELECT telegram_id, balance, pre_demo_balance, lucky_mode
+       FROM users
+       WHERE telegram_id = $1
+       FOR UPDATE`,
       [userId]
     );
-    const dUser = demoCheck.rows[0];
-    if (!dUser) {
+    const user = userRes.rows[0];
+    if (!user) {
       await client.query('ROLLBACK');
       return { error: 'user_not_found' };
     }
+
+    if (user.pre_demo_balance != null || Number(user.lucky_mode) > 0) {
+      await client.query('ROLLBACK');
+      return { error: 'demo_active' };
+    }
+
     const demoItemsRes = await client.query(
-      'SELECT COUNT(*)::int AS cnt FROM user_inventory WHERE user_id = $1 AND is_demo = 1',
+      `SELECT COUNT(*)::int AS cnt
+       FROM user_inventory
+       WHERE user_id = $1 AND is_demo = 1`,
       [userId]
     );
-    if (dUser.pre_demo_balance != null || Number(dUser.lucky_mode) > 0 || Number(demoItemsRes.rows[0]?.cnt) > 0) {
+    if (Number(demoItemsRes.rows[0]?.cnt) > 0) {
       await client.query('ROLLBACK');
       return { error: 'demo_active' };
     }
 
     const dailyRes = await client.query(
-      `SELECT COUNT(*)::int AS cnt FROM withdraw_requests
+      `SELECT COUNT(*)::int AS cnt
+       FROM withdraw_requests
        WHERE user_id = $1 AND created_at >= CURRENT_DATE`,
       [userId]
     );
@@ -1123,17 +1162,37 @@ async function createWithdrawRequest(userId, { method, amountStars, contactUsern
     }
 
     const openRes = await client.query(
-      `SELECT COUNT(*)::int AS cnt FROM withdraw_requests
+      `SELECT COUNT(*)::int AS cnt
+       FROM withdraw_requests
        WHERE user_id = $1 AND status IN ('pending', 'processing')`,
       [userId]
     );
-    if ((openRes.rows[0]?.cnt || 0) >= WITHDRAWAL.MAX_OPEN_REQUESTS) {
+    if (Number(openRes.rows[0]?.cnt) >= WITHDRAWAL.MAX_OPEN_REQUESTS) {
       await client.query('ROLLBACK');
       return { error: 'too_many_open_requests' };
     }
 
+    const balance = Number(user.balance) || 0;
+    if (!Number.isInteger(amountStars) || amountStars < WITHDRAWAL.MIN_STARS || amountStars > WITHDRAWAL.MAX_STARS) {
+      await client.query('ROLLBACK');
+      return { error: 'invalid_amount' };
+    }
+    if (balance < amountStars) {
+      await client.query('ROLLBACK');
+      return { error: 'insufficient_balance' };
+    }
+
+    // Формула вывода:
+    // gross = звёзды * курс
+    // payout = gross * 0.75 (25% комиссии сервиса)
+    const grossRobux = Math.floor(amountStars * Number(WITHDRAWAL.STARS_TO_ROBUX_RATE));
+    const commissionRobux = Math.floor(grossRobux * Number(WITHDRAWAL.COMMISSION_PERCENT) / 100);
+    const payoutRobux = Math.max(0, grossRobux - commissionRobux);
+    const gamePassPrice = Math.ceil(payoutRobux * (1 + Number(WITHDRAWAL.GAME_PASS_MARKUP_PERCENT) / 100));
+
     const balRes = await client.query(
-      `UPDATE users SET balance = balance - $1
+      `UPDATE users
+       SET balance = balance - $1
        WHERE telegram_id = $2 AND balance >= $1
        RETURNING balance`,
       [amountStars, userId]
@@ -1143,29 +1202,48 @@ async function createWithdrawRequest(userId, { method, amountStars, contactUsern
       return { error: 'insufficient_balance' };
     }
 
-    const grossRobux = Math.floor(amountStars * WITHDRAWAL.STARS_TO_ROBUX_RATE);
-    const commissionRobux = Math.floor(grossRobux * WITHDRAWAL.COMMISSION_PERCENT / 100);
-    const payoutRobux = Math.max(0, grossRobux - commissionRobux);
-    const gamePassPrice = Math.ceil(payoutRobux * (1 + WITHDRAWAL.GAME_PASS_MARKUP_PERCENT / 100));
-
     const insRes = await client.query(
       `INSERT INTO withdraw_requests
          (user_id, method, amount_stars, amount_rub, commission_rub, payout_rub,
-          contact_username, roblox_username, robux_gross, robux_commission, robux_payout, game_pass_price,
-          status, operation_id, metadata)
+          contact_username, roblox_username, robux_gross, robux_commission, robux_payout,
+          game_pass_price, status, operation_id, metadata)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'pending', $13, $14::jsonb)
        RETURNING id, created_at`,
-      [userId, method, amountStars, grossRobux, commissionRobux, payoutRobux,
-       contactUsername, robloxUsername, grossRobux, commissionRobux, payoutRobux, gamePassPrice,
-       opKey, JSON.stringify({ balanceAfter: balRes.rows[0].balance, gamePassMarkupPercent: WITHDRAWAL.GAME_PASS_MARKUP_PERCENT })]
+      [
+        userId,
+        method,
+        amountStars,
+        grossRobux,
+        commissionRobux,
+        payoutRobux,
+        contactUsername,
+        robloxUsername,
+        grossRobux,
+        commissionRobux,
+        payoutRobux,
+        gamePassPrice,
+        opKey,
+        JSON.stringify({
+          balanceAfter: balRes.rows[0].balance,
+          gamePassMarkupPercent: Number(WITHDRAWAL.GAME_PASS_MARKUP_PERCENT),
+          starsToRobuxRate: Number(WITHDRAWAL.STARS_TO_ROBUX_RATE),
+          commissionPercent: Number(WITHDRAWAL.COMMISSION_PERCENT),
+        }),
+      ]
     );
 
     await client.query(
-      `INSERT INTO balance_ledger (user_id, operation_type, operation_id, amount, balance_after, metadata)
+      `INSERT INTO balance_ledger
+         (user_id, operation_type, operation_id, amount, balance_after, metadata)
        VALUES ($1, 'withdraw_hold', $2, $3, $4, $5::jsonb)
        ON CONFLICT (user_id, operation_type, operation_id) DO NOTHING`,
-      [userId, opKey, -amountStars, balRes.rows[0].balance,
-       JSON.stringify({ requestId: insRes.rows[0].id, method })]
+      [
+        userId,
+        opKey,
+        -amountStars,
+        balRes.rows[0].balance,
+        JSON.stringify({ requestId: insRes.rows[0].id, method }),
+      ]
     );
 
     const response = {
@@ -1186,17 +1264,10 @@ async function createWithdrawRequest(userId, { method, amountStars, contactUsern
       balance: balRes.rows[0].balance,
     };
 
-    await client.query(
-      `UPDATE operation_results
-       SET response = $3::jsonb, status = 'completed', updated_at = CURRENT_TIMESTAMP
-       WHERE user_id = $1 AND operation_type = 'withdraw_request' AND operation_id = $2`,
-      [userId, opKey, JSON.stringify(response)]
-    );
-
     await client.query('COMMIT');
     return response;
   } catch (err) {
-    await client.query('ROLLBACK');
+    try { await client.query('ROLLBACK'); } catch (_) {}
     throw err;
   } finally {
     client.release();

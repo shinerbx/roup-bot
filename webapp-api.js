@@ -706,7 +706,11 @@ function createWebappRouter(bot, botToken) {
         column: err?.column,
         stack: err?.stack,
       });
-      res.status(500).json({ error: 'server_error', retryable: true });
+      res.status(500).json({
+        error: 'server_error',
+        retryable: true,
+        detail: process.env.NODE_ENV === 'production' ? undefined : (err?.message || null),
+      });
     }
   });
 
