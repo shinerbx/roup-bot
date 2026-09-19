@@ -7,10 +7,11 @@ const COMMISSION_FALLBACK = 20;
 const MIN_STARS_FALLBACK = 100;
 const MAX_STARS_FALLBACK = 100000;
 
-const robuxIconStyle = { width: 18, height: 18, verticalAlign: '-3px', marginRight: 5 };
-const robuxIconBigStyle = { width: 34, height: 34, verticalAlign: '-8px', marginRight: 8 };
+// Иконка после числа: левый отступ у картинки вместо правого.
+const robuxIconStyle = { width: 18, height: 18, verticalAlign: '-3px', marginLeft: 5 };
+const robuxIconBigStyle = { width: 34, height: 34, verticalAlign: '-8px', marginLeft: 8 };
 
-const normRobux = (v) => `${(+v).toFixed(2)} R$`;
+const fmtNum = (v) => (+v).toFixed(2);
 
 function RobuxIcon({ big = false }) {
   return (
@@ -20,6 +21,16 @@ function RobuxIcon({ big = false }) {
       draggable={false}
       style={big ? robuxIconBigStyle : robuxIconStyle}
     />
+  );
+}
+
+// Число, затем иконка. Единый способ показать робуксы в интерфейсе.
+function RobuxAmount({ value, big = false }) {
+  return (
+    <>
+      {fmtNum(value)}
+      <RobuxIcon big={big} />
+    </>
   );
 }
 
@@ -153,12 +164,11 @@ export default function WithdrawScreen({
         <div className="withdraw-success">
           <div className="withdraw-success__icon">✓</div>
           <p className="withdraw-success__amount">
-            <RobuxIcon big />
-            {normRobux(result?.payoutRub || 0)}
+            <RobuxAmount value={result?.payoutRub || 0} big />
           </p>
           <p className="withdraw-success__text">
             Заявка <b>#{result?.requestId}</b> принята в обработку.<br />
-            Списано: {Number(result?.amountStars || 0).toLocaleString('ru-RU')} ⭐ · Комиссия сервиса: {normRobux(result?.commissionRub || 0)}
+            Списано: {Number(result?.amountStars || 0).toLocaleString('ru-RU')} ⭐ · Комиссия сервиса: <RobuxAmount value={result?.commissionRub || 0} />
           </p>
           <p className="withdraw-success__note">
             Менеджер свяжется с вами в течение 48 часов
@@ -203,7 +213,7 @@ export default function WithdrawScreen({
       </div>
 
       <p className="topup-rate">
-        Курс: <b>1 ⭐ = {rate} R$</b> · комиссия сервиса <b>{commissionPct}%</b>
+        Курс: <b>1 ⭐ = {rate} <RobuxIcon /></b> · комиссия сервиса <b>{commissionPct}%</b>
       </p>
 
       {!canWithdraw && (
@@ -283,15 +293,15 @@ export default function WithdrawScreen({
       <div className="withdraw-calc">
         <div className="withdraw-calc__row">
           <span>Сумма к выводу</span>
-          <span><b>{calc.stars.toLocaleString('ru-RU')} ⭐</b> · {normRobux(calc.robux)}</span>
+          <span><b>{calc.stars.toLocaleString('ru-RU')} ⭐</b> · <RobuxAmount value={calc.robux} /></span>
         </div>
         <div className="withdraw-calc__row">
           <span>Комиссия сервиса {commissionPct}%</span>
-          <span className="withdraw-calc__fee">− {normRobux(calc.commission)}</span>
+          <span className="withdraw-calc__fee">− <RobuxAmount value={calc.commission} /></span>
         </div>
         <div className="withdraw-calc__row withdraw-calc__row--total">
           <span>К выплате робуксами</span>
-          <b><RobuxIcon />{normRobux(calc.payout)}</b>
+          <b><RobuxAmount value={calc.payout} /></b>
         </div>
       </div>
 
