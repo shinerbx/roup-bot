@@ -21,9 +21,21 @@ const HOUSE_CONFIG = Object.freeze({
     LUCKY_FLAT_BOOST: 50,
     LUCKY_MAX_CHANCE: 92,
 
+    // Динамика дешёвых апгрейдов (price_stars <= THRESHOLD).
+    // Первые HONEYMOON_COUNT успешных — почти гарантированы.
+    // После — резкое срезание шанса с потолком AFTER_MAX.
+    CHEAP: {
+      THRESHOLD: 500,
+      HONEYMOON_COUNT: 2,
+      HONEYMOON_MIN: 88,
+      HONEYMOON_MAX: 96,
+      AFTER_MULTIPLIER: 0.35,
+      AFTER_MAX: 30,
+    },
+
     // Anti-flood
-    PENDING_WINDOW_SEC: 15,       // окно, в котором висит pending-запрос
-    MIN_INTERVAL_MS: 800,          // минимум между двумя апгрейдами одного юзера
+    PENDING_WINDOW_SEC: 15,
+    MIN_INTERVAL_MS: 800,
   },
 
   ROULETTE: {
@@ -39,12 +51,12 @@ const HOUSE_CONFIG = Object.freeze({
       DURATION_MAX: 1.20,
       EXTRA_TURNS_MAX: 1,
     },
-    // Визуальный near-miss: проигрыш всегда остаётся за пределами зелёного
-    // сектора, но чаще всего останавливается прямо рядом с его границей.
+    // Проигрыш всегда за пределами зелёного сектора, но без клина «почти повезло».
+    // MIN_GAP_DEG — минимальный зазор от границы зоны выигрыша.
+    // BIAS_POW < 1 = смещение распределения от края к середине зоны проигрыша.
     NEAR_MISS: {
-      MILLIMETER: 0.50,
-      CLOSE: 0.40,
-      FAR: 0.10,
+      MIN_GAP_DEG: 3,
+      BIAS_POW: 0.7,
     },
   },
 
@@ -53,7 +65,7 @@ const HOUSE_CONFIG = Object.freeze({
     CACHE_SIZE: 50,           // сколько реальных дропов держим в памяти
     FAKE_PER_REQUEST: [6, 14], // сколько фейков примешивать на запрос
     ONLINE_WINDOW_SEC: 300,    // окно активности для онлайна
-    ONLINE_MULTIPLIER: 100,    // фейковый онлайн = реальный × это
+    ONLINE_MULTIPLIER: 100,    // legacy, не используется — онлайн теперь симулируется
   },
 
   USER_LIMITS: {
