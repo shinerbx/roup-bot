@@ -86,6 +86,11 @@ async function initDb() {
         tutorial_completed INTEGER DEFAULT 0,
         pre_demo_balance INTEGER DEFAULT NULL,
         lucky_mode INTEGER DEFAULT 0,
+        last_active_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_broadcast_at TIMESTAMP DEFAULT NULL,
+        broadcast_opt_out INTEGER DEFAULT 0,
+        broadcasts_today INTEGER DEFAULT 0,
+        broadcasts_day_marker DATE DEFAULT CURRENT_DATE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
@@ -157,6 +162,10 @@ async function initDb() {
         ON withdraw_requests (user_id, status);
       CREATE INDEX IF NOT EXISTS idx_wr_status_created
         ON withdraw_requests (status, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_users_last_active
+        ON users (last_active_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_users_broadcast
+        ON users (broadcast_opt_out, last_active_at DESC);
     `);
 
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS is_premium INTEGER DEFAULT 0');
@@ -164,6 +173,11 @@ async function initDb() {
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS pre_demo_balance INTEGER DEFAULT NULL');
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS lucky_mode INTEGER DEFAULT 0');
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS cheap_upgrades_count INTEGER DEFAULT 0');
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS last_broadcast_at TIMESTAMP DEFAULT NULL');
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS broadcast_opt_out INTEGER DEFAULT 0');
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS broadcasts_today INTEGER DEFAULT 0');
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS broadcasts_day_marker DATE DEFAULT CURRENT_DATE');
     await pool.query("ALTER TABLE operation_results ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending'");
     await pool.query("ALTER TABLE operation_results ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
     await pool.query("ALTER TABLE user_inventory ADD COLUMN IF NOT EXISTS is_demo INTEGER DEFAULT 0");
@@ -258,8 +272,8 @@ async function registerUser(tgUser, referrerId = null) {
     }
 
     const insertRes = await pool.query(`
-      INSERT INTO users (telegram_id, username, first_name, invited_by, accepted_tos, is_premium)
-      VALUES ($1, $2, $3, $4, 1, $5)
+      INSERT INTO users (telegram_id, username, first_name, invited_by, accepted_tos, is_premium, last_active_at)
+      VALUES ($1, $2, $3, $4, 1, $5, CURRENT_TIMESTAMP)
       ON CONFLICT (telegram_id) DO NOTHING
       RETURNING telegram_id
     `, [tgUser.id, tgUser.username || null, tgUser.first_name || '', successfulReferrer, isPremium]);
@@ -275,8 +289,10 @@ async function registerUser(tgUser, referrerId = null) {
     user = res.rows[0];
   }
 
-  await pool.query('UPDATE users SET is_premium = $1, username = $2, first_name = $3 WHERE telegram_id = $4',
-    [isPremium, tgUser.username || null, tgUser.first_name || '', tgUser.id]);
+  await pool.query(
+    'UPDATE users SET is_premium = $1, username = $2, first_name = $3, last_active_at = CURRENT_TIMESTAMP WHERE telegram_id = $4',
+    [isPremium, tgUser.username || null, tgUser.first_name || '', tgUser.id]
+  );
   return { user: (await getUser(tgUser.id)), rewardedReferrerId: successfulReferrer };
 }
 
@@ -292,8 +308,8 @@ async function ensureUserExists(tgUser) {
   }
 
   await pool.query(`
-    INSERT INTO users (telegram_id, username, first_name, accepted_tos, is_premium)
-    VALUES ($1, $2, $3, 1, $4)
+    INSERT INTO users (telegram_id, username, first_name, accepted_tos, is_premium, last_active_at)
+    VALUES ($1, $2, $3, 1, $4, CURRENT_TIMESTAMP)
     ON CONFLICT (telegram_id) DO UPDATE SET
       username = EXCLUDED.username,
       first_name = EXCLUDED.first_name
@@ -1226,6 +1242,101 @@ async function attachAdminMessage(requestId, adminMessageId) {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// BROADCAST
+// ═══════════════════════════════════════════════════════════════════════
+
+async function touchUserActive(userId) {
+  await pool.query(
+    'UPDATE users SET last_active_at = CURRENT_TIMESTAMP WHERE telegram_id = $1',
+    [userId]
+  );
+}
+
+async function setBroadcastOptOut(userId, optOut) {
+  await pool.query(
+    'UPDATE users SET broadcast_opt_out = $2 WHERE telegram_id = $1',
+    [userId, optOut ? 1 : 0]
+  );
+}
+
+async function getBroadcastOptOut(userId) {
+  const res = await pool.query(
+    'SELECT broadcast_opt_out FROM users WHERE telegram_id = $1',
+    [userId]
+  );
+  return Boolean(Number(res.rows[0]?.broadcast_opt_out));
+}
+
+// Возвращает пачку юзеров, которым уместно отправить рассылку.
+// Фильтр: неактивность в окне [MIN_HOURS, MAX_HOURS] назад, не под opt-out,
+// есть хоть один апгрейд, не превышены лимиты по частоте.
+// items_count — количество не-demo предметов в инвентаре (для шаблона inventory_miss).
+async function fetchBroadcastTargets(limit = 200) {
+  const cfg = require('./house-config').BROADCAST || {};
+  const minH = Number(cfg.INACTIVE_HOURS_MIN) || 3;
+  const maxH = Number(cfg.INACTIVE_HOURS_MAX) || 72;
+  const minUpg = Number(cfg.MIN_UPGRADES_TO_TARGET) || 1;
+  const minHrsBetween = Number(cfg.MIN_HOURS_BETWEEN) || 6;
+  const maxPerDay = Number(cfg.MAX_PER_DAY) || 3;
+
+  const res = await pool.query(`
+    SELECT u.telegram_id, u.first_name, u.username, u.balance, u.upgrades_count,
+           u.pre_demo_balance, u.lucky_mode, u.last_active_at, u.last_broadcast_at,
+           (
+             SELECT COUNT(*)::int FROM user_inventory ui
+             WHERE ui.user_id = u.telegram_id AND ui.is_demo = 0
+           ) AS items_count
+    FROM users u
+    WHERE COALESCE(u.broadcast_opt_out, 0) = 0
+      AND COALESCE(u.upgrades_count, 0) >= $3
+      AND u.last_active_at <= NOW() - ($1 || ' hours')::interval
+      AND u.last_active_at >= NOW() - ($2 || ' hours')::interval
+      AND (u.last_broadcast_at IS NULL OR u.last_broadcast_at <= NOW() - ($4 || ' hours')::interval)
+      AND (
+        u.broadcasts_day_marker IS DISTINCT FROM CURRENT_DATE
+        OR COALESCE(u.broadcasts_today, 0) < $5
+      )
+    ORDER BY RANDOM()
+    LIMIT $6
+  `, [minH, maxH, minUpg, minHrsBetween, maxPerDay, limit]);
+
+  return res.rows;
+}
+
+async function markBroadcastSent(userId) {
+  await pool.query(`
+    UPDATE users
+    SET last_broadcast_at = CURRENT_TIMESTAMP,
+        broadcasts_today = CASE
+          WHEN broadcasts_day_marker = CURRENT_DATE THEN COALESCE(broadcasts_today, 0) + 1
+          ELSE 1
+        END,
+        broadcasts_day_marker = CURRENT_DATE
+    WHERE telegram_id = $1
+  `, [userId]);
+}
+
+// Случайный успешный апгрейд за последние 30 минут — для шаблона live_drop.
+// Возвращает null, если свежих побед нет.
+async function getRandomActiveDrop() {
+  const res = await pool.query(`
+    SELECT o.user_id, u.first_name,
+           o.response->'item'->>'name' AS item_name,
+           (o.response->'item'->>'price_stars')::int AS price,
+           (o.response->>'chance')::numeric AS chance
+    FROM operation_results o
+    JOIN users u ON u.telegram_id = o.user_id
+    WHERE o.operation_type = 'upgrade'
+      AND o.status = 'completed'
+      AND (o.response->>'success')::boolean = true
+      AND o.created_at > NOW() - INTERVAL '30 minutes'
+    ORDER BY RANDOM()
+    LIMIT 1
+  `);
+  return res.rows[0] || null;
+}
+
 module.exports = {
   registerUser, getUser, calculateTier, claimSubscriptionItem, getUserInventoryCount,
   getReferralProgress, setTutorialCompleted, getUserDemoItemCount, ensureUserExists,
@@ -1235,4 +1346,7 @@ module.exports = {
   createWithdrawRequest, refundWithdrawRequest, markWithdrawPaid, attachAdminMessage,
   grantDemo, revokeDemo, getDemoStatus,
   getRecentDrops,
+  // BROADCAST
+  touchUserActive, setBroadcastOptOut, getBroadcastOptOut,
+  fetchBroadcastTargets, markBroadcastSent, getRandomActiveDrop,
 };
