@@ -247,6 +247,7 @@ export default function App() {
           canWithdraw={profile?.can_withdraw !== false}
           demoActive={Boolean(profile?.demo_active)}
           referralProgress={profile?.referral_progress}
+          isWhitelisted={Boolean(profile?.is_whitelisted)}
         />
       </div>
     );
@@ -294,6 +295,7 @@ export default function App() {
           demoActive={Boolean(profile?.demo_active)}
           canWithdraw={Boolean(profile?.can_withdraw)}
           referralProgress={profile?.referral_progress}
+          isWhitelisted={Boolean(profile?.is_whitelisted)}
           onWithdraw={() => setShowWithdraw(true)}
         />
       )}
