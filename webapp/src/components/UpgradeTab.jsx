@@ -199,10 +199,11 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
     [selectedMultiplier]
   );
 
-  // The UI/roulette intentionally shows the expected chance implied by the
-  // selected multiplier (x2 = 50%, x4 = 25%, ...). The server's real chance
-  // is used only to resolve the outcome and is never displayed here.
-  const wheelChance = Number.isFinite(expectedChance) ? expectedChance : 0;
+  // Шанс показываем только когда выбраны ОБА компонента:
+  // исходный предмет И множитель (значит и целевой предмет).
+  // До этого wheelChance = 0 и ползунок пустой.
+  const bothChosen = Boolean(owned && target);
+  const wheelChance = bothChosen && Number.isFinite(expectedChance) ? expectedChance : 0;
 
   const targetItems = useMemo(() => {
     if (!owned) return catalog;
@@ -212,15 +213,24 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
 
   useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
 
+  // Единый резолвер: по источнику и множителю находит ближайший по цене
+  // целевой предмет. Возвращает null, если ничего не подходит.
+  const pickTargetFor = useCallback((sourceItem, mult, customM) => {
+    if (!sourceItem) return null;
+    const mNum = mult === 'custom' ? Number(customM) : Number(mult);
+    if (!Number.isFinite(mNum) || mNum < 1) return null;
+    const desired = Number(sourceItem.price_stars) * mNum;
+    return findClosestTarget(catalog, desired, sourceItem);
+  }, [catalog]);
+
   const chooseOwned = useCallback((item) => {
     setOwnedId(item.inventory_id);
-    setTargetId((current) => {
-      const ct = catalog.find((x) => x.id === current);
-      return ct && Number(ct.price_stars) > Number(item.price_stars) ? current : null;
-    });
     setPicker(null);
     haptic('light');
-  }, [catalog]);
+    // Автоподбор целевого под текущий множитель.
+    const pick = pickTargetFor(item, multiplier, customMultiplier);
+    setTargetId(pick ? pick.id : null);
+  }, [pickTargetFor, multiplier, customMultiplier]);
 
   const chooseTarget = useCallback((item) => {
     if (!owned || Number(item.price_stars) <= Number(owned.price_stars)) return;
@@ -230,33 +240,32 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
   }, [owned]);
 
   const chooseMultiplier = useCallback((value) => {
-    if (spinning || busy || result) return;
+    // Без исходного предмета множитель не переключается.
+    if (spinning || busy || result || !owned) return;
     setMultiplier(value);
     haptic('light');
-
-    if (!owned || value === 'custom') return;
-    const m = Number(value);
-    if (!Number.isFinite(m) || m < 1) return;
-    const desired = Number(owned.price_stars) * m;
-    const pick = findClosestTarget(catalog, desired, owned);
-    if (pick) setTargetId(pick.id);
-  }, [spinning, busy, result, owned, catalog]);
+    if (value === 'custom') return;
+    const pick = pickTargetFor(owned, value, customMultiplier);
+    setTargetId(pick ? pick.id : null);
+  }, [spinning, busy, result, owned, pickTargetFor, customMultiplier]);
 
   const handleCustom = useCallback(() => {
-    if (spinning || busy || result) return;
+    if (spinning || busy || result || !owned) return;
     setMultiplier('custom');
     haptic('light');
-  }, [spinning, busy, result]);
+  }, [spinning, busy, result, owned]);
 
   const handleCustomChange = useCallback((val) => {
     setCustomMultiplier(val);
     if (!owned) return;
     const m = Number(val);
-    if (!Number.isFinite(m) || m < 1 || m > config.maxMultiplier) return;
-    const desired = Number(owned.price_stars) * m;
-    const pick = findClosestTarget(catalog, desired, owned);
-    if (pick) setTargetId(pick.id);
-  }, [owned, catalog, config.maxMultiplier]);
+    if (!Number.isFinite(m) || m < 1 || m > config.maxMultiplier) {
+      setTargetId(null);
+      return;
+    }
+    const pick = pickTargetFor(owned, 'custom', val);
+    setTargetId(pick ? pick.id : null);
+  }, [owned, pickTargetFor, config.maxMultiplier]);
 
   const handleAction = useCallback(async () => {
     if (result) {
@@ -317,7 +326,7 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
       setBusy(false);
       setSpinning(false);
     }
-  }, [owned, target, customValid, spinning, busy, result, selectedMultiplier, config, onUpgraded, onError]);
+  }, [owned, target, customValid, spinning, busy, result, selectedMultiplier, config, onUpgraded, onError, expectedChance]);
 
   if (loading) return <div className="skeleton upgrade-skeleton" />;
 
@@ -376,7 +385,7 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
               </svg>
               <div className="upgrade-needle" aria-hidden="true"><span /></div>
               <div className="upgrade-gauge__center">
-                <strong>{result ? (result.success ? 'УСПЕХ' : 'НЕУДАЧА') : formatChance(wheelChance)}</strong>
+                <strong>{result ? (result.success ? 'УСПЕХ' : 'НЕУДАЧА') : (wheelChance > 0 ? formatChance(wheelChance) : '—')}</strong>
               </div>
             </div>
 
@@ -416,7 +425,7 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
               key={value}
               className={`upgrade-multiplier ${multiplier === value ? 'selected' : ''}`}
               onClick={() => chooseMultiplier(value)}
-              disabled={spinning || busy || Boolean(result)}
+              disabled={spinning || busy || Boolean(result) || !owned}
             >
               ×{value}
             </button>
@@ -425,7 +434,7 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
             type="button"
             className={`upgrade-multiplier upgrade-multiplier--custom ${multiplier === 'custom' ? 'selected' : ''}`}
             onClick={handleCustom}
-            disabled={spinning || busy || Boolean(result)}
+            disabled={spinning || busy || Boolean(result) || !owned}
           >
             Своя
           </button>
@@ -442,7 +451,7 @@ export default function UpgradeTab({ inventory, catalog, loading, demoActive = f
               value={customMultiplier}
               onChange={(event) => handleCustomChange(event.target.value)}
               placeholder="3.5"
-              disabled={spinning || busy || Boolean(result)}
+              disabled={spinning || busy || Boolean(result) || !owned}
               aria-label="Пользовательский множитель"
             />
           </div>
