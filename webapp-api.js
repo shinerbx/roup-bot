@@ -616,8 +616,9 @@ function createWebappRouter(bot, botToken) {
     res.set('Cache-Control', 'public, max-age=300');
     res.json({
       methods,
-      rate: WITHDRAWAL.STAR_TO_RUB,
+      rate: WITHDRAWAL.STARS_TO_ROBUX_RATE,
       commission: WITHDRAWAL.COMMISSION_PERCENT,
+      gamePassMarkup: WITHDRAWAL.GAME_PASS_MARKUP_PERCENT,
       min: WITHDRAWAL.MIN_STARS,
       max: WITHDRAWAL.MAX_STARS,
     });
@@ -627,7 +628,7 @@ function createWebappRouter(bot, botToken) {
     try {
       const method = String(req.body?.method || '').trim();
       const amountStars = Math.floor(Number(req.body?.amountStars));
-      const rawUsername = String(req.body?.contactUsername || '').trim();
+      const robloxUsername = String(req.body?.robloxUsername || '').trim();
       const operationId = String(req.body?.operationId || '').trim();
 
       if (!WITHDRAWAL.METHODS[method]?.enabled) return res.status(400).json({ error: 'method_not_available' });
@@ -638,8 +639,9 @@ function createWebappRouter(bot, botToken) {
         return res.status(400).json({ error: 'amount_above_max', max: WITHDRAWAL.MAX_STARS });
       }
 
-      let username = rawUsername.startsWith('@') ? rawUsername : `@${rawUsername}`;
-      if (!/^@[A-Za-z0-9_]{4,32}$/.test(username)) return res.status(400).json({ error: 'invalid_username' });
+      if (!/^[A-Za-z0-9_]{3,20}$/.test(robloxUsername) || robloxUsername.startsWith('_') || robloxUsername.endsWith('_') || (robloxUsername.match(/_/g) || []).length > 1) {
+        return res.status(400).json({ error: 'invalid_username' });
+      }
       if (!operationId || operationId.length > 100) return res.status(400).json({ error: 'missing_operation_id' });
 
       const u = req.dbUser;
@@ -657,8 +659,11 @@ function createWebappRouter(bot, botToken) {
         }
       }
 
+      const telegramUsername = req.tgUser.username || req.dbUser?.username || '';
+      const contactUsername = telegramUsername ? `@${String(telegramUsername).replace(/^@+/, '')}` : 'не указан';
+
       const result = await createWithdrawRequest(req.tgUser.id, {
-        method, amountStars, contactUsername: username, operationId,
+        method, amountStars, contactUsername, robloxUsername, operationId,
       });
 
       if (result.error) {
@@ -669,11 +674,12 @@ function createWebappRouter(bot, botToken) {
       const adminMsgId = await notifyWithdrawRequest({
         requestId: result.requestId,
         userId: req.tgUser.id,
-        contactUsername: username,
+        telegramUsername: telegramUsername || null,
+        robloxUsername: result.robloxUsername,
         amountStars: result.amountStars,
-        amountRub: result.amountRub,
-        commissionRub: result.commissionRub,
-        payoutRub: result.payoutRub,
+        payoutRobux: result.payoutRobux,
+        gamePassPrice: result.gamePassPrice,
+        createdAt: result.createdAt,
       });
       if (adminMsgId) await attachAdminMessage(result.requestId, adminMsgId);
 

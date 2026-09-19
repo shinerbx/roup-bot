@@ -141,6 +141,11 @@ async function initDb() {
         commission_rub NUMERIC(12,2) NOT NULL,
         payout_rub NUMERIC(12,2) NOT NULL,
         contact_username TEXT NOT NULL,
+        roblox_username TEXT,
+        robux_gross NUMERIC(12,2),
+        robux_commission NUMERIC(12,2),
+        robux_payout NUMERIC(12,2),
+        game_pass_price INTEGER,
         status TEXT NOT NULL DEFAULT 'pending',
         operation_id TEXT NOT NULL UNIQUE,
         admin_message_id BIGINT,
@@ -178,6 +183,11 @@ async function initDb() {
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS broadcast_opt_out INTEGER DEFAULT 0');
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS broadcasts_today INTEGER DEFAULT 0');
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS broadcasts_day_marker DATE DEFAULT CURRENT_DATE');
+    await pool.query('ALTER TABLE withdraw_requests ADD COLUMN IF NOT EXISTS roblox_username TEXT');
+    await pool.query('ALTER TABLE withdraw_requests ADD COLUMN IF NOT EXISTS robux_gross NUMERIC(12,2)');
+    await pool.query('ALTER TABLE withdraw_requests ADD COLUMN IF NOT EXISTS robux_commission NUMERIC(12,2)');
+    await pool.query('ALTER TABLE withdraw_requests ADD COLUMN IF NOT EXISTS robux_payout NUMERIC(12,2)');
+    await pool.query('ALTER TABLE withdraw_requests ADD COLUMN IF NOT EXISTS game_pass_price INTEGER');
     await pool.query("ALTER TABLE operation_results ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending'");
     await pool.query("ALTER TABLE operation_results ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
     await pool.query("ALTER TABLE user_inventory ADD COLUMN IF NOT EXISTS is_demo INTEGER DEFAULT 0");
@@ -1055,7 +1065,7 @@ async function getDemoStatus(userId) {
 // WITHDRAW
 // ═══════════════════════════════════════════════════════════════════════
 
-async function createWithdrawRequest(userId, { method, amountStars, contactUsername, operationId }) {
+async function createWithdrawRequest(userId, { method, amountStars, contactUsername, robloxUsername, operationId }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -1130,18 +1140,21 @@ async function createWithdrawRequest(userId, { method, amountStars, contactUsern
       return { error: 'insufficient_balance' };
     }
 
-    const amountRub = +(amountStars * WITHDRAWAL.STAR_TO_RUB).toFixed(2);
-    const commissionRub = +(amountRub * WITHDRAWAL.COMMISSION_PERCENT / 100).toFixed(2);
-    const payoutRub = +(amountRub - commissionRub).toFixed(2);
+    const grossRobux = Math.floor(amountStars * WITHDRAWAL.STARS_TO_ROBUX_RATE);
+    const commissionRobux = Math.floor(grossRobux * WITHDRAWAL.COMMISSION_PERCENT / 100);
+    const payoutRobux = Math.max(0, grossRobux - commissionRobux);
+    const gamePassPrice = Math.ceil(payoutRobux * (1 + WITHDRAWAL.GAME_PASS_MARKUP_PERCENT / 100));
 
     const insRes = await client.query(
       `INSERT INTO withdraw_requests
          (user_id, method, amount_stars, amount_rub, commission_rub, payout_rub,
-          contact_username, status, operation_id, metadata)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9::jsonb)
-       RETURNING id`,
-      [userId, method, amountStars, amountRub, commissionRub, payoutRub,
-       contactUsername, opKey, JSON.stringify({ balanceAfter: balRes.rows[0].balance })]
+          contact_username, roblox_username, robux_gross, robux_commission, robux_payout, game_pass_price,
+          status, operation_id, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'pending', $13, $14::jsonb)
+       RETURNING id, created_at`,
+      [userId, method, amountStars, grossRobux, commissionRobux, payoutRobux,
+       contactUsername, robloxUsername, grossRobux, commissionRobux, payoutRobux, gamePassPrice,
+       opKey, JSON.stringify({ balanceAfter: balRes.rows[0].balance, gamePassMarkupPercent: WITHDRAWAL.GAME_PASS_MARKUP_PERCENT })]
     );
 
     await client.query(
@@ -1156,9 +1169,15 @@ async function createWithdrawRequest(userId, { method, amountStars, contactUsern
       success: true,
       requestId: insRes.rows[0].id,
       amountStars,
-      amountRub,
-      commissionRub,
-      payoutRub,
+      amountRub: grossRobux,
+      commissionRub: commissionRobux,
+      payoutRub: payoutRobux,
+      robuxGross: grossRobux,
+      robuxCommission: commissionRobux,
+      payoutRobux,
+      robloxUsername,
+      gamePassPrice,
+      createdAt: insRes.rows[0].created_at,
       method,
       contactUsername,
       balance: balRes.rows[0].balance,

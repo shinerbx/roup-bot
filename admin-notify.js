@@ -13,7 +13,17 @@ function registerBot(bot) {
 }
 
 function escapeHtml(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function formatDateTime(value) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return new Date().toLocaleString('ru-RU');
+  return date.toLocaleString('ru-RU');
 }
 
 async function notifyWithdrawRequest(req) {
@@ -25,6 +35,7 @@ async function notifyWithdrawRequest(req) {
     requestId: req?.requestId,
     userId: req?.userId,
     amountStars: req?.amountStars,
+    robloxUsername: req?.robloxUsername,
   });
 
   if (!WITHDRAWAL.ADMIN_NOTIFY) {
@@ -40,15 +51,18 @@ async function notifyWithdrawRequest(req) {
     return null;
   }
 
+  const telegramUsername = req?.telegramUsername ? `@${String(req.telegramUsername).replace(/^@+/, '')}` : 'не указан';
   const text =
-    `<b>Новый запрос на вывод!</b>\n\n` +
-    `ID пользователя: <code>${req.userId}</code>\n` +
-    `Telegram Юзернейм: ${escapeHtml(req.contactUsername)}\n` +
-    `Сумма к выводу: <b>${req.amountStars}</b> Звезд (<b>${req.amountRub}</b> руб.)\n` +
-    `Комиссия ${WITHDRAWAL.COMMISSION_PERCENT}%: ${req.commissionRub} руб.\n` +
-    `К выплате чистыми: <b>${req.payoutRub} руб.</b>\n` +
-    `Способ: Криптовалюта\n\n` +
-    `Заявка #${req.requestId}`;
+    `====================================\n` +
+    `🔔 <b>НОВАЯ ЗАЯВКА НА ВЫВОД ROBUX</b>\n` +
+    `====================================\n` +
+    `👤 Пользователь (Telegram): <b>${escapeHtml(telegramUsername)}</b> / ID: <code>${escapeHtml(req.userId)}</code>\n` +
+    `🎮 Ник в Roblox: <b>${escapeHtml(req.robloxUsername)}</b>\n` +
+    `⭐ Списано внутренних звезд: <b>${escapeHtml(req.amountStars)}</b> ⭐\n\n` +
+    `💵 Чистыми игрок получит: <b>${escapeHtml(req.payoutRobux)} R$</b>\n` +
+    `🏷️ Цена Game Pass (с учетом +${escapeHtml(WITHDRAWAL.GAME_PASS_MARKUP_PERCENT)}%): <b>${escapeHtml(req.gamePassPrice)} R$</b>\n\n` +
+    `📆 Дата и время: <b>${escapeHtml(formatDateTime(req.createdAt))}</b>\n` +
+    `====================================`;
 
   try {
     const msg = await _bot.telegram.sendMessage(ADMIN_CHAT_ID, text, {

@@ -2,16 +2,19 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { haptic, hapticNotify } from '../telegram.js';
 
-const RATE_FALLBACK = 0.2;
-const COMMISSION_FALLBACK = 20;
+// Значение-заглушка для первого рендера. Сервер отдаёт актуальный курс после загрузки.
+const STARS_TO_ROBUX_RATE = 0.2;
+const COMMISSION_FALLBACK = 25;
+const GAME_PASS_MARKUP_FALLBACK = 43;
 const MIN_STARS_FALLBACK = 100;
 const MAX_STARS_FALLBACK = 100000;
+const GAME_PASS_TUTORIAL_URL = import.meta.env.VITE_GAME_PASS_TUTORIAL_URL || '';
 
-// Иконка после числа: левый отступ у картинки вместо правого.
 const robuxIconStyle = { width: 18, height: 18, verticalAlign: '-3px', marginLeft: 5 };
 const robuxIconBigStyle = { width: 34, height: 34, verticalAlign: '-8px', marginLeft: 8 };
 
-const fmtNum = (v) => (+v).toFixed(2);
+const fmtRobux = (value) => Math.max(0, Math.round(Number(value) || 0)).toLocaleString('ru-RU');
+const fmtStars = (value) => Math.max(0, Math.floor(Number(value) || 0)).toLocaleString('ru-RU');
 
 function RobuxIcon({ big = false }) {
   return (
@@ -24,11 +27,10 @@ function RobuxIcon({ big = false }) {
   );
 }
 
-// Число, затем иконка. Единый способ показать робуксы в интерфейсе.
 function RobuxAmount({ value, big = false }) {
   return (
     <>
-      {fmtNum(value)}
+      {fmtRobux(value)}
       <RobuxIcon big={big} />
     </>
   );
@@ -39,22 +41,61 @@ function createOperationId() {
   return `wr_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function isValidRobloxUsername(value) {
+  const username = String(value || '').trim();
+  if (username.length < 3 || username.length > 20) return false;
+  if (!/^[A-Za-z0-9_]+$/.test(username)) return false;
+  if (username.startsWith('_') || username.endsWith('_')) return false;
+  if ((username.match(/_/g) || []).length > 1) return false;
+  return true;
+}
+
 function mapError(code, details) {
   const map = {
     insufficient_balance: 'Недостаточно звёзд на балансе.',
-    amount_below_min: `Минимальная сумма — ${details?.min || 100} ⭐.`,
-    amount_above_max: `Максимум за одну заявку — ${Number(details?.max || 100000).toLocaleString('ru-RU')} ⭐.`,
-    invalid_username: 'Проверьте формат юзернейма — @username.',
+    amount_below_min: `Минимальная сумма — ${details?.min || MIN_STARS_FALLBACK} ⭐.`,
+    amount_above_max: `Максимум за одну заявку — ${Number(details?.max || MAX_STARS_FALLBACK).toLocaleString('ru-RU')} ⭐.`,
+    invalid_username: 'Проверьте Roblox Username: от 3 до 20 символов, только латиница, цифры и максимум один знак _.',
     too_many_open_requests: 'У вас уже есть открытые заявки. Дождитесь их обработки.',
     referral_gate: 'Условия по приглашениям ещё не выполнены.',
     operation_in_progress: 'Заявка уже создаётся, подождите.',
     method_not_available: 'Вывод временно недоступен.',
     missing_operation_id: 'Ошибка сессии. Обновите страницу и попробуйте снова.',
     invalid_amount: 'Некорректная сумма.',
+    daily_withdrawal_limit: 'Достигнут дневной лимит заявок на вывод.',
     demo_active: 'Включён Demo-Режим. Для его отключения напишите своему менеджеру.',
     server_error: 'Ошибка на сервере. Попробуйте позже.',
   };
   return map[code] || 'Не удалось создать заявку. Попробуйте позже.';
+}
+
+function StepHeader({ step, title }) {
+  return (
+    <>
+      <div className="withdraw-steps" aria-label={`Шаг ${step} из 4`}>
+        {[1, 2, 3, 4].map((item) => (
+          <div
+            key={item}
+            className={`withdraw-steps__item${item === step ? ' active' : ''}${item < step ? ' done' : ''}`}
+          >
+            <span>{item < step ? '✓' : item}</span>
+          </div>
+        ))}
+      </div>
+      <div className="withdraw-step-title">
+        <span className="withdraw-step-title__counter">Шаг {step} из 4</span>
+        <h2>{title}</h2>
+      </div>
+    </>
+  );
+}
+
+function BackButton({ onClick, label = 'Назад' }) {
+  return (
+    <button className="topup-back" onClick={onClick} aria-label={label}>
+      ‹
+    </button>
+  );
 }
 
 export default function WithdrawScreen({
@@ -64,8 +105,9 @@ export default function WithdrawScreen({
   demoActive = false,
   referralProgress = null,
 }) {
-  const [rate, setRate] = useState(RATE_FALLBACK);
+  const [rate, setRate] = useState(STARS_TO_ROBUX_RATE);
   const [commissionPct, setCommissionPct] = useState(COMMISSION_FALLBACK);
+  const [gamePassMarkupPct, setGamePassMarkupPct] = useState(GAME_PASS_MARKUP_FALLBACK);
   const [minStars, setMinStars] = useState(MIN_STARS_FALLBACK);
   const [maxStars, setMaxStars] = useState(MAX_STARS_FALLBACK);
 
@@ -74,11 +116,10 @@ export default function WithdrawScreen({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
+  const [step, setStep] = useState(1);
 
   const operationIdRef = useRef(null);
   const submittingRef = useRef(false);
-
-  const [step, setStep] = useState('form');
 
   useEffect(() => {
     operationIdRef.current = createOperationId();
@@ -91,6 +132,7 @@ export default function WithdrawScreen({
         if (!alive) return;
         if (typeof r?.rate === 'number') setRate(r.rate);
         if (typeof r?.commission === 'number') setCommissionPct(r.commission);
+        if (typeof r?.gamePassMarkup === 'number') setGamePassMarkupPct(r.gamePassMarkup);
         if (typeof r?.min === 'number') setMinStars(r.min);
         if (typeof r?.max === 'number') setMaxStars(r.max);
       })
@@ -100,36 +142,51 @@ export default function WithdrawScreen({
 
   const calc = useMemo(() => {
     const stars = Math.max(0, Math.floor(Number(amountStars) || 0));
-    const robux = +(stars * rate).toFixed(2);
-    const commission = +(robux * commissionPct / 100).toFixed(2);
-    const payout = +(robux - commission).toFixed(2);
-    return { stars, robux, commission, payout };
-  }, [amountStars, rate, commissionPct]);
+    const grossRobux = Math.floor(stars * rate);
+    const commissionRobux = Math.floor(grossRobux * commissionPct / 100);
+    const payoutRobux = Math.max(0, grossRobux - commissionRobux);
+    const gamePassPrice = Math.ceil(payoutRobux * (1 + gamePassMarkupPct / 100));
+    return { stars, grossRobux, commissionRobux, payoutRobux, gamePassPrice };
+  }, [amountStars, rate, commissionPct, gamePassMarkupPct]);
 
-  const usernameOk = /^@?[A-Za-z0-9_]{4,32}$/.test(username.trim());
-  const amountOk = calc.stars >= minStars && calc.stars <= maxStars && calc.stars <= balance;
-  const canSubmit = amountOk && usernameOk && !loading && canWithdraw && !demoActive;
+  const amountOk = calc.stars >= minStars && calc.stars <= maxStars && calc.stars <= Number(balance);
+  const usernameOk = isValidRobloxUsername(username);
+  const canContinueFromStep1 = amountOk && canWithdraw && !demoActive && !loading;
+  const canContinueFromStep2 = usernameOk && !loading;
 
   const applyPreset = (value) => {
     haptic('light');
-    if (value === -1) setAmountStars(String(Math.min(balance, maxStars)));
+    if (value === -1) setAmountStars(String(Math.min(Number(balance) || 0, maxStars)));
     else setAmountStars(String(value));
     setError(null);
   };
 
+  const nextStep = () => {
+    haptic('light');
+    setError(null);
+    setStep((current) => Math.min(3, current + 1));
+  };
+
+  const previousStep = () => {
+    haptic('light');
+    setError(null);
+    if (step <= 1) onClose();
+    else setStep((current) => current - 1);
+  };
+
   const submit = async () => {
-    if (!canSubmit || submittingRef.current) return;
+    if (!canContinueFromStep2 || submittingRef.current) return;
     submittingRef.current = true;
     setLoading(true);
     setError(null);
     haptic('medium');
 
     try {
-      const normalized = username.trim().startsWith('@') ? username.trim() : `@${username.trim()}`;
+      const normalized = username.trim();
       const res = await api.createWithdrawRequest({
         method: 'crypto',
         amountStars: calc.stars,
-        contactUsername: normalized,
+        robloxUsername: normalized,
         operationId: operationIdRef.current || createOperationId(),
       });
 
@@ -138,7 +195,7 @@ export default function WithdrawScreen({
         hapticNotify('error');
       } else {
         setResult(res);
-        setStep('success');
+        setStep(4);
         hapticNotify('success');
       }
     } catch (e) {
@@ -151,190 +208,286 @@ export default function WithdrawScreen({
     }
   };
 
-  // ═══ УСПЕХ ══════════════════════════════════════════════════════════
-  if (step === 'success') {
-    return (
-      <div className="topup-overlay">
-        <div className="topup-header">
-          <button className="topup-back" onClick={onClose} aria-label="Закрыть">‹</button>
-          <h2 className="screen-title">Заявка создана</h2>
-          <span style={{ width: 28 }} />
-        </div>
-
-        <div className="withdraw-success">
-          <div className="withdraw-success__icon">✓</div>
-          <p className="withdraw-success__amount">
-            <RobuxAmount value={result?.payoutRub || 0} big />
-          </p>
-          <p className="withdraw-success__text">
-            Заявка <b>#{result?.requestId}</b> принята в обработку.<br />
-            Списано: {Number(result?.amountStars || 0).toLocaleString('ru-RU')} ⭐ · Комиссия сервиса: <RobuxAmount value={result?.commissionRub || 0} />
-          </p>
-          <p className="withdraw-success__note">
-            Менеджер свяжется с вами в течение 48 часов
-          </p>
-        </div>
-
-        <WithdrawFooter />
-      </div>
-    );
-  }
-
-  // ═══ DEMO-БЛОК ══════════════════════════════════════════════════════
   if (demoActive) {
     return (
-      <div className="topup-overlay">
+      <div className="topup-overlay withdraw-screen">
         <div className="topup-header">
-          <button className="topup-back" onClick={onClose} aria-label="Назад">‹</button>
+          <BackButton onClick={onClose} label="Закрыть" />
           <h2 className="screen-title">Вывод робуксов</h2>
           <span style={{ width: 28 }} />
         </div>
-
         <div className="withdraw-demo-lock">
           <div className="withdraw-demo-lock__icon">🔒</div>
           <p className="withdraw-demo-lock__title">Включён Demo-Режим</p>
-          <p className="withdraw-demo-lock__text">
-            Для его отключения напишите своему менеджеру.
-          </p>
+          <p className="withdraw-demo-lock__text">Для его отключения напишите своему менеджеру.</p>
         </div>
-
         <WithdrawFooter />
       </div>
     );
   }
 
-  // ═══ ФОРМА ═════════════════════════════════════════════════════════
+  if (step === 4) {
+    const payout = Number(result?.payoutRobux ?? calc.payoutRobux ?? 0);
+    return (
+      <div className="topup-overlay withdraw-screen">
+        <div className="topup-header">
+          <span style={{ width: 28 }} />
+          <h2 className="screen-title">Заявка успешно создана!</h2>
+          <span style={{ width: 28 }} />
+        </div>
+        <div className="withdraw-success withdraw-success--compact">
+          <div className="withdraw-success__icon">✓</div>
+          <p className="withdraw-success__amount"><RobuxAmount value={payout} big /></p>
+          <p className="withdraw-success__text">
+            Отлично! Ваша заявка на вывод <b>{fmtRobux(payout)} R$</b> успешно принята в обработку.
+          </p>
+          <p className="withdraw-success__note">
+            Срок выплаты и проверки занимает до 48 часов. Вы получите уведомление в боте, как только Робуксы поступят на ваш аккаунт.
+          </p>
+        </div>
+        <WithdrawFooter />
+      </div>
+    );
+  }
+
+  const stepTitle = step === 1
+    ? 'Шаг 1: Укажите сумму для вывода'
+    : step === 2
+      ? 'Шаг 2: Укажите ваш аккаунт'
+      : 'Шаг 3: Настройка Game Pass';
+
   return (
-    <div className="topup-overlay">
+    <div className="topup-overlay withdraw-screen">
       <div className="topup-header">
-        <button className="topup-back" onClick={onClose} aria-label="Назад">‹</button>
+        <BackButton onClick={previousStep} />
         <h2 className="screen-title">Вывод робуксов</h2>
         <span style={{ width: 28 }} />
       </div>
 
-      <p className="topup-rate">
-        Курс: <b>1 ⭐ = {rate} <RobuxIcon /></b> · комиссия сервиса <b>{commissionPct}%</b>
-      </p>
+      <StepHeader step={step} title={stepTitle} />
 
-      {!canWithdraw && (
-        <div className="withdraw-warning">
-          <b>Вывод пока недоступен.</b>{' '}
-          {referralProgress
-            ? `Пригласи ещё ${referralProgress.premiumRemaining} Premium или ${referralProgress.regularRemaining} обычных — тогда кнопка разблокируется.`
-            : 'Пригласи друзей по реферальной ссылке, чтобы разблокировать.'}
-        </div>
-      )}
+      {step === 1 && (
+        <>
+          <div className="withdraw-info-card">
+            <span className="withdraw-info-card__icon">💱</span>
+            <div>
+              <b>Текущий курс</b>
+              <span>1 ⭐ = {rate} R$</span>
+            </div>
+          </div>
 
-      <div className="withdraw-field">
-        <label className="withdraw-field__label" htmlFor="wd-amount">Сумма в звёздах</label>
-        <div className="topup-custom">
-          <span className="topup-custom__icon">⭐</span>
-          <input
-            id="wd-amount"
-            className="topup-custom__input"
-            type="text"
-            inputMode="numeric"
-            autoComplete="off"
-            placeholder="0"
-            value={amountStars}
-            onChange={(e) => {
-              setAmountStars(e.target.value.replace(/\D/g, '').slice(0, 7));
-              setError(null);
-            }}
-            disabled={loading}
-          />
-        </div>
-        <div className="withdraw-presets">
-          {[100, 500, 1000].map((v) => (
-            <button
-              key={v}
-              type="button"
-              className={`topup-chip${Number(amountStars) === v ? ' selected' : ''}`}
-              onClick={() => applyPreset(v)}
-              disabled={loading}
-            >
-              {v}
-            </button>
-          ))}
+          {!canWithdraw && (
+            <div className="withdraw-warning">
+              <b>Вывод пока недоступен.</b>{' '}
+              {referralProgress
+                ? `Пригласи ещё ${referralProgress.premiumRemaining} Premium или ${referralProgress.regularRemaining} обычных — тогда кнопка разблокируется.`
+                : 'Пригласи друзей по реферальной ссылке, чтобы разблокировать.'}
+            </div>
+          )}
+
+          <div className="withdraw-field">
+            <label className="withdraw-field__label" htmlFor="wd-amount">Количество звёзд ⭐</label>
+            <div className="topup-custom">
+              <span className="topup-custom__icon">⭐</span>
+              <input
+                id="wd-amount"
+                className="topup-custom__input"
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
+                placeholder="Введите количество"
+                value={amountStars}
+                onChange={(e) => {
+                  setAmountStars(e.target.value.replace(/\D/g, '').slice(0, 7));
+                  setError(null);
+                }}
+                disabled={loading}
+              />
+            </div>
+            <div className="withdraw-presets">
+              {[100, 500, 1000].map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  className={`topup-chip${Number(amountStars) === v ? ' selected' : ''}`}
+                  onClick={() => applyPreset(v)}
+                  disabled={loading}
+                >
+                  {v}
+                </button>
+              ))}
+              <button
+                type="button"
+                className={`topup-chip${calc.stars === Math.min(Number(balance) || 0, maxStars) && Number(balance) > 0 ? ' selected' : ''}`}
+                onClick={() => applyPreset(-1)}
+                disabled={loading || Number(balance) <= 0}
+              >
+                MAX
+              </button>
+            </div>
+            <p className="withdraw-field__hint">
+              Доступно: <b>{fmtStars(balance)} ⭐</b> · минимум {fmtStars(minStars)} ⭐
+            </p>
+          </div>
+
+          <div className="withdraw-payout-card">
+            <div className="withdraw-payout-card__row">
+              <span>Без комиссии</span>
+              <b><RobuxAmount value={calc.grossRobux} /></b>
+            </div>
+            <div className="withdraw-payout-card__row withdraw-payout-card__row--fee">
+              <span>Комиссия сервиса · {commissionPct}%</span>
+              <b>− <RobuxAmount value={calc.commissionRobux} /></b>
+            </div>
+            <div className="withdraw-payout-card__total">
+              <span>Вы получите чистыми</span>
+              <strong><RobuxAmount value={calc.payoutRobux} /></strong>
+            </div>
+          </div>
+
+          <div className="withdraw-formula">
+            Расчёт: ({fmtStars(calc.stars)} ⭐ × {rate}) × {((100 - commissionPct) / 100).toFixed(2)} = {fmtRobux(calc.payoutRobux)} R$
+          </div>
+
+          {error && <div className="withdraw-error">{error}</div>}
+
           <button
             type="button"
-            className={`topup-chip${calc.stars === Math.min(balance, maxStars) && balance > 0 ? ' selected' : ''}`}
-            onClick={() => applyPreset(-1)}
+            className="sheet__confirm withdraw-action"
+            onClick={nextStep}
+            disabled={!canContinueFromStep1}
+          >
+            Далее
+          </button>
+        </>
+      )}
+
+      {step === 2 && (
+        <>
+          <div className="withdraw-step-intro">
+            <span>🎮</span>
+            <p>Нужен именно тот Username Roblox, на который вы хотите получить Robux.</p>
+          </div>
+
+          <div className="withdraw-field withdraw-field--spacious">
+            <label className="withdraw-field__label" htmlFor="wd-user">Roblox Username</label>
+            <div className={`topup-custom${username.length > 0 && !usernameOk ? ' invalid' : ''}`}>
+              <span className="topup-custom__icon">@</span>
+              <input
+                id="wd-user"
+                className="topup-custom__input"
+                type="text"
+                autoComplete="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                placeholder="Ваш уникальный Username"
+                value={username}
+                onChange={(e) => { setUsername(e.target.value.replace(/\s/g, '').slice(0, 20)); setError(null); }}
+                disabled={loading}
+                maxLength={20}
+                autoFocus
+              />
+            </div>
+            {username.length > 0 && !usernameOk && (
+              <p className="withdraw-field__hint withdraw-field__hint--error">
+                Username: 3–20 символов, латиница/цифры и максимум один знак _.
+              </p>
+            )}
+          </div>
+
+          <div className="withdraw-username-alert">
+            <strong>⚠️ Вводите именно ваш Username (уникальный ник), а НЕ Display Name (отображаемое имя)!</strong>
+          </div>
+
+          <div className="withdraw-preview-card">
+            <span>На аккаунт</span>
+            <b>@{username || 'username'}</b>
+            <small>Вы получите {fmtRobux(calc.payoutRobux)} R$</small>
+          </div>
+
+          {error && <div className="withdraw-error">{error}</div>}
+
+          <button
+            type="button"
+            className="sheet__confirm withdraw-action"
+            onClick={nextStep}
+            disabled={!canContinueFromStep2}
+          >
+            Далее
+          </button>
+        </>
+      )}
+
+      {step === 3 && (
+        <>
+          <div className="withdraw-step-intro">
+            <span>🛠️</span>
+            <p>Перед созданием заявки подготовьте Game Pass в Roblox. Цена уже рассчитана за вас.</p>
+          </div>
+
+          <div className="withdraw-instruction">
+            <div className="withdraw-instruction__step">
+              <span>1</span>
+              <p>Перейдите на сайт: <a href="https://www.roblox.com/" target="_blank" rel="noopener noreferrer">roblox.com</a></p>
+            </div>
+            <div className="withdraw-instruction__step">
+              <span>2</span>
+              <p>
+                Выберите плейс с названием: <b>{username}'s Place</b>.<br />
+                <strong>⚠️ Убедитесь, что этот плейс находится в ПУБЛИЧНОМ доступе (Public)!</strong>
+              </p>
+            </div>
+            <div className="withdraw-instruction__step">
+              <span>3</span>
+              <p>
+                Создайте Game Pass и установите для него цену: <b>{fmtRobux(calc.gamePassPrice)} R$</b>.
+                <br />
+                <strong>🚨 ВАЖНО: В настройках цены обязательно ВЫКЛЮЧИТЕ тумблер «Managed Pricing»!</strong>
+              </p>
+            </div>
+          </div>
+
+          <div className="withdraw-gp-card">
+            <span>🏷️ Цена Game Pass</span>
+            <strong><RobuxAmount value={calc.gamePassPrice} big /></strong>
+            <small>
+              Сумма рассчитана как {fmtRobux(calc.payoutRobux)} R$ + {gamePassMarkupPct}%.
+            </small>
+          </div>
+
+          {GAME_PASS_TUTORIAL_URL ? (
+            <a
+              className="withdraw-tutorial-link"
+              href={GAME_PASS_TUTORIAL_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              📖 Полный туториал
+            </a>
+          ) : (
+            <div className="withdraw-tutorial-link withdraw-tutorial-link--disabled">
+              📖 Полный туториал будет добавлен позже
+            </div>
+          )}
+
+          {error && <div className="withdraw-error">{error}</div>}
+
+          <button
+            type="button"
+            className="sheet__confirm withdraw-action"
+            onClick={submit}
             disabled={loading}
           >
-            MAX
+            {loading ? 'Создание заявки…' : 'Я всё сделал, создать заявку'}
           </button>
-        </div>
-        <p className="withdraw-field__hint">
-          Доступно: <b>{balance.toLocaleString('ru-RU')} ⭐</b> · минимум {minStars} ⭐
-        </p>
-      </div>
-
-      <div className="withdraw-field">
-        <label className="withdraw-field__label" htmlFor="wd-user">Telegram-юзернейм для связи</label>
-        <div className="topup-custom">
-          <span className="topup-custom__icon">@</span>
-          <input
-            id="wd-user"
-            className="topup-custom__input"
-            type="text"
-            autoComplete="off"
-            autoCapitalize="none"
-            spellCheck={false}
-            placeholder="username"
-            value={username.replace(/^@/, '')}
-            onChange={(e) => { setUsername(e.target.value.trim()); setError(null); }}
-            disabled={loading}
-            maxLength={32}
-          />
-        </div>
-      </div>
-
-      <div className="withdraw-calc">
-        <div className="withdraw-calc__row">
-          <span>Сумма к выводу</span>
-          <span><b>{calc.stars.toLocaleString('ru-RU')} ⭐</b> · <RobuxAmount value={calc.robux} /></span>
-        </div>
-        <div className="withdraw-calc__row">
-          <span>Комиссия сервиса {commissionPct}%</span>
-          <span className="withdraw-calc__fee">− <RobuxAmount value={calc.commission} /></span>
-        </div>
-        <div className="withdraw-calc__row withdraw-calc__row--total">
-          <span>К выплате робуксами</span>
-          <b><RobuxAmount value={calc.payout} /></b>
-        </div>
-      </div>
-
-      <div className="withdraw-legal">
-        <p className="withdraw-legal__note">
-          <RobuxIcon /> Развлекательный сервис — не казино и не финансовая организация.
-        </p>
-        <p>
-          Робуксы — внутриигровая валюта Roblox. Сервис не аффилирован с Roblox Corporation.
-        </p>
-        <p>
-          Выдача вручную менеджером в течение 48 часов после проверки. Только для пользователей <b>18+</b>.
-        </p>
-      </div>
-
-      {error && <div className="withdraw-error">{error}</div>}
-
-      <button
-        type="button"
-        className="sheet__confirm"
-        onClick={submit}
-        disabled={!canSubmit}
-        style={{ width: '100%', minHeight: 52 }}
-      >
-        {loading ? 'Создание заявки…' : 'Создать заявку'}
-      </button>
+        </>
+      )}
 
       <WithdrawFooter />
     </div>
   );
 }
 
-// ── Футер страницы вывода ───────────────────────────────────────────
 function WithdrawFooter() {
   return (
     <footer className="app-footer">
