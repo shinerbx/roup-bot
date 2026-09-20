@@ -604,7 +604,11 @@ function createWebappRouter(bot, botToken) {
       const rewards = await getFreeRouletteRewards();
       const botUsername = process.env.BOT_USERNAME || 'roupgrade_bot';
       const referralLink = `https://t.me/${botUsername}?start=ref_${req.tgUser.id}`;
-      const shareText = `🎁 Приглашаю тебя в RoUP! После твоей регистрации я получу бесплатную прокрутку рулетки. Присоединяйся: ${referralLink}`;
+      const shareText = `🤯 ОФИГЕТЬ! ТЫ ЗНАЛ, ЧТО В ROUP МОЖНО ЛУТАТЬ БЕСПЛАТНЫЕ ПОДАРКИ? 🎁
+
+🔥 ЗАЛЕТАЙ В БОТА — ТАМ ТЕБЯ ЖДУТ БЕСПЛАТНЫЙ ЛУТ, РУЛЕТКА И АПГРЕЙДЫ ROBLOX.
+
+👇 ЖМИ И ЗАБИРАЙ, ПОКА ДОСТУПНО!`;
       const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent(shareText)}`;
 
       res.set('Cache-Control', 'private, max-age=15');

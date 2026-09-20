@@ -193,7 +193,11 @@ export default function App() {
       if (nextTab === 'inventory') { haptic('light'); setTab('inventory'); setTutorialStep(4); }
       return;
     }
-    if (tutorialStep === 4) return;
+    if (tutorialStep === 4) {
+      if (nextTab === 'roulette') { haptic('light'); setTab('roulette'); setTutorialStep(5); }
+      return;
+    }
+    if (tutorialStep === 5) return;
     setTab(nextTab);
   };
 

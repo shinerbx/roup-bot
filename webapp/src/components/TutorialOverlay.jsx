@@ -4,7 +4,8 @@ import { haptic } from '../telegram.js';
 const STEPS = {
   1: { target: 'catalog', text: 'ТУТ ТЫ МОЖЕШЬ КУПИТЬ ПРЕДМЕТЫ' },
   2: { target: 'upgrade', text: 'ЗДЕСЬ ТЫ МОЖЕШЬ УЛУЧШИТЬ СВОИ ПРЕДМЕТЫ' },
-  3: { target: 'inventory', text: 'А ТУТ НАХОДИТСЯ ТВОЙ ИНВЕНТАРЬ' }
+  3: { target: 'inventory', text: 'А ТУТ НАХОДИТСЯ ТВОЙ ИНВЕНТАРЬ' },
+  4: { target: 'roulette', text: 'ЗДЕСЬ ТЫ МОЖЕШЬ БЕСПЛАТНО КРУТИТЬ РУЛЕТКУ ЗА ПРИГЛАШЁННЫХ ДРУЗЕЙ' }
 };
 
 function clamp(value, min, max) {
@@ -62,7 +63,7 @@ export default function TutorialOverlay({ step, onFinish, onTargetClick }) {
 
   if (!step) return null;
 
-  if (step === 4) {
+  if (step === 5) {
     return (
       <div className="tutorial-overlay tutorial-overlay--final" role="dialog" aria-modal="true" aria-label="Обучение завершено">
         <div className="tutorial-final-card">
@@ -139,7 +140,7 @@ export default function TutorialOverlay({ step, onFinish, onTargetClick }) {
               };
             })()}
           >
-            <span className="tutorial-tooltip__step">ШАГ {step} / 3</span>
+            <span className="tutorial-tooltip__step">ШАГ {step} / 4</span>
             <strong>{config.text}</strong>
             <span className="tutorial-tooltip__hint">Нажми на подсвеченную кнопку</span>
           </div>

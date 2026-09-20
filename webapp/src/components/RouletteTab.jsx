@@ -173,7 +173,7 @@ export default function RouletteTab({ profile, onSpinSuccess, onToast }) {
             <div
               className="roulette-reel__track"
               style={{
-                transform: `translate3d(${trackX}px, 0, 0)`,
+                transform: `translate3d(${trackX}px, -50%, 0)`,
                 transition: spinning ? `transform ${duration}ms cubic-bezier(.08,.72,.12,1)` : 'none',
               }}
             >
@@ -269,11 +269,11 @@ export default function RouletteTab({ profile, onSpinSuccess, onToast }) {
       <section className="roulette-invite-card">
         <div className="roulette-invite-card__icon">👥</div>
         <div className="roulette-invite-card__content">
-          <span className="roulette-invite-card__eyebrow">ХОЧЕШЬ ЕЩЁ ПРОКРУТОК?</span>
-          <h4>Пригласи друга</h4>
-          <p>За каждого нового игрока тебе начислится бесплатная прокрутка рулетки.</p>
+          <span className="roulette-invite-card__eyebrow">🤯 ОФИГЕТЬ, ТЫ ЗНАЛ?</span>
+          <h4>ТУТ МОЖНО ЛУТАТЬ БЕСПЛАТНЫЕ ПОДАРКИ</h4>
+          <p>🔥 Залетай в бота и забирай бесплатный лут, рулетку и апгрейды. За нового игрока тебе ещё начислится бесплатная прокрутка.</p>
         </div>
-        <button type="button" onClick={openInvite}>Пригласить</button>
+        <button type="button" onClick={openInvite}>🔥 ЗАБРАТЬ</button>
       </section>
 
       {targetCard && spinning && (

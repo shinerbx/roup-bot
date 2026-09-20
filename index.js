@@ -59,6 +59,12 @@ function isWhitelistedId(userId) {
   return isWhitelisted(userId);
 }
 
+function formatDateDMY(value) {
+  const raw = value instanceof Date ? value.toISOString().slice(0, 10) : String(value || '').slice(0, 10);
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return match ? `${match[3]}.${match[2]}.${match[1]}` : '—';
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // BOT INIT
 // ═══════════════════════════════════════════════════════════════════════
@@ -560,28 +566,21 @@ bot.hears('👤 Профиль', async (ctx) => {
     const user = await getUser(ctx.from.id);
     if (!user) return ctx.reply('Сначала нажми /start');
     const tier = calculateTier(user);
-    const itemsCount = await getUserInventoryCount(ctx.from.id);
     const progress = await getReferralProgress(ctx.from.id);
-    const referralStatus = progress.canWithdraw
-      ? '✅ Вывод предметов разблокирован.'
-      : `🔒 Ещё ${progress.premiumRemaining} Premium или ${progress.regularRemaining} пользователей без Premium.`;
 
     const profileText =
-      `📊 <b>Статистика аккаунта:</b>\n\n` +
+      `📊 <b>Профиль</b>\n\n` +
       `🆔 <b>ID:</b> <code>${user.telegram_id}</code>\n` +
       `🏅 <b>Уровень:</b> ${tier}\n` +
-      `🎒 <b>Предметов в инвентаре:</b> ${itemsCount} шт.\n` +
       `👥 <b>Всего приглашено:</b> ${progress.total}\n` +
-      `🎁 <b>Бесплатных прокруток:</b> ${Number(user.free_roulette_spins) || 0}\n` +
-      `⭐ <b>Premium:</b> ${progress.premium}/5\n` +
+      `💎 <b>Premium:</b> ${progress.premium}/5\n` +
       `👤 <b>Без Premium:</b> ${progress.regular}/10\n` +
-      `${referralStatus}\n` +
-      `💰 <b>Игровой баланс:</b> ${user.balance} ⭐\n` +
-      `📅 <b>Дата регистрации:</b> ${String(user.created_at).split(' ')[0]}`;
+      `💰 <b>Баланс:</b> ${Number(user.balance) || 0} ⭐\n` +
+      `📅 <b>Регистрация:</b> ${formatDateDMY(user.created_at)}`;
 
     ctx.reply(profileText, {
       parse_mode: 'HTML',
-      ...Markup.inlineKeyboard([[Markup.button.webApp('🚀 Открыть инвентарь и каталог', WEB_APP_URL)]])
+      ...Markup.inlineKeyboard([[Markup.button.webApp('🚀 Открыть RoUP', WEB_APP_URL)]])
     }).catch(() => {});
   } catch (err) { console.error('Ошибка в Профиль:', err.message); }
 });
@@ -646,7 +645,7 @@ bot.hears('👥 Друзья', async (ctx) => {
     ctx.reply(text, {
       parse_mode: 'HTML',
       ...Markup.inlineKeyboard([
-        [Markup.button.switchToChat('📲 Пригласить друга', '')],
+        [Markup.button.switchToChat('🔥 Заманить друга', '')],
         [Markup.button.webApp('🎮 Открыть RoUP', WEB_APP_URL)]
       ])
     }).catch(() => {});
@@ -655,18 +654,18 @@ bot.hears('👥 Друзья', async (ctx) => {
 
 bot.on('inline_query', async (ctx) => {
   const refLink = `https://t.me/${BOT_USERNAME}?start=ref_${ctx.from.id}`;
-  const text = `⚡️ <b>RoUP — пригласи друга</b>\n\n🎁 После регистрации нового игрока тебе начислится бесплатная прокрутка рулетки.\n\n🔗 Открывай RoUP по ссылке ниже:`;
+  const text = `🤯 <b>ОФИГЕТЬ! ТЫ ЗНАЛ, ЧТО В ROUP МОЖНО ЛУТАТЬ БЕСПЛАТНЫЕ ПОДАРКИ?</b> 🎁\n\n🔥 <b>ЗАЛЕТАЙ В БОТА</b> — тебя ждут бесплатный лут, рулетка и Roblox-апгрейды.\n\n👇 <b>ЖМИ И ЗАБИРАЙ ПОДАРОК!</b>`;
   return ctx.answerInlineQuery([{
     type: 'article',
     id: 'referral_invite',
-    title: '🎁 Пригласить друга в RoUP',
-    description: 'Получи бесплатную прокрутку рулетки за нового игрока',
+    title: '🤯 БЕСПЛАТНЫЕ ПОДАРКИ В ROUP',
+    description: 'Залетай в бота — внутри тебя ждут бесплатный лут и рулетка',
     input_message_content: {
       message_text: text,
       parse_mode: 'HTML',
     },
     reply_markup: {
-      inline_keyboard: [[{ text: '🚀 Открыть RoUP', url: refLink }]],
+      inline_keyboard: [[{ text: '🔥 ЗАБРАТЬ БЕСПЛАТНО', url: refLink }]],
     },
   }], { cache_time: 0, is_personal: true });
 });
