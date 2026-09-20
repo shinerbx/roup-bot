@@ -227,17 +227,31 @@ bot.on('text', async (ctx, next) => {
     const result = await addWithdrawAdminNote(state.requestId, note);
     adminState.delete(uid);
     if (result.error) {
-      return ctx.reply(`❌ Не удалось сохранить комментарий: ${result.error}`, getAdminPanel()).catch(() => {});
+      return ctx.reply(`❌ Не удалось сохранить комментарий: ${result.error}`).catch(() => {});
     }
+
     const request = await getWithdrawRequest(state.requestId);
+    const safeNote = note.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     if (request) {
       await bot.telegram.sendMessage(
         request.user_id,
-        `💬 <b>Комментарий по заявке #${state.requestId}</b>\n\n${note.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}`,
+        `🔴 <b>Заявка #${state.requestId} отклонена</b>\n\nСписанные ⭐ возвращены на баланс.\n\n💬 <b>Комментарий:</b> ${safeNote}`,
         { parse_mode: 'HTML' }
       ).catch(() => {});
     }
-    return ctx.reply(`✅ Комментарий к заявке #${state.requestId} сохранён.`, getAdminPanel()).catch(() => {});
+
+    if (state.chatId && state.messageId) {
+      await bot.telegram.editMessageText(
+        state.chatId,
+        state.messageId,
+        undefined,
+        `🔴 <b>Заявка #${state.requestId} отклонена</b>\n\n` +
+        `💬 <b>Комментарий:</b> ${safeNote}`,
+        { parse_mode: 'HTML' }
+      ).catch(() => {});
+    }
+
+    return ctx.reply(`✅ Комментарий к заявке #${state.requestId} сохранён.`).catch(() => {});
   }
 
   if (state.action === 'demo_id') {
@@ -649,7 +663,7 @@ bot.hears('🆘 Помощь', (ctx) => ctx.reply(
 ).catch(() => {}));
 
 // ── Callback-кнопки заявок на вывод ─────────────────────────────────
-bot.action(/^wr:(paid|reject|comment):(\d+)$/, async (ctx) => {
+bot.action(/^wr:(paid|reject|reject_comment|reject_nocomment|comment):([0-9]+)$/, async (ctx) => {
   const action = ctx.match[1];
   const requestId = Number(ctx.match[2]);
 
@@ -659,11 +673,16 @@ bot.action(/^wr:(paid|reject|comment):(\d+)$/, async (ctx) => {
 
   try {
     if (action === 'comment') {
-      adminState.set(ctx.from.id, { action: 'withdraw_comment', requestId });
+      adminState.set(ctx.from.id, {
+        action: 'withdraw_comment',
+        requestId,
+        chatId: ctx.callbackQuery?.message?.chat?.id,
+        messageId: ctx.callbackQuery?.message?.message_id,
+      });
       await ctx.answerCbQuery().catch(() => {});
       return ctx.reply(
-        `💬 <b>Комментарий к заявке #${requestId}</b>\n\nОтправь текст комментария одним сообщением.\nДля отмены: /cancel`,
-        { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Отмена', 'admin_cancel')]]) }
+        `💬 <b>Комментарий к заявке #${requestId}</b>\n\nОтправь текст комментария одним сообщением.`,
+        { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Отмена', `wr:reject_nocomment:${requestId}`)]]) }
       ).catch(() => {});
     }
 
@@ -675,22 +694,51 @@ bot.action(/^wr:(paid|reject|comment):(\d+)$/, async (ctx) => {
         if (request) {
           await bot.telegram.sendMessage(request.user_id, `🟢 <b>Заявка #${requestId} выполнена</b>\n\nРобуксы по заявке поступят на указанный аккаунт.`, { parse_mode: 'HTML' }).catch(() => {});
         }
+        await ctx.editMessageText(`🟢 <b>Заявка #${requestId} выполнена</b>`, { parse_mode: 'HTML' }).catch(() => {});
       }
-    } else if (action === 'reject') {
-      const r = await refundWithdrawRequest(requestId, 'Отклонено администратором');
-      await ctx.answerCbQuery(r.error ? `Ошибка: ${r.error}` : '↩️ Отклонено, звёзды возвращены').catch(() => {});
-      if (!r.error) {
-        const request = await getWithdrawRequest(requestId);
-        if (request) {
-          await bot.telegram.sendMessage(request.user_id, `🔴 <b>Заявка #${requestId} отклонена</b>\n\nСписанные ⭐ возвращены на баланс.`, { parse_mode: 'HTML' }).catch(() => {});
-        }
-      }
+      return;
     }
 
-    await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
+    if (action === 'reject') {
+      const r = await refundWithdrawRequest(requestId, 'Отклонено администратором');
+      if (r.error) {
+        return ctx.answerCbQuery(`Ошибка: ${r.error}`, { show_alert: true }).catch(() => {});
+      }
+
+      await ctx.answerCbQuery('Заявка отклонена').catch(() => {});
+      return ctx.editMessageText(
+        `🔴 <b>Заявка #${requestId} отклонена</b>\n\n` +
+        `⭐ Списанные звёзды возвращены пользователю.\n\n` +
+        `Добавить комментарий к отклонению?`,
+        {
+          parse_mode: 'HTML',
+          ...Markup.inlineKeyboard([[
+            Markup.button.callback('💬 Оставить комментарий', `wr:comment:${requestId}`),
+            Markup.button.callback('➡️ Без комментария', `wr:reject_nocomment:${requestId}`),
+          ]])
+        }
+      ).catch(() => {});
+    }
+
+    if (action === 'reject_nocomment') {
+      const request = await getWithdrawRequest(requestId);
+      await ctx.answerCbQuery('Готово').catch(() => {});
+      if (request) {
+        await bot.telegram.sendMessage(
+          request.user_id,
+          `🔴 <b>Заявка #${requestId} отклонена</b>\n\nСписанные ⭐ возвращены на баланс.`,
+          { parse_mode: 'HTML' }
+        ).catch(() => {});
+      }
+      return ctx.editMessageText(`🔴 <b>Заявка #${requestId} отклонена</b>\n\nКомментарий не добавлен.`, { parse_mode: 'HTML' }).catch(() => {});
+    }
+
+    if (action === 'reject_comment') {
+      return;
+    }
   } catch (err) {
     console.error('Ошибка обработки wr callback:', err.message);
-    ctx.answerCbQuery('Ошибка сервера').catch(() => {});
+    ctx.answerCbQuery('Ошибка сервера', { show_alert: true }).catch(() => {});
   }
 });
 

@@ -69,7 +69,6 @@ async function notifyWithdrawRequest(req) {
             { text: '✅ Выплачено', callback_data: `wr:paid:${req.requestId}` },
             { text: '❌ Отклонить', callback_data: `wr:reject:${req.requestId}` },
           ],
-          [{ text: '💬 Комментарий', callback_data: `wr:comment:${req.requestId}` }],
         ],
       },
     };
