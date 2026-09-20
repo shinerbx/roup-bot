@@ -645,7 +645,7 @@ bot.hears('👥 Друзья', async (ctx) => {
     ctx.reply(text, {
       parse_mode: 'HTML',
       ...Markup.inlineKeyboard([
-        [Markup.button.switchToChat('🔥 Заманить друга', '')],
+        [Markup.button.switchToChat('👥 Пригласить друга', '')],
         [Markup.button.webApp('🎮 Открыть RoUP', WEB_APP_URL)]
       ])
     }).catch(() => {});

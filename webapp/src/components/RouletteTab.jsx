@@ -269,11 +269,11 @@ export default function RouletteTab({ profile, onSpinSuccess, onToast }) {
       <section className="roulette-invite-card">
         <div className="roulette-invite-card__icon">👥</div>
         <div className="roulette-invite-card__content">
-          <span className="roulette-invite-card__eyebrow">🤯 ОФИГЕТЬ, ТЫ ЗНАЛ?</span>
-          <h4>ТУТ МОЖНО ЛУТАТЬ БЕСПЛАТНЫЕ ПОДАРКИ</h4>
-          <p>🔥 Залетай в бота и забирай бесплатный лут, рулетку и апгрейды. За нового игрока тебе ещё начислится бесплатная прокрутка.</p>
+          <span className="roulette-invite-card__eyebrow">РЕФЕРАЛЬНАЯ ССЫЛКА</span>
+          <h4>ПРИГЛАСИ ДРУГА</h4>
+          <p>За каждого нового игрока после регистрации тебе начислится бесплатная прокрутка.</p>
         </div>
-        <button type="button" onClick={openInvite}>🔥 ЗАБРАТЬ</button>
+        <button type="button" onClick={openInvite}>👥 ПРИГЛАСИТЬ ДРУГА</button>
       </section>
 
       {targetCard && spinning && (
