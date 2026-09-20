@@ -2,6 +2,8 @@ const { Pool } = require('pg');
 const catalogItems = require('./catalog');
 const { resolveUpgrade, canUpgradeTo, MAX_MULTIPLIER } = require('./upgrade-logic');
 const { WITHDRAWAL, UPGRADE } = require('./house-config');
+const FREE_ROULETTE = require('./free-roulette-config');
+const crypto = require('crypto');
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {
@@ -73,6 +75,7 @@ async function initDb() {
       CREATE TABLE IF NOT EXISTS users (
         telegram_id BIGINT PRIMARY KEY,
         username TEXT,
+        is_bot INTEGER DEFAULT 0,
         first_name TEXT,
         balance INTEGER DEFAULT 0,
         upgrades_count INTEGER DEFAULT 0,
@@ -81,6 +84,8 @@ async function initDb() {
         subscribed_reward_claimed INTEGER DEFAULT 0,
         invited_by BIGINT DEFAULT NULL,
         referrals_count INTEGER DEFAULT 0,
+        free_roulette_spins INTEGER DEFAULT 0,
+        free_roulette_seeded INTEGER DEFAULT 0,
         is_premium INTEGER DEFAULT 0,
         accepted_tos INTEGER DEFAULT 0,
         tutorial_completed INTEGER DEFAULT 0,
@@ -90,6 +95,8 @@ async function initDb() {
         last_broadcast_at TIMESTAMP DEFAULT NULL,
         broadcast_opt_out INTEGER DEFAULT 0,
         broadcasts_today INTEGER DEFAULT 0,
+        subscription_broadcast_at TIMESTAMP DEFAULT NULL,
+        roulette_broadcast_at TIMESTAMP DEFAULT NULL,
         broadcasts_day_marker DATE DEFAULT CURRENT_DATE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
@@ -155,8 +162,29 @@ async function initDb() {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
+      CREATE TABLE IF NOT EXISTS free_roulette_history (
+        id BIGSERIAL PRIMARY KEY,
+        user_id BIGINT NOT NULL REFERENCES users(telegram_id),
+        operation_id TEXT NOT NULL UNIQUE,
+        reward_item_id INTEGER NOT NULL REFERENCES items(id),
+        reward_chance NUMERIC(8,4) NOT NULL,
+        roll NUMERIC(12,8) NOT NULL,
+        source TEXT NOT NULL DEFAULT 'referral',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
     `);
 
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS free_roulette_spins INTEGER DEFAULT 0');
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS free_roulette_seeded INTEGER DEFAULT 0');
+    // Однократно переносим уже накопленное число приглашений в бесплатные прокрутки.
+    // Флаг не даёт этой миграции повторно пополнять баланс прокруток после их использования.
+    await pool.query(`
+      UPDATE users
+      SET free_roulette_spins = GREATEST(COALESCE(free_roulette_spins, 0), COALESCE(referrals_count, 0)),
+          free_roulette_seeded = 1
+      WHERE COALESCE(free_roulette_seeded, 0) = 0
+    `);
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS is_premium INTEGER DEFAULT 0');
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS tutorial_completed INTEGER DEFAULT 0');
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS pre_demo_balance INTEGER DEFAULT NULL');
@@ -164,8 +192,11 @@ async function initDb() {
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS cheap_upgrades_count INTEGER DEFAULT 0');
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS last_broadcast_at TIMESTAMP DEFAULT NULL');
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS is_bot INTEGER DEFAULT 0');
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS broadcast_opt_out INTEGER DEFAULT 0');
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS broadcasts_today INTEGER DEFAULT 0');
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_broadcast_at TIMESTAMP DEFAULT NULL');
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS roulette_broadcast_at TIMESTAMP DEFAULT NULL');
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS broadcasts_day_marker DATE DEFAULT CURRENT_DATE');
     await pool.query('ALTER TABLE withdraw_requests ADD COLUMN IF NOT EXISTS roblox_username TEXT');
     await pool.query('ALTER TABLE withdraw_requests ADD COLUMN IF NOT EXISTS robux_gross NUMERIC(12,2)');
@@ -196,6 +227,8 @@ async function initDb() {
         ON withdraw_requests (user_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_wr_status_created
         ON withdraw_requests (status, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_free_roulette_user_created
+        ON free_roulette_history (user_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_users_last_active
         ON users (last_active_at DESC);
       CREATE INDEX IF NOT EXISTS idx_users_broadcast
@@ -284,34 +317,72 @@ async function registerUser(tgUser, referrerId = null) {
   let user = res.rows[0];
   let successfulReferrer = null;
   const isPremium = tgUser.is_premium ? 1 : 0;
+  const isBot = tgUser.is_bot ? 1 : 0;
+  const referralCfg = require('./house-config').REFERRALS || {};
 
   if (!user) {
-    if (referrerId && Number(referrerId) !== tgUser.id) {
-      const refCheck = await pool.query('SELECT telegram_id FROM users WHERE telegram_id = $1', [referrerId]);
-      if (refCheck.rows.length > 0) successfulReferrer = referrerId;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Блокируем строку реферера на время проверки лимита, чтобы два
+      // параллельных новых аккаунта не смогли одновременно обойти суточный cap.
+      if (!isBot && referrerId && Number(referrerId) !== tgUser.id) {
+        const refCheck = await client.query(
+          'SELECT telegram_id, is_bot FROM users WHERE telegram_id = $1 FOR UPDATE',
+          [referrerId]
+        );
+        const ref = refCheck.rows[0];
+        if (ref && Number(ref.is_bot) !== 1) {
+          const maxPerDay = Math.max(1, Number(referralCfg.MAX_NEW_PER_DAY) || 50);
+          const dayRes = await client.query(
+            `SELECT COUNT(*)::int AS count
+             FROM users
+             WHERE invited_by = $1
+               AND created_at >= CURRENT_DATE`,
+            [referrerId]
+          );
+          if (Number(dayRes.rows[0]?.count || 0) < maxPerDay) {
+            successfulReferrer = referrerId;
+          }
+        }
+      }
+
+      const insertRes = await client.query(`
+        INSERT INTO users (telegram_id, username, first_name, is_bot, invited_by, accepted_tos, is_premium, last_active_at)
+        VALUES ($1, $2, $3, $4, $5, 1, $6, CURRENT_TIMESTAMP)
+        ON CONFLICT (telegram_id) DO NOTHING
+        RETURNING telegram_id
+      `, [tgUser.id, tgUser.username || null, tgUser.first_name || '', isBot, successfulReferrer, isPremium]);
+
+      if (insertRes.rowCount && successfulReferrer) {
+        await client.query(
+          `UPDATE users
+           SET referrals_count = COALESCE(referrals_count, 0) + 1,
+               free_roulette_spins = COALESCE(free_roulette_spins, 0) + $2
+           WHERE telegram_id = $1`,
+          [successfulReferrer, FREE_ROULETTE.REFERRAL_SPINS_PER_FRIEND]
+        );
+      } else if (!insertRes.rowCount) {
+        // Другой запрос уже успел зарегистрировать этого пользователя.
+        // Повторно ни реферала, ни прокрутки не начисляем.
+        successfulReferrer = null;
+      }
+
+      await client.query('COMMIT');
+      res = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [tgUser.id]);
+      user = res.rows[0];
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
     }
-
-    const insertRes = await pool.query(`
-      INSERT INTO users (telegram_id, username, first_name, invited_by, accepted_tos, is_premium, last_active_at)
-      VALUES ($1, $2, $3, $4, 1, $5, CURRENT_TIMESTAMP)
-      ON CONFLICT (telegram_id) DO NOTHING
-      RETURNING telegram_id
-    `, [tgUser.id, tgUser.username || null, tgUser.first_name || '', successfulReferrer, isPremium]);
-
-    if (insertRes.rowCount && successfulReferrer) {
-      await pool.query('UPDATE users SET referrals_count = referrals_count + 1 WHERE telegram_id = $1', [successfulReferrer]);
-      await giveRandomStarterItem(successfulReferrer);
-    } else if (!insertRes.rowCount) {
-      successfulReferrer = null;
-    }
-
-    res = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [tgUser.id]);
-    user = res.rows[0];
   }
 
   await pool.query(
-    'UPDATE users SET is_premium = $1, username = $2, first_name = $3, last_active_at = CURRENT_TIMESTAMP WHERE telegram_id = $4',
-    [isPremium, tgUser.username || null, tgUser.first_name || '', tgUser.id]
+    'UPDATE users SET is_bot = $1, is_premium = $2, username = $3, first_name = $4, last_active_at = CURRENT_TIMESTAMP WHERE telegram_id = $5',
+    [isBot, isPremium, tgUser.username || null, tgUser.first_name || '', tgUser.id]
   );
   return { user: (await getUser(tgUser.id)), rewardedReferrerId: successfulReferrer };
 }
@@ -320,59 +391,26 @@ async function ensureUserExists(tgUser) {
   let res = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [tgUser.id]);
   if (res.rows[0]) {
     await pool.query(
-      'UPDATE users SET is_premium = $1, username = $2, first_name = $3 WHERE telegram_id = $4',
-      [tgUser.is_premium ? 1 : 0, tgUser.username || null, tgUser.first_name || '', tgUser.id]
+      'UPDATE users SET is_bot = $1, is_premium = $2, username = $3, first_name = $4, last_active_at = CURRENT_TIMESTAMP WHERE telegram_id = $5',
+      [tgUser.is_bot ? 1 : 0, tgUser.is_premium ? 1 : 0, tgUser.username || null, tgUser.first_name || '', tgUser.id]
     );
     res = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [tgUser.id]);
     return res.rows[0];
   }
 
   await pool.query(`
-    INSERT INTO users (telegram_id, username, first_name, accepted_tos, is_premium, last_active_at)
-    VALUES ($1, $2, $3, 1, $4, CURRENT_TIMESTAMP)
+    INSERT INTO users (telegram_id, username, first_name, is_bot, accepted_tos, is_premium, last_active_at)
+    VALUES ($1, $2, $3, $4, 1, $5, CURRENT_TIMESTAMP)
     ON CONFLICT (telegram_id) DO UPDATE SET
+      is_bot = EXCLUDED.is_bot,
+      is_premium = EXCLUDED.is_premium,
       username = EXCLUDED.username,
-      first_name = EXCLUDED.first_name
-  `, [tgUser.id, tgUser.username || null, tgUser.first_name || null, tgUser.is_premium ? 1 : 0]);
+      first_name = EXCLUDED.first_name,
+      last_active_at = CURRENT_TIMESTAMP
+  `, [tgUser.id, tgUser.username || null, tgUser.first_name || null, tgUser.is_bot ? 1 : 0, tgUser.is_premium ? 1 : 0]);
 
   res = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [tgUser.id]);
   return res.rows[0];
-}
-
-async function giveRandomStarterItem(userId) {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    const userRes = await client.query(
-      'SELECT pre_demo_balance, lucky_mode FROM users WHERE telegram_id = $1 FOR UPDATE',
-      [userId]
-    );
-    if (!userRes.rowCount) {
-      await client.query('ROLLBACK');
-      return null;
-    }
-
-    const itemRes = await client.query(`
-      SELECT * FROM items WHERE price_stars BETWEEN 5 AND 10 ORDER BY RANDOM() LIMIT 1
-    `);
-    const item = itemRes.rows[0];
-    if (item) {
-      const isDemo = userRes.rows[0].pre_demo_balance != null || Number(userRes.rows[0].lucky_mode) === 1 ? 1 : 0;
-      await client.query(
-        'INSERT INTO user_inventory (user_id, item_id, is_demo) VALUES ($1, $2, $3)',
-        [userId, item.id, isDemo]
-      );
-    }
-
-    await client.query('COMMIT');
-    return item;
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
 }
 
 async function claimSubscriptionItem(userId) {
@@ -611,6 +649,191 @@ async function getReferralProgress(userId) {
     regularRemaining: Math.max(0, 10 - regular),
     canWithdraw: premium >= 5 || regular >= 10,
   };
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// FREE REFERRAL ROULETTE
+// ═══════════════════════════════════════════════════════════════════════
+
+function validateFreeRouletteConfig() {
+  const rewards = Array.isArray(FREE_ROULETTE.REWARDS) ? FREE_ROULETTE.REWARDS : [];
+  if (!rewards.length) throw new Error('free_roulette_config_empty');
+
+  const names = new Set();
+  let sum = 0;
+  for (const reward of rewards) {
+    const name = String(reward?.item_name || '').trim();
+    const chance = Number(reward?.chance);
+    if (!name || !Number.isFinite(chance) || chance <= 0) throw new Error('free_roulette_config_invalid');
+    if (names.has(name)) throw new Error('free_roulette_config_duplicate');
+    names.add(name);
+    sum += chance;
+  }
+
+  if (Math.abs(sum - 100) > 0.0001) throw new Error('free_roulette_config_sum');
+  return rewards.map((r) => ({ item_name: String(r.item_name).trim(), chance: Number(r.chance) }));
+}
+
+async function getFreeRouletteRewards(client = pool) {
+  const configRewards = validateFreeRouletteConfig();
+  const names = configRewards.map((r) => r.item_name);
+  const res = await client.query(
+    `SELECT id, name, category, price_stars, image_url\n     FROM items\n     WHERE name = ANY($1::text[])`,
+    [names]
+  );
+  const byName = new Map(res.rows.map((row) => [row.name, row]));
+
+  return configRewards.map((reward) => {
+    const item = byName.get(reward.item_name);
+    if (!item) throw new Error(`free_roulette_item_missing:${reward.item_name}`);
+    return { ...item, chance: reward.chance };
+  });
+}
+
+async function getFreeRouletteStatus(userId) {
+  const res = await pool.query(
+    `SELECT referrals_count, free_roulette_spins\n     FROM users WHERE telegram_id = $1`,
+    [userId]
+  );
+  const row = res.rows[0] || {};
+  return {
+    referralsCount: Number(row.referrals_count) || 0,
+    spins: Number(row.free_roulette_spins) || 0,
+  };
+}
+
+function pickFreeRouletteReward(rewards) {
+  const roll = crypto.randomInt(0, 1_000_000) / 1_000_000;
+  let cursor = 0;
+  for (const reward of rewards) {
+    cursor += reward.chance / 100;
+    if (roll < cursor) return { reward, roll };
+  }
+  return { reward: rewards[rewards.length - 1], roll: 0.999999 };
+}
+
+async function spinFreeRoulette(userId, operationId) {
+  const opKey = String(operationId || '').trim().slice(0, 100);
+  if (!opKey) return { error: 'missing_operation_id' };
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const existing = await client.query(`
+      SELECT h.id, h.reward_chance, h.roll, h.created_at,
+             i.id AS item_id, i.name, i.category, i.price_stars, i.image_url
+      FROM free_roulette_history h
+      JOIN items i ON i.id = h.reward_item_id
+      WHERE h.user_id = $1 AND h.operation_id = $2
+      LIMIT 1
+    `, [userId, opKey]);
+
+    if (existing.rowCount) {
+      const row = existing.rows[0];
+      const status = await client.query(
+        'SELECT free_roulette_spins FROM users WHERE telegram_id = $1',
+        [userId]
+      );
+      await client.query('COMMIT');
+      return {
+        ok: true,
+        replay: true,
+        reward: {
+          id: row.item_id,
+          name: row.name,
+          category: row.category,
+          price_stars: row.price_stars,
+          image_url: row.image_url,
+          chance: Number(row.reward_chance),
+        },
+        spinsRemaining: Number(status.rows[0]?.free_roulette_spins) || 0,
+      };
+    }
+
+    const userRes = await client.query(
+      `SELECT free_roulette_spins, pre_demo_balance, lucky_mode\n       FROM users WHERE telegram_id = $1 FOR UPDATE`,
+      [userId]
+    );
+    if (!userRes.rowCount) {
+      await client.query('ROLLBACK');
+      return { error: 'user_not_found' };
+    }
+
+    const spins = Number(userRes.rows[0].free_roulette_spins) || 0;
+    if (spins < 1) {
+      await client.query('ROLLBACK');
+      return { error: 'no_spins' };
+    }
+
+    let rewards;
+    try {
+      rewards = await getFreeRouletteRewards(client);
+    } catch (configErr) {
+      await client.query('ROLLBACK');
+      console.error('Ошибка конфигурации бесплатной рулетки:', configErr.message);
+      return { error: 'roulette_unavailable' };
+    }
+
+    const { reward, roll } = pickFreeRouletteReward(rewards);
+    const isDemo = userRes.rows[0].pre_demo_balance != null || Number(userRes.rows[0].lucky_mode) === 1 ? 1 : 0;
+
+    const spinRes = await client.query(`
+      UPDATE users
+      SET free_roulette_spins = free_roulette_spins - 1
+      WHERE telegram_id = $1 AND free_roulette_spins > 0
+      RETURNING free_roulette_spins
+    `, [userId]);
+
+    if (!spinRes.rowCount) {
+      await client.query('ROLLBACK');
+      return { error: 'no_spins' };
+    }
+
+    await client.query(
+      'INSERT INTO user_inventory (user_id, item_id, is_demo) VALUES ($1, $2, $3)',
+      [userId, reward.id, isDemo]
+    );
+
+    await client.query(`
+      INSERT INTO free_roulette_history
+        (user_id, operation_id, reward_item_id, reward_chance, roll, source)
+      VALUES ($1, $2, $3, $4, $5, 'referral')
+    `, [userId, opKey, reward.id, reward.chance, roll]);
+
+    await client.query('COMMIT');
+    return {
+      ok: true,
+      replay: false,
+      reward,
+      spinsRemaining: Number(spinRes.rows[0].free_roulette_spins) || 0,
+    };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    if (err?.code === '23505') {
+      const retry = await pool.query(`
+        SELECT h.reward_chance, h.id, i.id AS item_id, i.name, i.category, i.price_stars, i.image_url
+        FROM free_roulette_history h
+        JOIN items i ON i.id = h.reward_item_id
+        WHERE h.user_id = $1 AND h.operation_id = $2
+        LIMIT 1
+      `, [userId, opKey]);
+      if (retry.rowCount) {
+        const status = await getFreeRouletteStatus(userId);
+        const row = retry.rows[0];
+        return {
+          ok: true,
+          replay: true,
+          reward: { id: row.item_id, name: row.name, category: row.category, price_stars: row.price_stars, image_url: row.image_url, chance: Number(row.reward_chance) },
+          spinsRemaining: status.spins,
+        };
+      }
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1431,78 +1654,95 @@ async function getBroadcastOptOut(userId) {
   return Boolean(Number(res.rows[0]?.broadcast_opt_out));
 }
 
-// Возвращает пачку юзеров, которым уместно отправить рассылку.
-// Фильтр: неактивность в окне [MIN_HOURS, MAX_HOURS] назад, не под opt-out,
-// есть хоть один апгрейд, не превышены лимиты по частоте.
-// items_count — количество не-demo предметов в инвентаре (для шаблона inventory_miss).
-async function fetchBroadcastTargets(limit = 200) {
+// Возвращает адресных получателей только для двух нужных кампаний.
+// Приоритет: незабранный подарок -> бесплатная рулетка.
+// Дополнительные барьеры: opt-out, bot-аккаунты, возраст аккаунта, дневной лимит.
+async function fetchRewardBroadcastTargets(limit = 200) {
   const cfg = require('./house-config').BROADCAST || {};
-  const minH = Number(cfg.INACTIVE_HOURS_MIN) || 3;
-  const maxH = Number(cfg.INACTIVE_HOURS_MAX) || 72;
-  const minUpg = Number(cfg.MIN_UPGRADES_TO_TARGET) || 1;
-  const minHrsBetween = Number(cfg.MIN_HOURS_BETWEEN) || 6;
-  const maxPerDay = Number(cfg.MAX_PER_DAY) || 3;
+  const minAgeMin = Math.max(0, Number(cfg.MIN_USER_AGE_MINUTES) || 5);
+  const maxPerDay = Math.max(1, Number(cfg.MAX_PER_DAY) || 2);
+  const subInterval = Math.max(1, Number(cfg.SUBSCRIPTION_INTERVAL_HOURS) || 36);
+  const rouletteInterval = Math.max(1, Number(cfg.ROULETTE_INTERVAL_HOURS) || 18);
 
   const res = await pool.query(`
-    SELECT u.telegram_id, u.first_name, u.username, u.balance, u.upgrades_count,
-           u.pre_demo_balance, u.lucky_mode, u.last_active_at, u.last_broadcast_at,
-           (
-             SELECT COUNT(*)::int FROM user_inventory ui
-             WHERE ui.user_id = u.telegram_id AND ui.is_demo = 0
-           ) AS items_count
+    SELECT
+      u.telegram_id,
+      u.first_name,
+      u.username,
+      u.is_bot,
+      u.subscribed_reward_claimed,
+      u.free_roulette_spins,
+      u.subscription_broadcast_at,
+      u.roulette_broadcast_at,
+      u.broadcasts_today,
+      u.broadcasts_day_marker,
+      CASE
+        WHEN COALESCE(u.subscribed_reward_claimed, 0) = 0
+             AND (u.subscription_broadcast_at IS NULL
+                  OR u.subscription_broadcast_at <= NOW() - ($2 || ' hours')::interval)
+          THEN 'subscription'
+        WHEN COALESCE(u.free_roulette_spins, 0) > 0
+             AND (u.roulette_broadcast_at IS NULL
+                  OR u.roulette_broadcast_at <= NOW() - ($3 || ' hours')::interval)
+          THEN 'roulette'
+        ELSE NULL
+      END AS broadcast_campaign
     FROM users u
     WHERE COALESCE(u.broadcast_opt_out, 0) = 0
-      AND COALESCE(u.upgrades_count, 0) >= $3
-      AND u.last_active_at <= NOW() - ($1 || ' hours')::interval
-      AND u.last_active_at >= NOW() - ($2 || ' hours')::interval
-      AND (u.last_broadcast_at IS NULL OR u.last_broadcast_at <= NOW() - ($4 || ' hours')::interval)
+      AND COALESCE(u.is_bot, 0) = 0
+      AND u.created_at <= NOW() - ($1 || ' minutes')::interval
       AND (
         u.broadcasts_day_marker IS DISTINCT FROM CURRENT_DATE
-        OR COALESCE(u.broadcasts_today, 0) < $5
+        OR COALESCE(u.broadcasts_today, 0) < $4
       )
-    ORDER BY RANDOM()
-    LIMIT $6
-  `, [minH, maxH, minUpg, minHrsBetween, maxPerDay, limit]);
+      AND (
+        (COALESCE(u.subscribed_reward_claimed, 0) = 0
+         AND (u.subscription_broadcast_at IS NULL
+              OR u.subscription_broadcast_at <= NOW() - ($2 || ' hours')::interval))
+        OR
+        (COALESCE(u.free_roulette_spins, 0) > 0
+         AND (u.roulette_broadcast_at IS NULL
+              OR u.roulette_broadcast_at <= NOW() - ($3 || ' hours')::interval))
+      )
+    ORDER BY
+      CASE WHEN COALESCE(u.subscribed_reward_claimed, 0) = 0 THEN 0 ELSE 1 END,
+      COALESCE(u.subscription_broadcast_at, TIMESTAMP '1970-01-01'),
+      COALESCE(u.roulette_broadcast_at, TIMESTAMP '1970-01-01'),
+      u.created_at ASC
+    LIMIT $5
+  `, [minAgeMin, subInterval, rouletteInterval, maxPerDay, limit]);
 
-  return res.rows;
+  return res.rows.filter((row) => row.broadcast_campaign);
 }
 
-async function markBroadcastSent(userId) {
+async function markBroadcastCampaignSent(userId, campaign) {
+  const field = campaign === 'subscription'
+    ? 'subscription_broadcast_at'
+    : campaign === 'roulette'
+      ? 'roulette_broadcast_at'
+      : null;
+  if (!field) return;
+
+  // Нельзя передать имя поля через параметр PostgreSQL — оно выбрано только
+  // из заранее заданного whitelist выше.
   await pool.query(`
     UPDATE users
-    SET last_broadcast_at = CURRENT_TIMESTAMP,
-        broadcasts_today = CASE
-          WHEN broadcasts_day_marker = CURRENT_DATE THEN COALESCE(broadcasts_today, 0) + 1
-          ELSE 1
-        END,
-        broadcasts_day_marker = CURRENT_DATE
+    SET
+      ${field} = CURRENT_TIMESTAMP,
+      last_broadcast_at = CURRENT_TIMESTAMP,
+      broadcasts_today = CASE
+        WHEN broadcasts_day_marker = CURRENT_DATE THEN COALESCE(broadcasts_today, 0) + 1
+        ELSE 1
+      END,
+      broadcasts_day_marker = CURRENT_DATE
     WHERE telegram_id = $1
   `, [userId]);
-}
-
-// Случайный успешный апгрейд за последние 30 минут — для шаблона live_drop.
-// Возвращает null, если свежих побед нет.
-async function getRandomActiveDrop() {
-  const res = await pool.query(`
-    SELECT o.user_id, u.first_name,
-           o.response->'item'->>'name' AS item_name,
-           (o.response->'item'->>'price_stars')::int AS price,
-           (o.response->>'chance')::numeric AS chance
-    FROM operation_results o
-    JOIN users u ON u.telegram_id = o.user_id
-    WHERE o.operation_type = 'upgrade'
-      AND o.status = 'completed'
-      AND (o.response->>'success')::boolean = true
-      AND o.created_at > NOW() - INTERVAL '30 minutes'
-    ORDER BY RANDOM()
-    LIMIT 1
-  `);
-  return res.rows[0] || null;
 }
 
 module.exports = {
   registerUser, getUser, calculateTier, claimSubscriptionItem, getUserInventoryCount,
   getReferralProgress, setTutorialCompleted, getUserDemoItemCount, ensureUserExists,
+  getFreeRouletteStatus, getFreeRouletteRewards, spinFreeRoulette,
   getCatalogItems, getItemById, getUserInventory, addInventoryItem,
   buyItemWithBalance, buyItemsWithBalance, upgradeItem,
   sellInventoryItem, sellInventoryItemsBatch,
@@ -1512,5 +1752,5 @@ module.exports = {
   getRecentDrops,
   // BROADCAST
   touchUserActive, setBroadcastOptOut, getBroadcastOptOut,
-  fetchBroadcastTargets, markBroadcastSent, getRandomActiveDrop,
+  fetchRewardBroadcastTargets, markBroadcastCampaignSent,
 };

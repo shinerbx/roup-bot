@@ -146,6 +146,12 @@ export const api = {
     }, { retries: 2 }),
 
   getUpgradeFeed: () => request('/upgrade/feed', {}, { retries: 1, dedupe: true }),
+
+  getFreeRouletteConfig: () => request('/free-roulette/config', {}, { dedupe: true }),
+  spinFreeRoulette: () => request('/free-roulette/spin', {
+    method: 'POST',
+    body: JSON.stringify({ operationId: createOperationId() }),
+  }, { retries: 2 }),
   getOnline: () => request('/online', {}, { retries: 1, dedupe: true }),
 
   sell: (inventoryItemId) =>

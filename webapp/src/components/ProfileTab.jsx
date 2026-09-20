@@ -23,6 +23,10 @@ export default function ProfileTab({ profile, loading, onOpenWithdrawRequests })
           <span className="stat-row__value">{profile.referrals_count}</span>
         </div>
         <div className="stat-row">
+          <span className="stat-row__label">Бесплатных прокруток</span>
+          <span className="stat-row__value">🎁 {profile.free_roulette_spins ?? 0}</span>
+        </div>
+        <div className="stat-row">
           <span className="stat-row__label">Апгрейдов</span>
           <span className="stat-row__value">{profile.upgrades_count}</span>
         </div>

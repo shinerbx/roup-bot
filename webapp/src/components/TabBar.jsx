@@ -2,7 +2,8 @@ const TABS = [
   { id: 'catalog', label: 'Каталог', icon: '🛒' },
   { id: 'upgrade', label: 'Апгрейд', icon: '⚡' },
   { id: 'inventory', label: 'Инвентарь', icon: '🎒' },
-  { id: 'profile', label: 'Профиль', icon: '👤' }
+  { id: 'profile', label: 'Профиль', icon: '👤' },
+  { id: 'roulette', label: 'Рулетка', icon: '🎁' }
 ];
 
 export default function TabBar({ active, onChange }) {

@@ -20,8 +20,10 @@ const {
 const { createWebappRouter } = require('./webapp-api');
 const { registerBot } = require('./admin-notify');
 const { USER_LIMITS } = require('./house-config');
+const FREE_ROULETTE = require('./free-roulette-config');
 const { ADMIN_IDS, isAdmin, isWhitelisted } = require('./access-control');
 const { TERMS_URL, SUPPORT_URL } = require('./links-config');
+const { startBroadcastScheduler } = require('./broadcast');
 
 // ═══════════════════════════════════════════════════════════════════════
 // КОНСТАНТЫ И ПРОВЕРКИ
@@ -33,7 +35,6 @@ if (!BOT_TOKEN) console.error('❌ Не задана переменная окр
 const BOT_USERNAME = 'roupgrade_bot';
 const WEB_APP_URL = process.env.WEB_APP_URL || 'https://roup-bot.onrender.com';
 const CHANNEL_USERNAME = '@ro_upgrade';
-const SHARE_BANNER_URL = 'https://i.ibb.co/Fq6L8G16/7007-D8-FC-C59-A-4-F72-B1-AB-C63-DFAA2-F87-A.png';
 const PRIVACY_POLICY_URL = TERMS_URL;
 
 const IS_PROD = process.env.NODE_ENV === 'production';
@@ -510,7 +511,8 @@ bot.action('accept_tos', async (ctx) => {
       bot.telegram.sendMessage(
         rewardedReferrerId,
         `🎉 Твой друг <b>${ctx.from.first_name}</b> завершил регистрацию!\n` +
-        `🎁 В твой инвентарь добавлен стартовый предмет стоимостью <b>5-10 ⭐</b>.\n\n` +
+        `🎁 Тебе начислено бесплатных прокруток: <b>${FREE_ROULETTE.REFERRAL_SPINS_PER_FRIEND}</b>.\n` +
+        `Открой раздел «Рулетка» в RoUP и забери награду.\n\n` +
         `📊 Реферальный прогресс:\n` +
         `⭐ Premium: <b>${progress.premium}/5</b>\n` +
         `👤 Без Premium: <b>${progress.regular}/10</b>\n` +
@@ -570,6 +572,7 @@ bot.hears('👤 Профиль', async (ctx) => {
       `🏅 <b>Уровень:</b> ${tier}\n` +
       `🎒 <b>Предметов в инвентаре:</b> ${itemsCount} шт.\n` +
       `👥 <b>Всего приглашено:</b> ${progress.total}\n` +
+      `🎁 <b>Бесплатных прокруток:</b> ${Number(user.free_roulette_spins) || 0}\n` +
       `⭐ <b>Premium:</b> ${progress.premium}/5\n` +
       `👤 <b>Без Premium:</b> ${progress.regular}/10\n` +
       `${referralStatus}\n` +
@@ -633,8 +636,10 @@ bot.hears('👥 Друзья', async (ctx) => {
       : `🔒 <b>Вывод пока недоступен.</b> Пригласи ещё <b>${progress.premiumRemaining}</b> Premium или <b>${progress.regularRemaining}</b> пользователей без Premium.`;
     const text =
       `👥 <b>Реферальная программа</b>\n\n` +
-      `За приглашённого друга в инвентарь начисляется стартовый предмет.\n\n` +
+      `За каждого нового приглашённого друга после завершения его регистрации тебе начисляется <b>бесплатная прокрутка рулетки</b>.\n` +
+      `Приз определяется сервером по шансам из конфигурации рулетки и сразу попадает в инвентарь.\n\n` +
       `📊 Всего приглашено: <b>${progress.total}</b>\n` +
+      `🎁 Бесплатных прокруток: <b>${Number(user.free_roulette_spins) || 0}</b>\n` +
       `⭐ Premium: <b>${progress.premium}/5</b>\n` +
       `👤 Без Premium: <b>${progress.regular}/10</b>\n\n` +
       `${status}\n\n🔗 Твоя ссылка:\n<code>${refLink}</code>`;
@@ -650,11 +655,20 @@ bot.hears('👥 Друзья', async (ctx) => {
 
 bot.on('inline_query', async (ctx) => {
   const refLink = `https://t.me/${BOT_USERNAME}?start=ref_${ctx.from.id}`;
-  const caption = `⚡️ <b>Заходи в RoUP и забирай бесплатный Roblox скин!</b>\n\n🎁 Переходи по ссылке и получай стартовый предмет стоимостью от 5 до 10 ⭐:`;
+  const text = `⚡️ <b>RoUP — пригласи друга</b>\n\n🎁 После регистрации нового игрока тебе начислится бесплатная прокрутка рулетки.\n\n🔗 Открывай RoUP по ссылке ниже:`;
   return ctx.answerInlineQuery([{
-    type: 'photo', id: 'invite_card', photo_url: SHARE_BANNER_URL, thumb_url: SHARE_BANNER_URL,
-    caption, parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '🚀 Забрать скин', url: refLink }]] }
-  }], { cache_time: 0 });
+    type: 'article',
+    id: 'referral_invite',
+    title: '🎁 Пригласить друга в RoUP',
+    description: 'Получи бесплатную прокрутку рулетки за нового игрока',
+    input_message_content: {
+      message_text: text,
+      parse_mode: 'HTML',
+    },
+    reply_markup: {
+      inline_keyboard: [[{ text: '🚀 Открыть RoUP', url: refLink }]],
+    },
+  }], { cache_time: 0, is_personal: true });
 });
 
 bot.hears('🆘 Помощь', (ctx) => ctx.reply(
@@ -890,8 +904,10 @@ const server = app.listen(PORT, async () => {
     const fullWebhookUrl = `${WEB_APP_URL}${WEBHOOK_PATH}`;
     await bot.telegram.setWebhook(fullWebhookUrl);
     console.log(`Вебхук Telegram зарегистрирован: ${fullWebhookUrl}`);
+    startBroadcastScheduler(bot, { webappUrl: WEB_APP_URL, botUsername: BOT_USERNAME });
   } catch (err) {
     console.error('Ошибка регистрации вебхука:', err.message);
+    startBroadcastScheduler(bot, { webappUrl: WEB_APP_URL, botUsername: BOT_USERNAME });
   }
 });
 
