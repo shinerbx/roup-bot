@@ -56,12 +56,7 @@ export default function App() {
     if (catalogRes.status === 'fulfilled') {
       const fetchedItems = catalogRes.value.items || [];
       setCatalog(fetchedItems);
-      fetchedItems.forEach(item => {
-        if (item.image_url) {
-          const img = new window.Image();
-          img.src = item.image_url;
-        }
-      });
+      // Не загружаем все изображения каталога заранее: карточки используют lazy-loading.
     }
 
     if (inventoryRes.status === 'fulfilled') setInventory(inventoryRes.value.items || []);

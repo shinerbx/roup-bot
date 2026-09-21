@@ -41,7 +41,7 @@ export default function PurchaseSheet({ item, initialQuantity = 1, pending, bala
       <div className="sheet purchase-sheet" role="dialog" aria-modal="true" aria-label={`Покупка ${item.name}`}>
         <div className="sheet__handle" />
         <div className="sheet__item purchase-sheet__item">
-          <img className="sheet__item-image" src={item.image_url} alt="" />
+          <img className="sheet__item-image" src={item.image_url} alt="" loading="lazy" decoding="async" draggable={false} />
           <div className="purchase-sheet__info">
             <p className="sheet__item-name" title={item.name}>{item.name}</p>
             <span className="price-tag">★ {Number(item.price_stars).toLocaleString('ru-RU')} <small>за 1</small></span>
