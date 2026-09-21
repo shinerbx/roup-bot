@@ -16,12 +16,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 const SEQ = {
   wheelIn: 0.05, // wheel scales/fades in
   chance: 0.3, // "Шанс: 0.01%" types in
-  spinStart: 0.45, // needle starts
-  spin: 2.2, // needle spin + creep (lands at 2.65s)
-  win: 2.7, // burst, ring, "Апгрейд зашел!"
-  out: 3.5, // wheel fades out / scales down
-  logo: 3.62, // logo rises in
-  exit: 4.85, // splash starts to fade away
+  spinStart: 0.35, // needle starts
+  spin: 2.6, // one continuous deceleration; visually settled ~0.3s before this ends
+  win: 2.85, // burst, ring, "Апгрейд зашел!" (just after the needle settles)
+  out: 3.65, // wheel fades out / scales down
+  logo: 3.77, // logo rises in
+  exit: 4.95, // splash starts to fade away
   exitDur: 0.45
 };
 

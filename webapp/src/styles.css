@@ -5765,6 +5765,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 
 .sp {
   --s: clamp(180px, min(68vw, 42vh), 340px);
+  --cap: calc(22px + clamp(15px, calc(var(--s) * 0.078), 23px) * 1.35); /* caption block height */
   position: fixed;
   inset: 0;
   z-index: 100;
@@ -5786,7 +5787,14 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .sp-stage,
 .sp-logo { grid-area: 1 / 1; place-self: center; }
 
-.sp-stage { position: relative; width: var(--s); height: var(--s); }
+.sp-stage {
+  position: relative;
+  width: var(--s);
+  height: var(--s);
+  /* The "Апгрейд зашел!" caption hangs below the wheel; lift the stage by half of it
+     so the wheel + caption group (not just the wheel) is centred on screen. */
+  transform: translateY(calc(var(--cap) * -0.5));
+}
 
 /* ---------- Wheel ---------- */
 
@@ -5850,12 +5858,14 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   position: absolute;
   inset: 0;
   will-change: transform;
-  animation: sp-needle-spin var(--t-spin) linear var(--t-spin-start) both;
+  animation: sp-needle-spin var(--t-spin) cubic-bezier(0.25, 1, 0.5, 1) var(--t-spin-start) both;
 }
+/* ONE continuous curve (easeOutQuart): speed falls smoothly to exactly zero at the
+   landing angle — the needle glides into the zone and settles on its own, with no
+   second "creep" segment (that stall + restart was the visible jerk). */
 @keyframes sp-needle-spin {
-  0% { transform: rotate(0deg); animation-timing-function: cubic-bezier(0.2, 0.5, 0.2, 1); }
-  80% { transform: rotate(1926deg); animation-timing-function: cubic-bezier(0.45, 0, 0.25, 1); }
-  100% { transform: rotate(1937deg); } /* 5 turns + 137° = centre of the 0.01% zone */
+  from { transform: rotate(0deg); }
+  to { transform: rotate(1937deg); } /* 5 turns + 137° = centre of the 0.01% zone */
 }
 .sp-needle::after { /* pointer */
   content: '';
@@ -5880,8 +5890,9 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 }
 @keyframes sp-trail {
   0% { opacity: 0; }
-  8% { opacity: 1; }
-  70% { opacity: 0.45; }
+  5% { opacity: 1; }
+  45% { opacity: 0.4; }
+  75% { opacity: 0; }
   100% { opacity: 0; }
 }
 
