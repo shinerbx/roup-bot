@@ -5865,7 +5865,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
    second "creep" segment (that stall + restart was the visible jerk). */
 @keyframes sp-needle-spin {
   from { transform: rotate(0deg); }
-  to { transform: rotate(1937deg); } /* 5 turns + 137° = centre of the 0.01% zone */
+  to { transform: rotate(1577deg); } /* 4 turns + 137° = centre of the 0.01% zone */
 }
 .sp-needle::after { /* pointer */
   content: '';
