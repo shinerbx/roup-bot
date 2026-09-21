@@ -46,7 +46,7 @@ function SellSheet({ item, pending, onCancel, onConfirm }) {
         <div className="sheet__handle" />
 
         <div className="sheet__item purchase-sheet__item">
-          <img className="sheet__item-image" src={item.image_url} alt="" loading="lazy" decoding="async" draggable={false} />
+          <img className="sheet__item-image" src={item.image_url} alt="" />
           <div className="purchase-sheet__info">
             <p className="sheet__item-name">{item.name}</p>
             <small>★ {Number(item.price_stars).toLocaleString('ru-RU')} за штуку · у тебя {max}</small>
@@ -209,7 +209,7 @@ export default function InventoryTab({
             return (
               <div key={it.itemId} className="item-card">
                 <div className="item-card__image-wrap">
-                  <img className="item-card__image" src={it.image_url} alt="" loading="lazy" decoding="async" draggable={false} />
+                  <img className="item-card__image" src={it.image_url} alt="" />
                   {it.count > 1 && (
                     <span className="item-card__quantity">×{it.count}</span>
                   )}
