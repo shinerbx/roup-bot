@@ -23,7 +23,7 @@ export default function ItemCard({
   return (
     <article className={`item-card ${owned ? 'item-card--inventory' : ''}`}>
       <div className="item-card__image-wrap">
-        <img className="item-card__image" src={item.image_url} alt={item.name} loading="lazy" />
+        <img className="item-card__image" src={item.image_url} alt={item.name} loading="lazy" decoding="async" draggable={false} />
         {owned && Number(quantity) > 0 && (
           <span className="item-card__quantity" aria-label={`${quantity} штук`}>
             ×{Number(quantity).toLocaleString('ru-RU')}

@@ -184,7 +184,7 @@ export default function RouletteTab({ profile, onSpinSuccess, onToast }) {
                   className={`roulette-reel-card ${index === targetIndex ? 'roulette-reel-card--target' : ''}`}
                 >
                   <div className="roulette-reel-card__image-wrap">
-                    <img src={item.image_url} alt="" loading="eager" decoding="async" />
+                    <img src={item.image_url} alt="" loading="eager" decoding="async" draggable={false} />
                   </div>
                   <span className="roulette-reel-card__name" title={item.name}>{item.name}</span>
                 </div>
@@ -229,7 +229,7 @@ export default function RouletteTab({ profile, onSpinSuccess, onToast }) {
           <span className="roulette-result-card__label">🎉 ТВОЯ НАГРАДА</span>
           <div className="roulette-result-card__body">
             <div className="roulette-result-card__image-wrap">
-              <img src={result.image_url} alt="" />
+              <img src={result.image_url} alt="" decoding="async" draggable={false} />
             </div>
             <div className="roulette-result-card__info">
               <strong>{result.name}</strong>

@@ -6046,47 +6046,112 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   .sp-stage { display: none; }
 }
 
+/* ================================================================
+   RoUP CDN IMAGE POLISH
+   Rounded item frames + cheaper image rendering.
+   These rules only affect item artwork presentation.
+   ================================================================ */
 
-/* ---------- Final item-art clipping ----------
-   Force the catalog artwork itself to have rounded corners even when
-   the source WebP is an opaque square image. */
+/* Main catalog / inventory cards */
 .item-card__image-wrap {
-  position: relative !important;
-  overflow: hidden !important;
-  border-radius: 16px !important;
-  -webkit-border-radius: 16px !important;
-  clip-path: inset(0 0 0 0 round 16px) !important;
-  -webkit-clip-path: inset(0 0 0 0 round 16px) !important;
-  contain: paint;
-  isolation: isolate;
-}
-
-.item-card__image-wrap::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  border-radius: 16px;
-  -webkit-border-radius: 16px;
   border: 1px solid var(--glass-rim);
+  border-radius: var(--r-tile, 14px);
+  overflow: hidden;
+  isolation: isolate;
   box-shadow:
     inset 0 1px 0 var(--glass-hi),
-    inset 0 0 0 1px rgba(255,255,255,.035);
-  z-index: 2;
+    inset 0 0 0 1px rgba(255,255,255,.025),
+    0 8px 18px -14px var(--glass-shadow);
+  contain: paint;
 }
 
-.item-card__image-wrap .item-card__image {
-  display: block !important;
-  width: 100% !important;
-  height: 100% !important;
-  min-width: 0;
-  min-height: 0;
-  object-fit: contain !important;
-  border-radius: 16px !important;
-  -webkit-border-radius: 16px !important;
-  clip-path: inset(0 0 0 0 round 16px) !important;
-  -webkit-clip-path: inset(0 0 0 0 round 16px) !important;
-  mask-image: linear-gradient(#000 0 0);
-  -webkit-mask-image: linear-gradient(#000 0 0);
+.item-card__image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: inherit;
+  padding: 6px;
+  filter: drop-shadow(0 7px 12px rgba(0,0,0,.38));
+  backface-visibility: hidden;
+}
+
+/* Purchase / sell sheets */
+.sheet__item-image {
+  display: block;
+  border: 1px solid var(--glass-rim);
+  border-radius: var(--r-tile, 14px);
+  background: var(--glass-fill-2, var(--ink-06));
+  box-shadow:
+    inset 0 1px 0 var(--glass-hi),
+    inset 0 0 0 1px rgba(255,255,255,.025),
+    0 8px 18px -14px var(--glass-shadow);
+  object-fit: contain;
   overflow: hidden;
+  backface-visibility: hidden;
+}
+
+/* Upgrade source/target slots */
+.upgrade-slot__image-wrap,
+.upgrade-picker-item__image-wrap {
+  border: 1px solid var(--glass-rim);
+  border-radius: var(--r-tile, 14px);
+  overflow: hidden;
+  isolation: isolate;
+  box-shadow:
+    inset 0 1px 0 var(--glass-hi),
+    inset 0 0 0 1px rgba(255,255,255,.025);
+}
+
+.upgrade-slot__image-wrap img,
+.upgrade-picker-item__image-wrap img {
+  display: block;
+  border-radius: inherit;
+  object-fit: contain;
+  filter: drop-shadow(0 7px 12px rgba(0,0,0,.42));
+  backface-visibility: hidden;
+}
+
+/* Free roulette artwork */
+.roulette-reel-card__image-wrap,
+.roulette-result-card__image-wrap,
+.roulette-reward-card__image-wrap {
+  border: 1px solid var(--glass-rim);
+  border-radius: var(--r-tile, 14px);
+  overflow: hidden;
+  isolation: isolate;
+  box-shadow:
+    inset 0 1px 0 var(--glass-hi),
+    inset 0 0 0 1px rgba(255,255,255,.025);
+}
+
+.roulette-reel-card__image-wrap img,
+.roulette-result-card__image-wrap img,
+.roulette-reward-card__image-wrap img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: contain;
+  filter: drop-shadow(0 6px 10px rgba(0,0,0,.38));
+  backface-visibility: hidden;
+}
+
+/* Live feed thumbnails */
+.live-strip__img {
+  display: block;
+  border-radius: 9px;
+  border: 1px solid var(--glass-rim);
+  background: var(--glass-fill-2, var(--ink-06));
+  box-shadow: inset 0 1px 0 var(--glass-hi);
+  overflow: hidden;
+  object-fit: contain;
+  backface-visibility: hidden;
+}
+
+/* Let the browser defer off-screen card painting in long catalogs. */
+.item-grid > .item-card,
+.roulette-reward-grid > .roulette-reward-card {
+  content-visibility: auto;
+  contain-intrinsic-size: 220px;
 }
