@@ -7,7 +7,6 @@ import CatalogTab from './components/CatalogTab.jsx';
 import UpgradeTab from './components/UpgradeTab.jsx';
 import InventoryTab from './components/InventoryTab.jsx';
 import ProfileTab from './components/ProfileTab.jsx';
-import RouletteTab from './components/RouletteTab.jsx';
 import PurchaseSheet from './components/PurchaseSheet.jsx';
 import WithdrawScreen from './components/WithdrawScreen.jsx';
 import WithdrawRequestsPanel from './components/WithdrawRequestsPanel.jsx';
@@ -19,8 +18,7 @@ const SCREEN_META = {
   catalog: { title: 'Каталог', subtitle: 'Купить предметы 👇' },
   upgrade: { title: null, subtitle: null },
   inventory: { title: null, subtitle: null },
-  profile: { title: 'Профиль', subtitle: null },
-  roulette: { title: 'Бесплатная рулетка', subtitle: 'Приглашай друзей — получай прокрутки 🎁' }
+  profile: { title: 'Профиль', subtitle: null }
 };
 
 export default function App() {
@@ -85,14 +83,6 @@ export default function App() {
     if (inventoryRes.status === 'fulfilled') setInventory(inventoryRes.value.items || []);
     if (profileRes.status === 'fulfilled') setProfile(profileRes.value);
   }, []);
-
-  const handleRouletteSpin = useCallback(async (result) => {
-    setProfile((prev) => prev ? {
-      ...prev,
-      free_roulette_spins: Number(result?.spinsRemaining) || 0,
-    } : prev);
-    await refreshInventoryAndProfile();
-  }, [refreshInventoryAndProfile]);
 
   useEffect(() => {
     loadAll();
@@ -193,11 +183,7 @@ export default function App() {
       if (nextTab === 'inventory') { haptic('light'); setTab('inventory'); setTutorialStep(4); }
       return;
     }
-    if (tutorialStep === 4) {
-      if (nextTab === 'roulette') { haptic('light'); setTab('roulette'); setTutorialStep(5); }
-      return;
-    }
-    if (tutorialStep === 5) return;
+    if (tutorialStep === 4) return;
     setTab(nextTab);
   };
 
@@ -314,15 +300,8 @@ export default function App() {
         />
       )}
       {tab === 'profile' && <ProfileTab profile={profile} loading={loading} onOpenWithdrawRequests={() => setShowWithdrawRequests(true)} />}
-      {tab === 'roulette' && (
-        <RouletteTab
-          profile={profile}
-          onSpinSuccess={handleRouletteSpin}
-          onToast={setToast}
-        />
-      )}
 
-      <TabBar active={tab} onChange={handleTabChange} />
+      <TabBar active={tab} onChange={setTab} />
 
       <TutorialOverlay step={tutorialStep} onFinish={finishTutorial} onTargetClick={handleTabChange} />
 
