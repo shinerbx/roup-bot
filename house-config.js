@@ -70,11 +70,6 @@ const HOUSE_CONFIG = Object.freeze({
     ONLINE_MULTIPLIER: 100, // legacy, не используется — онлайн теперь симулируется
   },
 
-  REFERRALS: {
-    // Защита от массовой накрутки рефералов одним аккаунтом.
-    MAX_NEW_PER_DAY: 50,
-  },
-
   USER_LIMITS: {
     MAX_RECEIVED_VALUE_MULTIPLIER: 1.5,
     MAX_WITHDRAW_VALUE_MULTIPLIER: 1.0,
@@ -82,39 +77,13 @@ const HOUSE_CONFIG = Object.freeze({
     MIN_DEPOSIT_FOR_WITHDRAW: 0,
     MAX_DAILY_WITHDRAWALS: 1,
     REQUIRE_REFERRAL_FOR_WITHDRAW: true,
+    ALLOW_FREE_ITEM_ISSUANCE: true,
   },
 
   PAYMENTS: {
     MIN_TOPUP: 50,
     MAX_TOPUP: 500000,
     CURRENCY: 'XTR',
-  },
-
-  BROADCAST: {
-    // Автоматические сервисные рассылки для незабранного подарка и бесплатной рулетки.
-    ENABLED: true,
-    TICK_MINUTES: 15,
-    BATCH_SIZE: 25,
-    CONCURRENT: 4,
-
-    // Защита от спама: максимум сообщений от этого планировщика одному игроку в сутки.
-    MAX_PER_DAY: 2,
-
-    // Минимальный интервал между повтором каждой конкретной рассылки.
-    SUBSCRIPTION_INTERVAL_HOURS: 36,
-    ROULETTE_INTERVAL_HOURS: 18,
-
-    // Не отправляем сообщение сразу после создания аккаунта.
-    MIN_USER_AGE_MINUTES: 5,
-
-    // Сколько новых рефералов один пользователь может засчитать за сутки.
-    // Нужен как дополнительный барьер против массовой накрутки.
-    TIMEZONE: process.env.BROADCAST_TIMEZONE || 'Europe/Moscow',
-
-    BUTTON_STYLE: 'web_app',
-    WINDOWS: [
-      { startHour: 10, endHour: 23 },
-    ],
   },
 
   WITHDRAWAL: {

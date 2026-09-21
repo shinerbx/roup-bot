@@ -5,10 +5,8 @@ const {
   ensureUserExists, upgradeItem, sellInventoryItem, sellInventoryItemsBatch,
   buyItemsWithBalance, getReferralProgress, setTutorialCompleted, getUserDemoItemCount,
   createWithdrawRequest, attachAdminMessage, getRecentDrops, getUserWithdrawRequests,
-  getFreeRouletteStatus, getFreeRouletteRewards, spinFreeRoulette,
 } = require('./db');
 const { WITHDRAWAL, USER_LIMITS, UPGRADE, ROULETTE, LIVE_FEED } = require('./house-config');
-const FREE_ROULETTE = require('./free-roulette-config');
 const { isWhitelisted } = require('./access-control');
 const { notifyWithdrawRequest } = require('./admin-notify');
 
@@ -374,7 +372,6 @@ function createWebappRouter(bot, botToken) {
         tier: calculateTier(user),
         upgrades_count: user.upgrades_count || 0,
         referrals_count: user.referrals_count || 0,
-        free_roulette_spins: Number(user.free_roulette_spins) || 0,
         referral_progress: referralProgress,
         can_withdraw: canWithdraw,
         is_whitelisted: whitelisted,
@@ -593,56 +590,6 @@ function createWebappRouter(bot, botToken) {
       res.json(result);
     } catch (err) {
       console.error('Ошибка /api/sell-many:', err.message);
-      res.status(500).json({ error: 'server_error' });
-    }
-  });
-
-
-  router.get('/free-roulette/config', async (req, res) => {
-    try {
-      const status = await getFreeRouletteStatus(req.tgUser.id);
-      const rewards = await getFreeRouletteRewards();
-      const botUsername = process.env.BOT_USERNAME || 'roupgrade_bot';
-      const referralLink = `https://t.me/${botUsername}?start=ref_${req.tgUser.id}`;
-      const shareText = `🤯 ОФИГЕТЬ! ТЫ ЗНАЛ, ЧТО В ROUP МОЖНО ЛУТАТЬ БЕСПЛАТНЫЕ ПОДАРКИ? 🎁
-
-🔥 ЗАЛЕТАЙ В БОТА — ТАМ ТЕБЯ ЖДУТ БЕСПЛАТНЫЙ ЛУТ, РУЛЕТКА И АПГРЕЙДЫ ROBLOX.
-
-👇 ЖМИ И ЗАБИРАЙ, ПОКА ДОСТУПНО!`;
-      const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent(shareText)}`;
-
-      res.set('Cache-Control', 'private, max-age=15');
-      res.json({
-        rewards,
-        spins: status.spins,
-        referralsCount: status.referralsCount,
-        referralSpinsPerFriend: Number(FREE_ROULETTE.REFERRAL_SPINS_PER_FRIEND) || 1,
-        spin: FREE_ROULETTE.SPIN,
-        referralLink,
-        shareUrl,
-      });
-    } catch (err) {
-      console.error('Ошибка /api/free-roulette/config:', err.message);
-      res.status(500).json({ error: 'roulette_unavailable' });
-    }
-  });
-
-  router.post('/free-roulette/spin', async (req, res) => {
-    try {
-      const operationId = String(req.body?.operationId || '').trim();
-      if (!operationId || operationId.length > 100) {
-        return res.status(400).json({ error: 'missing_operation_id' });
-      }
-
-      const result = await spinFreeRoulette(req.tgUser.id, operationId);
-      if (result.error) {
-        const status = result.error === 'no_spins' ? 409 : 400;
-        return res.status(status).json(result);
-      }
-
-      res.json(result);
-    } catch (err) {
-      console.error('Ошибка /api/free-roulette/spin:', err.message);
       res.status(500).json({ error: 'server_error' });
     }
   });
