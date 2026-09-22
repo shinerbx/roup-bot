@@ -28,11 +28,12 @@ function buildReel(rewards, resultName, minCards = MIN_CARDS, targetIndex = TARG
   return { items, targetIndex: safeTarget };
 }
 
-export default function RouletteTab({ profile, onSpinSuccess, onToast }) {
+export default function RouletteTab({ profile, onSpinSuccess, onSell, onToast }) {
   const [config, setConfig] = useState(null);
   const [loading, setLoading] = useState(true);
   const [spinning, setSpinning] = useState(false);
   const [result, setResult] = useState(null);
+  const [selling, setSelling] = useState(false);
   const [reelItems, setReelItems] = useState([]);
   const [targetIndex, setTargetIndex] = useState(TARGET_INDEX);
   const [trackX, setTrackX] = useState(0);
@@ -124,6 +125,18 @@ export default function RouletteTab({ profile, onSpinSuccess, onToast }) {
       else onToast?.('Не удалось запустить рулетку.');
     }
   }, [spinning, loading, rewards, spins, config, duration, onSpinSuccess, onToast]);
+
+  // «Выигрыш → баланс»: продаём выпавший предмет по обычной цене продажи через основной поток приложения.
+  const sellPrize = useCallback(async () => {
+    if (!result || selling || !onSell) return;
+    setSelling(true);
+    try {
+      const ok = await onSell(result.id, 1);
+      if (ok) setResult(null);
+    } finally {
+      setSelling(false);
+    }
+  }, [result, selling, onSell]);
 
   const openInvite = useCallback(() => {
     haptic('light');
@@ -238,6 +251,11 @@ export default function RouletteTab({ profile, onSpinSuccess, onToast }) {
             </div>
           </div>
           <div className="roulette-result-card__hint">Предмет уже добавлен в твой инвентарь.</div>
+          {onSell && (
+            <button type="button" className="roulette-result-card__sell" onClick={sellPrize} disabled={selling}>
+              {selling ? 'Продаём…' : `Продать за ★ ${Number(result.price_stars).toLocaleString('ru-RU')}`}
+            </button>
+          )}
         </section>
       )}
 

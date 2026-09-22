@@ -4783,7 +4783,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
     top: 6px;
     bottom: 6px;
     left: 6px;
-    width: calc((100% - 12px) / 4);
+    width: calc((100% - 12px) / 5);
     border-radius: 24px;
     background: var(--glass-sheen), var(--glass-fill-3);
     box-shadow:
@@ -4796,6 +4796,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   .tab-bar:has(.tab-bar__item:nth-child(2).active)::before { transform: translateX(100%); }
   .tab-bar:has(.tab-bar__item:nth-child(3).active)::before { transform: translateX(200%); }
   .tab-bar:has(.tab-bar__item:nth-child(4).active)::before { transform: translateX(300%); }
+  .tab-bar:has(.tab-bar__item:nth-child(5).active)::before { transform: translateX(400%); }
 }
 
 /* ---------- 5. Sheets & scrim ---------- */
@@ -6046,112 +6047,563 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   .sp-stage { display: none; }
 }
 
-/* ================================================================
-   RoUP CDN IMAGE POLISH
-   Rounded item frames + cheaper image rendering.
-   These rules only affect item artwork presentation.
-   ================================================================ */
+/* ==========================================================================
+   19. FREE ROULETTE — same glass language as the rest of the app
+   Uses only the shared tokens (--glass-*, --ink-*, --gold-ink, --ease-*), so it
+   follows the Telegram light / dark theme automatically. No backdrop-filter here:
+   the cards float over the static page glow (blur would be invisible but costs GPU).
+   The reel itself is moved by the component (translate3d) — CSS only styles it.
+   ========================================================================== */
 
-/* Main catalog / inventory cards */
-.item-card__image-wrap {
-  border: 1px solid var(--glass-rim);
-  border-radius: var(--r-tile, 14px);
-  overflow: hidden;
-  isolation: isolate;
-  box-shadow:
-    inset 0 1px 0 var(--glass-hi),
-    inset 0 0 0 1px rgba(255,255,255,.025),
-    0 8px 18px -14px var(--glass-shadow);
-  contain: paint;
+.roulette-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  animation: screen-in 0.5s var(--ease-out) backwards;
 }
 
-.item-card__image {
+/* ---------- Hero ---------- */
+
+.roulette-hero {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 26px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(232, 184, 74, 0.16), transparent 55%),
+    var(--glass-sheen),
+    var(--glass-fill);
+  border: 1px solid var(--glass-rim);
+  box-shadow: inset 0 1px 0 var(--glass-hi), 0 18px 36px -22px var(--glass-shadow);
+}
+
+.roulette-hero__glow {
+  position: absolute;
+  z-index: -1;
+  left: 50%;
+  top: 52%;
+  width: 280px;
+  height: 280px;
+  margin: -140px 0 0 -140px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(239, 59, 79, 0.2), transparent 68%);
+  pointer-events: none;
+}
+
+.roulette-hero__topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.roulette-kicker {
   display: block;
+  margin-bottom: 3px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+}
+
+.roulette-hero h3 {
+  margin: 0;
+  font-family: 'Unbounded', sans-serif;
+  font-size: 17px;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+.roulette-spins {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--glass-sheen), rgba(232, 184, 74, 0.16);
+  border: 1px solid rgba(232, 184, 74, 0.4);
+  box-shadow: inset 0 1px 0 var(--glass-hi);
+}
+.roulette-spins b {
+  font-family: 'Unbounded', sans-serif;
+  font-size: 14px;
+  color: var(--gold-ink);
+}
+
+.roulette-hero__text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* ---------- Reel ---------- */
+
+.roulette-reel {
+  --edge: var(--sheet-fill);
+  position: relative;
+  height: 148px;
+  overflow: hidden;
+  contain: layout paint;
+  border-radius: 20px;
+  background: var(--glass-fill-2);
+  border: 1px solid var(--glass-rim);
+  box-shadow: var(--field-shadow), inset 0 1px 0 var(--glass-hi);
+}
+
+.roulette-reel__shade {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 2;
+  width: 22%;
+  pointer-events: none;
+}
+.roulette-reel__shade--left { left: 0; background: linear-gradient(90deg, var(--edge), transparent); }
+.roulette-reel__shade--right { right: 0; background: linear-gradient(270deg, var(--edge), transparent); }
+
+.roulette-reel__marker { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
+.roulette-reel__marker-line {
+  position: absolute;
+  left: 50%;
+  top: 10px;
+  bottom: 10px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, transparent, var(--gold), transparent);
+  box-shadow: 0 0 12px rgba(232, 184, 74, 0.7);
+}
+.roulette-reel__marker-top,
+.roulette-reel__marker-bottom {
+  position: absolute;
+  left: 50%;
+  margin-left: -7px;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  filter: drop-shadow(0 0 5px rgba(232, 184, 74, 0.8));
+}
+.roulette-reel__marker-top { top: 0; border-top: 10px solid var(--gold); }
+.roulette-reel__marker-bottom { bottom: 0; border-bottom: 10px solid var(--gold); }
+
+.roulette-reel__track {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  display: flex;
+  gap: 10px; /* must match CARD_GAP in RouletteTab.jsx */
+  will-change: transform;
+  backface-visibility: hidden;
+}
+
+.roulette-reel__loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.roulette-reel__loading span {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--ink-25);
+  animation: roulette-dot 1s ease-in-out infinite;
+}
+.roulette-reel__loading span:nth-child(2) { animation-delay: 0.15s; }
+.roulette-reel__loading span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes roulette-dot {
+  0%, 100% { opacity: 0.35; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+
+.roulette-reel-card {
+  flex: 0 0 104px;
+  width: 104px;
+  height: 128px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 8px 7px;
+  border-radius: 18px;
+  background: var(--glass-sheen), var(--glass-fill);
+  border: 1px solid var(--glass-rim);
+  box-shadow: inset 0 1px 0 var(--glass-hi);
+}
+.roulette-reel-card__image-wrap { width: 100%; aspect-ratio: 1 / 1; flex: none; }
+.roulette-reel-card__name {
   width: 100%;
-  height: 100%;
-  object-fit: contain;
-  border-radius: inherit;
-  padding: 6px;
-  filter: drop-shadow(0 7px 12px rgba(0,0,0,.38));
-  backface-visibility: hidden;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The target only lights up once the reel has stopped — no early spoiler while it spins */
+.roulette-reel:not(.spinning) .roulette-reel-card--target {
+  background: var(--glass-sheen), rgba(232, 184, 74, 0.16);
+  border-color: rgba(232, 184, 74, 0.7);
+  box-shadow: 0 0 0 3px rgba(232, 184, 74, 0.16), inset 0 1px 0 var(--glass-hi);
+}
+.roulette-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  color: var(--text-faint);
 }
 
-/* Purchase / sell sheets */
-.sheet__item-image {
-  display: block;
-  border: 1px solid var(--glass-rim);
-  border-radius: var(--r-tile, 14px);
-  background: var(--glass-fill-2, var(--ink-06));
+/* ---------- Action + stats ---------- */
+
+.roulette-action-row { display: flex; }
+
+.roulette-spin-button,
+.roulette-result-card__sell,
+.roulette-invite-card > button {
+  transition:
+    transform 0.42s var(--ease-spring),
+    background-color 0.22s ease,
+    box-shadow 0.28s ease,
+    opacity 0.22s ease;
+}
+
+.roulette-spin-button {
+  flex: 1;
+  border: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 15px 18px;
+  border-radius: var(--r-tile);
+  font-size: 15px;
+  font-weight: 800;
+  color: #1a0709;
+  background: var(--grad-brand);
   box-shadow:
-    inset 0 1px 0 var(--glass-hi),
-    inset 0 0 0 1px rgba(255,255,255,.025),
-    0 8px 18px -14px var(--glass-shadow);
-  object-fit: contain;
-  overflow: hidden;
-  backface-visibility: hidden;
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    inset 0 -1px 0 rgba(120, 10, 25, 0.25),
+    0 12px 22px -10px rgba(239, 59, 79, 0.65);
 }
+.roulette-spin-button:disabled {
+  color: var(--text-faint);
+  background: var(--glass-fill-2);
+  box-shadow: inset 0 1px 0 var(--glass-hi);
+}
+.roulette-spin-button__arrow { font-size: 18px; }
 
-/* Upgrade source/target slots */
-.upgrade-slot__image-wrap,
-.upgrade-picker-item__image-wrap {
+.roulette-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.roulette-stats > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 8px;
+  text-align: center;
+  border-radius: var(--r-control);
+  background: var(--glass-fill-2);
   border: 1px solid var(--glass-rim);
-  border-radius: var(--r-tile, 14px);
-  overflow: hidden;
+  box-shadow: inset 0 1px 0 var(--glass-hi);
+}
+.roulette-stats span { font-size: 11px; color: var(--text-faint); }
+.roulette-stats b { font-family: 'Unbounded', sans-serif; font-size: 14px; color: var(--text-primary); }
+
+/* ---------- Result ---------- */
+
+.roulette-result-card {
+  position: relative;
   isolation: isolate;
+  overflow: hidden;
+  padding: 16px;
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(48, 255, 143, 0.16), transparent 60%),
+    var(--glass-sheen),
+    var(--glass-fill);
+  border: 1px solid rgba(70, 255, 165, 0.45);
   box-shadow:
     inset 0 1px 0 var(--glass-hi),
-    inset 0 0 0 1px rgba(255,255,255,.025);
+    0 0 26px -6px rgba(48, 255, 143, 0.35),
+    0 18px 36px -22px var(--glass-shadow);
+  animation: roulette-result-in 0.6s var(--ease-spring) backwards;
 }
-
-.upgrade-slot__image-wrap img,
-.upgrade-picker-item__image-wrap img {
+@keyframes roulette-result-in {
+  from { opacity: 0; transform: translateY(14px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+.roulette-result-card__shine {
+  position: absolute;
+  top: -30%;
+  bottom: -30%;
+  left: -40%;
+  width: 50%;
+  z-index: 1;
+  pointer-events: none;
+  background: linear-gradient(105deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+  transform: translateX(-120%) skewX(-12deg);
+  animation: shine-sweep 1.2s 0.25s var(--ease-out) both;
+}
+.roulette-result-card__label {
   display: block;
-  border-radius: inherit;
-  object-fit: contain;
-  filter: drop-shadow(0 7px 12px rgba(0,0,0,.42));
-  backface-visibility: hidden;
+  margin-bottom: 10px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: var(--green-ink);
+}
+.roulette-result-card__body { display: flex; align-items: center; gap: 14px; }
+.roulette-result-card__image-wrap { width: 84px; height: 84px; flex: none; }
+.roulette-result-card__info { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.roulette-result-card__info strong {
+  font-family: 'Unbounded', sans-serif;
+  font-size: 15px;
+  color: var(--text-primary);
+}
+.roulette-result-card__info span { font-weight: 800; color: var(--gold-ink); }
+.roulette-result-card__info small { color: var(--text-faint); font-size: 12px; }
+.roulette-result-card__hint { margin-top: 12px; font-size: 12px; color: var(--text-muted); }
+.roulette-result-card__sell {
+  width: 100%;
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: var(--r-control);
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--gold-ink);
+  background: var(--glass-sheen), rgba(232, 184, 74, 0.16);
+  border: 1px solid rgba(232, 184, 74, 0.4);
+  box-shadow: inset 0 1px 0 var(--glass-hi);
 }
 
-/* Free roulette artwork */
+/* ---------- Rewards table ---------- */
+
+.roulette-section-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 4px 2px 10px;
+}
+.roulette-section-heading span {
+  display: block;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+}
+.roulette-section-heading h4 {
+  margin: 2px 0 0;
+  font-family: 'Unbounded', sans-serif;
+  font-size: 15px;
+  color: var(--text-primary);
+}
+.roulette-section-heading small { font-size: 12px; color: var(--text-faint); }
+
+.roulette-reward-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.roulette-reward-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 18px;
+  background: var(--glass-sheen), var(--glass-fill);
+  border: 1px solid var(--glass-rim);
+  box-shadow: inset 0 1px 0 var(--glass-hi);
+}
+.roulette-reward-card__image-wrap { width: 46px; height: 46px; flex: none; }
+.roulette-reward-card__info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.roulette-reward-card__info strong {
+  font-size: 13.5px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.roulette-reward-card__info small { font-size: 12px; font-weight: 800; color: var(--gold-ink); }
+.roulette-reward-card__chance {
+  flex: none;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--text-primary);
+  background: var(--glass-fill-2);
+  border: 1px solid var(--glass-rim);
+  box-shadow: inset 0 1px 0 var(--glass-hi);
+}
+
+/* ---------- Invite ---------- */
+
+.roulette-invite-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(239, 59, 79, 0.22), transparent 62%),
+    var(--glass-sheen),
+    var(--glass-fill);
+  border: 1px solid rgba(239, 59, 79, 0.3);
+  box-shadow: inset 0 1px 0 var(--glass-hi), 0 14px 28px -20px var(--glass-shadow);
+}
+.roulette-invite-card__icon {
+  width: 44px;
+  height: 44px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-control);
+  font-size: 22px;
+  background: rgba(239, 59, 79, 0.16);
+  box-shadow: inset 0 1px 0 var(--glass-hi);
+}
+.roulette-invite-card__content { flex: 1; min-width: 0; }
+.roulette-invite-card__eyebrow { font-size: 11px; font-weight: 800; letter-spacing: 0.06em; color: var(--crimson-ink); }
+.roulette-invite-card h4 {
+  margin: 3px 0;
+  font-family: 'Unbounded', sans-serif;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+.roulette-invite-card p { margin: 0; font-size: 12px; line-height: 1.45; color: var(--text-muted); }
+.roulette-invite-card > button {
+  width: 100%;
+  border: 0;
+  padding: 12px;
+  border-radius: var(--r-control);
+  font-size: 13px;
+  font-weight: 800;
+  color: #1a0709;
+  background: var(--grad-brand);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    inset 0 -1px 0 rgba(120, 10, 25, 0.25),
+    0 10px 20px -8px rgba(239, 59, 79, 0.6);
+}
+
+.roulette-screen-reader {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ==========================================================================
+   20. ITEM ART — clean rounded corners for transparent WebP
+   --------------------------------------------------------------------------
+   Why the corners were black: the artwork has its own rounded alpha corners
+   (radius ≈ 16.4 % of the side). WebViews decode the transparent WebP corners
+   as black, and the old clip used a fixed 12–14 px radius + 4–6 px padding, which
+   is smaller than the art's real radius — so the black corner pixels stayed
+   outside the clip. Fix: clip the image ITSELF with a PERCENT radius that matches
+   the artwork, drop the padding that shifted the clip away from the art, and put
+   the frame on a compositor layer so the WebView anti-aliases the edge cleanly.
+
+   Performance: per-image `filter: drop-shadow()` (one offscreen pass per icon) is
+   replaced by a cheap box-shadow on the frame, and no permanent `will-change`
+   is used on the (many) list images.
+   ========================================================================== */
+
+:root { --art-radius: 17.5%; }
+
+/* Art-only frames: the frame IS the artwork tile */
+.upgrade-slot__image-wrap,
 .roulette-reel-card__image-wrap,
 .roulette-result-card__image-wrap,
 .roulette-reward-card__image-wrap {
-  border: 1px solid var(--glass-rim);
-  border-radius: var(--r-tile, 14px);
   overflow: hidden;
   isolation: isolate;
-  box-shadow:
-    inset 0 1px 0 var(--glass-hi),
-    inset 0 0 0 1px rgba(255,255,255,.025);
+  border: 0;
+  border-radius: var(--art-radius);
+  background: transparent;
+  box-shadow: 0 8px 16px -10px rgba(0, 0, 0, 0.55);
+  transform: translateZ(0);
 }
 
+/* Catalog / inventory card frame keeps its glass look; the art sits 4px inside it */
+.item-card__image-wrap {
+  padding: 4px;
+  overflow: hidden;
+  isolation: isolate;
+  contain: paint;
+  transform: translateZ(0);
+}
+
+/* Picker: its frame can be squeezed by the flex layout (e.g. 147×70), so the frame stays a neutral
+   centring box and the IMAGE is what stays square and gets the rounded clip. */
+.upgrade-picker-item__image-wrap {
+  overflow: hidden; /* keeps min-height:0 so the flex layout shrinks the frame exactly as before */
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.upgrade-picker-item__image-wrap img {
+  width: auto;
+  height: 100%;
+  max-width: 100%;
+  aspect-ratio: 1 / 1;
+  transform: translateZ(0);
+}
+
+/* Every item-art <img> */
+.item-card__image,
+.sheet__item-image,
+.upgrade-slot__image-wrap img,
+.upgrade-picker-item__image-wrap img,
 .roulette-reel-card__image-wrap img,
 .roulette-result-card__image-wrap img,
 .roulette-reward-card__image-wrap img {
   display: block;
   width: 100%;
   height: 100%;
-  border-radius: inherit;
-  object-fit: contain;
-  filter: drop-shadow(0 6px 10px rgba(0,0,0,.38));
+  padding: 0;
+  object-fit: cover;
+  border-radius: var(--art-radius);
+  background: transparent;
+  filter: none;
   backface-visibility: hidden;
 }
 
-/* Live feed thumbnails */
+.sheet__item-image {
+  width: 56px;
+  height: 56px;
+  border: 0;
+  box-shadow: 0 8px 16px -10px rgba(0, 0, 0, 0.55);
+  transform: translateZ(0);
+}
+
+/* Live feed thumbnails (tiny — fixed radius is enough) */
 .live-strip__img {
   display: block;
   border-radius: 9px;
-  border: 1px solid var(--glass-rim);
-  background: var(--glass-fill-2, var(--ink-06));
-  box-shadow: inset 0 1px 0 var(--glass-hi);
+  background: transparent;
   overflow: hidden;
   object-fit: contain;
   backface-visibility: hidden;
 }
 
-/* Let the browser defer off-screen card painting in long catalogs. */
-.item-grid > .item-card,
-.roulette-reward-grid > .roulette-reward-card {
+/* Let the browser skip painting off-screen cards in long lists. */
+.item-grid > .item-card {
   content-visibility: auto;
   contain-intrinsic-size: 220px;
+}
+.roulette-reward-grid > .roulette-reward-card {
+  content-visibility: auto;
+  contain-intrinsic-size: 68px;
 }

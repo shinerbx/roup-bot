@@ -166,4 +166,10 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(payload),
   }, { retries: 2 }),
+
+  getFreeRouletteConfig: () => request('/free-roulette/config', {}, { dedupe: true }),
+  spinFreeRoulette: () => request('/free-roulette/spin', {
+    method: 'POST',
+    body: JSON.stringify({ operationId: createOperationId() }),
+  }, { retries: 2 }),
 };

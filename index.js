@@ -20,6 +20,7 @@ const {
 const { createWebappRouter } = require('./webapp-api');
 const { registerBot } = require('./admin-notify');
 const { USER_LIMITS } = require('./house-config');
+const FREE_ROULETTE = require('./free-roulette-config');
 const { ADMIN_IDS, isAdmin, isWhitelisted } = require('./access-control');
 const { TERMS_URL, SUPPORT_URL } = require('./links-config');
 
@@ -510,7 +511,10 @@ bot.action('accept_tos', async (ctx) => {
       bot.telegram.sendMessage(
         rewardedReferrerId,
         `🎉 Твой друг <b>${ctx.from.first_name}</b> завершил регистрацию!\n` +
-        `🎁 В твой инвентарь добавлен стартовый предмет стоимостью <b>5-10 ⭐</b>.\n\n` +
+        (FREE_ROULETTE.REFERRAL_STARTER_ITEM !== false
+          ? `🎁 В твой инвентарь добавлен стартовый предмет стоимостью <b>5-10 ⭐</b>.\n`
+          : '') +
+        `🎡 Тебе начислено бесплатных прокруток: <b>${Number(FREE_ROULETTE.REFERRAL_SPINS_PER_FRIEND) || 1}</b>. Открой раздел «Рулетка» в приложении.\n\n` +
         `📊 Реферальный прогресс:\n` +
         `⭐ Premium: <b>${progress.premium}/5</b>\n` +
         `👤 Без Premium: <b>${progress.regular}/10</b>\n` +
@@ -633,7 +637,8 @@ bot.hears('👥 Друзья', async (ctx) => {
       : `🔒 <b>Вывод пока недоступен.</b> Пригласи ещё <b>${progress.premiumRemaining}</b> Premium или <b>${progress.regularRemaining}</b> пользователей без Premium.`;
     const text =
       `👥 <b>Реферальная программа</b>\n\n` +
-      `За приглашённого друга в инвентарь начисляется стартовый предмет.\n\n` +
+      `За каждого приглашённого друга ты получаешь <b>бесплатную прокрутку рулетки</b>` +
+      (FREE_ROULETTE.REFERRAL_STARTER_ITEM !== false ? ' и стартовый предмет' : '') + `.\n\n` +
       `📊 Всего приглашено: <b>${progress.total}</b>\n` +
       `⭐ Premium: <b>${progress.premium}/5</b>\n` +
       `👤 Без Premium: <b>${progress.regular}/10</b>\n\n` +

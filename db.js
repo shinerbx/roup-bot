@@ -2,6 +2,8 @@ const { Pool } = require('pg');
 const catalogItems = require('./catalog');
 const { resolveUpgrade, canUpgradeTo, MAX_MULTIPLIER } = require('./upgrade-logic');
 const { WITHDRAWAL, UPGRADE } = require('./house-config');
+const FREE_ROULETTE = require('./free-roulette-config');
+const crypto = require('crypto');
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {
@@ -86,6 +88,8 @@ async function initDb() {
         tutorial_completed INTEGER DEFAULT 0,
         pre_demo_balance INTEGER DEFAULT NULL,
         lucky_mode INTEGER DEFAULT 0,
+        free_roulette_spins INTEGER DEFAULT 0,
+        free_roulette_seeded INTEGER DEFAULT 0,
         last_active_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         last_broadcast_at TIMESTAMP DEFAULT NULL,
         broadcast_opt_out INTEGER DEFAULT 0,
@@ -155,6 +159,17 @@ async function initDb() {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
+      CREATE TABLE IF NOT EXISTS free_roulette_history (
+        id BIGSERIAL PRIMARY KEY,
+        user_id BIGINT NOT NULL REFERENCES users(telegram_id),
+        operation_id TEXT NOT NULL UNIQUE,
+        reward_item_id INTEGER NOT NULL REFERENCES items(id),
+        reward_chance NUMERIC(8,4) NOT NULL,
+        roll NUMERIC(12,8) NOT NULL,
+        source TEXT NOT NULL DEFAULT 'referral',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
     `);
 
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS is_premium INTEGER DEFAULT 0');
@@ -162,6 +177,18 @@ async function initDb() {
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS pre_demo_balance INTEGER DEFAULT NULL');
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS lucky_mode INTEGER DEFAULT 0');
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS cheap_upgrades_count INTEGER DEFAULT 0');
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS free_roulette_spins INTEGER DEFAULT 0');
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS free_roulette_seeded INTEGER DEFAULT 0');
+    if (FREE_ROULETTE.SEED_SPINS_FROM_EXISTING_REFERRALS) {
+      // Однократно переносим уже накопленные приглашения в бесплатные прокрутки.
+      // Флаг free_roulette_seeded не даёт миграции повторно пополнять прокрутки после их использования.
+      await pool.query(`
+        UPDATE users
+        SET free_roulette_spins = GREATEST(COALESCE(free_roulette_spins, 0), COALESCE(referrals_count, 0)),
+            free_roulette_seeded = 1
+        WHERE COALESCE(free_roulette_seeded, 0) = 0
+      `);
+    }
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS last_broadcast_at TIMESTAMP DEFAULT NULL');
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS broadcast_opt_out INTEGER DEFAULT 0');
@@ -200,6 +227,10 @@ async function initDb() {
         ON users (last_active_at DESC);
       CREATE INDEX IF NOT EXISTS idx_users_broadcast
         ON users (broadcast_opt_out, last_active_at DESC);
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_free_roulette_user_created
+        ON free_roulette_history (user_id, created_at DESC)
     `);
 
     // Batch upsert items через unnest
@@ -288,7 +319,15 @@ async function registerUser(tgUser, referrerId = null) {
   if (!user) {
     if (referrerId && Number(referrerId) !== tgUser.id) {
       const refCheck = await pool.query('SELECT telegram_id FROM users WHERE telegram_id = $1', [referrerId]);
-      if (refCheck.rows.length > 0) successfulReferrer = referrerId;
+      if (refCheck.rows.length > 0) {
+        // Барьер против накрутки: ограничиваем, сколько новых рефералов засчитывается за сутки.
+        const maxPerDay = Math.max(1, Number(FREE_ROULETTE.MAX_REFERRALS_PER_DAY) || 50);
+        const dayRes = await pool.query(
+          'SELECT COUNT(*)::int AS count FROM users WHERE invited_by = $1 AND created_at >= CURRENT_DATE',
+          [referrerId]
+        );
+        if (Number(dayRes.rows[0]?.count || 0) < maxPerDay) successfulReferrer = referrerId;
+      }
     }
 
     const insertRes = await pool.query(`
@@ -299,8 +338,14 @@ async function registerUser(tgUser, referrerId = null) {
     `, [tgUser.id, tgUser.username || null, tgUser.first_name || '', successfulReferrer, isPremium]);
 
     if (insertRes.rowCount && successfulReferrer) {
-      await pool.query('UPDATE users SET referrals_count = referrals_count + 1 WHERE telegram_id = $1', [successfulReferrer]);
-      await giveRandomStarterItem(successfulReferrer);
+      await pool.query(
+        `UPDATE users
+         SET referrals_count = referrals_count + 1,
+             free_roulette_spins = COALESCE(free_roulette_spins, 0) + $2
+         WHERE telegram_id = $1`,
+        [successfulReferrer, Number(FREE_ROULETTE.REFERRAL_SPINS_PER_FRIEND) || 1]
+      );
+      if (FREE_ROULETTE.REFERRAL_STARTER_ITEM !== false) await giveRandomStarterItem(successfulReferrer);
     } else if (!insertRes.rowCount) {
       successfulReferrer = null;
     }
@@ -611,6 +656,190 @@ async function getReferralProgress(userId) {
     regularRemaining: Math.max(0, 10 - regular),
     canWithdraw: premium >= 5 || regular >= 10,
   };
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// FREE REFERRAL ROULETTE
+// ═══════════════════════════════════════════════════════════════════════
+
+function validateFreeRouletteConfig() {
+  const rewards = Array.isArray(FREE_ROULETTE.REWARDS) ? FREE_ROULETTE.REWARDS : [];
+  if (!rewards.length) throw new Error('free_roulette_config_empty');
+
+  const names = new Set();
+  let sum = 0;
+  for (const reward of rewards) {
+    const name = String(reward?.item_name || '').trim();
+    const chance = Number(reward?.chance);
+    if (!name || !Number.isFinite(chance) || chance <= 0) throw new Error('free_roulette_config_invalid');
+    if (names.has(name)) throw new Error('free_roulette_config_duplicate');
+    names.add(name);
+    sum += chance;
+  }
+
+  if (Math.abs(sum - 100) > 0.0001) throw new Error('free_roulette_config_sum');
+  return rewards.map((r) => ({ item_name: String(r.item_name).trim(), chance: Number(r.chance) }));
+}
+
+async function getFreeRouletteRewards(client = pool) {
+  const configRewards = validateFreeRouletteConfig();
+  const names = configRewards.map((r) => r.item_name);
+  const res = await client.query(
+    `SELECT id, name, category, price_stars, image_url\n     FROM items\n     WHERE name = ANY($1::text[])`,
+    [names]
+  );
+  const byName = new Map(res.rows.map((row) => [row.name, row]));
+
+  return configRewards.map((reward) => {
+    const item = byName.get(reward.item_name);
+    if (!item) throw new Error(`free_roulette_item_missing:${reward.item_name}`);
+    return { ...item, chance: reward.chance };
+  });
+}
+
+async function getFreeRouletteStatus(userId) {
+  const res = await pool.query(
+    `SELECT referrals_count, free_roulette_spins\n     FROM users WHERE telegram_id = $1`,
+    [userId]
+  );
+  const row = res.rows[0] || {};
+  return {
+    referralsCount: Number(row.referrals_count) || 0,
+    spins: Number(row.free_roulette_spins) || 0,
+  };
+}
+
+function pickFreeRouletteReward(rewards) {
+  const roll = crypto.randomInt(0, 1_000_000) / 1_000_000;
+  let cursor = 0;
+  for (const reward of rewards) {
+    cursor += reward.chance / 100;
+    if (roll < cursor) return { reward, roll };
+  }
+  return { reward: rewards[rewards.length - 1], roll: 0.999999 };
+}
+
+async function spinFreeRoulette(userId, operationId) {
+  const opKey = String(operationId || '').trim().slice(0, 100);
+  if (!opKey) return { error: 'missing_operation_id' };
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const existing = await client.query(`
+      SELECT h.id, h.reward_chance, h.roll, h.created_at,
+             i.id AS item_id, i.name, i.category, i.price_stars, i.image_url
+      FROM free_roulette_history h
+      JOIN items i ON i.id = h.reward_item_id
+      WHERE h.user_id = $1 AND h.operation_id = $2
+      LIMIT 1
+    `, [userId, opKey]);
+
+    if (existing.rowCount) {
+      const row = existing.rows[0];
+      const status = await client.query(
+        'SELECT free_roulette_spins FROM users WHERE telegram_id = $1',
+        [userId]
+      );
+      await client.query('COMMIT');
+      return {
+        ok: true,
+        replay: true,
+        reward: {
+          id: row.item_id,
+          name: row.name,
+          category: row.category,
+          price_stars: row.price_stars,
+          image_url: row.image_url,
+          chance: Number(row.reward_chance),
+        },
+        spinsRemaining: Number(status.rows[0]?.free_roulette_spins) || 0,
+      };
+    }
+
+    const userRes = await client.query(
+      `SELECT free_roulette_spins, pre_demo_balance, lucky_mode\n       FROM users WHERE telegram_id = $1 FOR UPDATE`,
+      [userId]
+    );
+    if (!userRes.rowCount) {
+      await client.query('ROLLBACK');
+      return { error: 'user_not_found' };
+    }
+
+    const spins = Number(userRes.rows[0].free_roulette_spins) || 0;
+    if (spins < 1) {
+      await client.query('ROLLBACK');
+      return { error: 'no_spins' };
+    }
+
+    let rewards;
+    try {
+      rewards = await getFreeRouletteRewards(client);
+    } catch (configErr) {
+      await client.query('ROLLBACK');
+      console.error('Ошибка конфигурации бесплатной рулетки:', configErr.message);
+      return { error: 'roulette_unavailable' };
+    }
+
+    const { reward, roll } = pickFreeRouletteReward(rewards);
+    const isDemo = userRes.rows[0].pre_demo_balance != null || Number(userRes.rows[0].lucky_mode) === 1 ? 1 : 0;
+
+    const spinRes = await client.query(`
+      UPDATE users
+      SET free_roulette_spins = free_roulette_spins - 1
+      WHERE telegram_id = $1 AND free_roulette_spins > 0
+      RETURNING free_roulette_spins
+    `, [userId]);
+
+    if (!spinRes.rowCount) {
+      await client.query('ROLLBACK');
+      return { error: 'no_spins' };
+    }
+
+    await client.query(
+      'INSERT INTO user_inventory (user_id, item_id, is_demo) VALUES ($1, $2, $3)',
+      [userId, reward.id, isDemo]
+    );
+
+    await client.query(`
+      INSERT INTO free_roulette_history
+        (user_id, operation_id, reward_item_id, reward_chance, roll, source)
+      VALUES ($1, $2, $3, $4, $5, 'referral')
+    `, [userId, opKey, reward.id, reward.chance, roll]);
+
+    await client.query('COMMIT');
+    return {
+      ok: true,
+      replay: false,
+      reward,
+      spinsRemaining: Number(spinRes.rows[0].free_roulette_spins) || 0,
+    };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    if (err?.code === '23505') {
+      const retry = await pool.query(`
+        SELECT h.reward_chance, h.id, i.id AS item_id, i.name, i.category, i.price_stars, i.image_url
+        FROM free_roulette_history h
+        JOIN items i ON i.id = h.reward_item_id
+        WHERE h.user_id = $1 AND h.operation_id = $2
+        LIMIT 1
+      `, [userId, opKey]);
+      if (retry.rowCount) {
+        const status = await getFreeRouletteStatus(userId);
+        const row = retry.rows[0];
+        return {
+          ok: true,
+          replay: true,
+          reward: { id: row.item_id, name: row.name, category: row.category, price_stars: row.price_stars, image_url: row.image_url, chance: Number(row.reward_chance) },
+          spinsRemaining: status.spins,
+        };
+      }
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1501,6 +1730,7 @@ async function getRandomActiveDrop() {
 }
 
 module.exports = {
+  getFreeRouletteStatus, getFreeRouletteRewards, spinFreeRoulette,
   registerUser, getUser, calculateTier, claimSubscriptionItem, getUserInventoryCount,
   getReferralProgress, setTutorialCompleted, getUserDemoItemCount, ensureUserExists,
   getCatalogItems, getItemById, getUserInventory, addInventoryItem,

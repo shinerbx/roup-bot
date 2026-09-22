@@ -5,7 +5,7 @@ import robuxIcon from '../public/robux.png';
 
 // Значение-заглушка для первого рендера. Сервер отдаёт актуальный курс после загрузки.
 const STARS_TO_ROBUX_RATE = 0.2;
-const COMMISSION_FALLBACK = 25;
+const COMMISSION_FALLBACK = 20;
 const GAME_PASS_MARKUP_FALLBACK = 43;
 const MIN_STARS_FALLBACK = 100;
 const MAX_STARS_FALLBACK = 100000;
