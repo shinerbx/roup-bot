@@ -90,6 +90,8 @@ async function initDb() {
         lucky_mode INTEGER DEFAULT 0,
         free_roulette_spins INTEGER DEFAULT 0,
         free_roulette_seeded INTEGER DEFAULT 0,
+        last_upgrade_date DATE DEFAULT NULL,
+        daily_welcome_upgrades_remaining SMALLINT DEFAULT 0,
         last_active_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         last_broadcast_at TIMESTAMP DEFAULT NULL,
         broadcast_opt_out INTEGER DEFAULT 0,
@@ -179,9 +181,9 @@ async function initDb() {
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS cheap_upgrades_count INTEGER DEFAULT 0');
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS free_roulette_spins INTEGER DEFAULT 0');
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS free_roulette_seeded INTEGER DEFAULT 0');
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS last_upgrade_date DATE DEFAULT NULL');
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_welcome_upgrades_remaining SMALLINT DEFAULT 0');
     if (FREE_ROULETTE.SEED_SPINS_FROM_EXISTING_REFERRALS) {
-      // Однократно переносим уже накопленные приглашения в бесплатные прокрутки.
-      // Флаг free_roulette_seeded не даёт миграции повторно пополнять прокрутки после их использования.
       await pool.query(`
         UPDATE users
         SET free_roulette_spins = GREATEST(COALESCE(free_roulette_spins, 0), COALESCE(referrals_count, 0)),
@@ -206,8 +208,6 @@ async function initDb() {
     await pool.query("ALTER TABLE operation_results ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
     await pool.query("ALTER TABLE user_inventory ADD COLUMN IF NOT EXISTS is_demo INTEGER DEFAULT 0");
 
-    // Индексы создаём ПОСЛЕ миграций. Это важно для старых БД: иначе индекс
-    // на ещё не существующую колонку мог остановить initDb до выполнения ALTER TABLE.
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_inventory_user_created
         ON user_inventory (user_id, created_at DESC);
@@ -233,7 +233,6 @@ async function initDb() {
         ON free_roulette_history (user_id, created_at DESC)
     `);
 
-    // Batch upsert items через unnest
     if (catalogItems.length) {
       const names = catalogItems.map((i) => i.name);
       const cats = catalogItems.map((i) => i.category);
@@ -250,7 +249,6 @@ async function initDb() {
       );
     }
 
-    // Прогрев live-кэша — с дедупликацией подряд идущих user_id
     try {
       const warm = await pool.query(`
         WITH ranked AS (
@@ -320,7 +318,6 @@ async function registerUser(tgUser, referrerId = null) {
     if (referrerId && Number(referrerId) !== tgUser.id) {
       const refCheck = await pool.query('SELECT telegram_id FROM users WHERE telegram_id = $1', [referrerId]);
       if (refCheck.rows.length > 0) {
-        // Барьер против накрутки: ограничиваем, сколько новых рефералов засчитывается за сутки.
         const maxPerDay = Math.max(1, Number(FREE_ROULETTE.MAX_REFERRALS_PER_DAY) || 50);
         const dayRes = await pool.query(
           'SELECT COUNT(*)::int AS count FROM users WHERE invited_by = $1 AND created_at >= CURRENT_DATE',
@@ -681,15 +678,39 @@ function validateFreeRouletteConfig() {
   return rewards.map((r) => ({ item_name: String(r.item_name).trim(), chance: Number(r.chance) }));
 }
 
+// ВИЗУАЛЬНЫЕ шансы — то, что отдаём клиенту в /free-roulette/config.
 async function getFreeRouletteRewards(client = pool) {
   const configRewards = validateFreeRouletteConfig();
   const names = configRewards.map((r) => r.item_name);
   const res = await client.query(
-    `SELECT id, name, category, price_stars, image_url\n     FROM items\n     WHERE name = ANY($1::text[])`,
+    `SELECT id, name, category, price_stars, image_url
+     FROM items
+     WHERE name = ANY($1::text[])`,
     [names]
   );
   const byName = new Map(res.rows.map((row) => [row.name, row]));
+  const visual = Array.isArray(FREE_ROULETTE.VISUAL_REWARDS) ? FREE_ROULETTE.VISUAL_REWARDS : null;
+  const visualByName = visual ? new Map(visual.map((r) => [r.item_name, Number(r.chance)])) : null;
 
+  return configRewards.map((reward) => {
+    const item = byName.get(reward.item_name);
+    if (!item) throw new Error(`free_roulette_item_missing:${reward.item_name}`);
+    const chance = visualByName ? (visualByName.get(reward.item_name) ?? reward.chance) : reward.chance;
+    return { ...item, chance };
+  });
+}
+
+// РЕАЛЬНЫЕ шансы — только для серверного розыгрыша внутри spinFreeRoulette.
+async function getFreeRouletteRealRewards(client = pool) {
+  const configRewards = validateFreeRouletteConfig();
+  const names = configRewards.map((r) => r.item_name);
+  const res = await client.query(
+    `SELECT id, name, category, price_stars, image_url
+     FROM items
+     WHERE name = ANY($1::text[])`,
+    [names]
+  );
+  const byName = new Map(res.rows.map((row) => [row.name, row]));
   return configRewards.map((reward) => {
     const item = byName.get(reward.item_name);
     if (!item) throw new Error(`free_roulette_item_missing:${reward.item_name}`);
@@ -699,7 +720,8 @@ async function getFreeRouletteRewards(client = pool) {
 
 async function getFreeRouletteStatus(userId) {
   const res = await pool.query(
-    `SELECT referrals_count, free_roulette_spins\n     FROM users WHERE telegram_id = $1`,
+    `SELECT referrals_count, free_roulette_spins
+     FROM users WHERE telegram_id = $1`,
     [userId]
   );
   const row = res.rows[0] || {};
@@ -717,6 +739,22 @@ function pickFreeRouletteReward(rewards) {
     if (roll < cursor) return { reward, roll };
   }
   return { reward: rewards[rewards.length - 1], roll: 0.999999 };
+}
+
+// Публичная (клиентская) версия награды: chance подменяется на визуальный.
+function publicReward(row) {
+  const visual = Array.isArray(FREE_ROULETTE.VISUAL_REWARDS) ? FREE_ROULETTE.VISUAL_REWARDS : null;
+  const visualByName = visual ? new Map(visual.map((r) => [r.item_name, Number(r.chance)])) : null;
+  const realChance = Number(row.reward_chance ?? row.chance ?? 0);
+  const chance = visualByName ? (visualByName.get(row.name) ?? realChance) : realChance;
+  return {
+    id: row.item_id ?? row.id,
+    name: row.name,
+    category: row.category,
+    price_stars: row.price_stars,
+    image_url: row.image_url,
+    chance,
+  };
 }
 
 async function spinFreeRoulette(userId, operationId) {
@@ -746,20 +784,14 @@ async function spinFreeRoulette(userId, operationId) {
       return {
         ok: true,
         replay: true,
-        reward: {
-          id: row.item_id,
-          name: row.name,
-          category: row.category,
-          price_stars: row.price_stars,
-          image_url: row.image_url,
-          chance: Number(row.reward_chance),
-        },
+        reward: publicReward(row),
         spinsRemaining: Number(status.rows[0]?.free_roulette_spins) || 0,
       };
     }
 
     const userRes = await client.query(
-      `SELECT free_roulette_spins, pre_demo_balance, lucky_mode\n       FROM users WHERE telegram_id = $1 FOR UPDATE`,
+      `SELECT free_roulette_spins, pre_demo_balance, lucky_mode
+       FROM users WHERE telegram_id = $1 FOR UPDATE`,
       [userId]
     );
     if (!userRes.rowCount) {
@@ -773,9 +805,10 @@ async function spinFreeRoulette(userId, operationId) {
       return { error: 'no_spins' };
     }
 
+    // Розыгрыш идёт по РЕАЛЬНЫМ шансам.
     let rewards;
     try {
-      rewards = await getFreeRouletteRewards(client);
+      rewards = await getFreeRouletteRealRewards(client);
     } catch (configErr) {
       await client.query('ROLLBACK');
       console.error('Ошибка конфигурации бесплатной рулетки:', configErr.message);
@@ -812,7 +845,7 @@ async function spinFreeRoulette(userId, operationId) {
     return {
       ok: true,
       replay: false,
-      reward,
+      reward: publicReward({ ...reward, reward_chance: reward.chance }),
       spinsRemaining: Number(spinRes.rows[0].free_roulette_spins) || 0,
     };
   } catch (err) {
@@ -827,11 +860,10 @@ async function spinFreeRoulette(userId, operationId) {
       `, [userId, opKey]);
       if (retry.rowCount) {
         const status = await getFreeRouletteStatus(userId);
-        const row = retry.rows[0];
         return {
           ok: true,
           replay: true,
-          reward: { id: row.item_id, name: row.name, category: row.category, price_stars: row.price_stars, image_url: row.image_url, chance: Number(row.reward_chance) },
+          reward: publicReward(retry.rows[0]),
           spinsRemaining: status.spins,
         };
       }
@@ -851,7 +883,6 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
   try {
     await client.query('BEGIN');
 
-    // Идемпотентность по operationId
     if (operationId) {
       const opKey = String(operationId).slice(0, 100);
       const opRes = await client.query(`
@@ -874,22 +905,53 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
       }
     }
 
+    // Блокируем строку пользователя: FOR UPDATE сериализует параллельные
+    // апгрейды одного игрока, что исключает гонки по welcome-счётчику.
     const userRow = await client.query(
-      'SELECT lucky_mode, pre_demo_balance, first_name, telegram_id, cheap_upgrades_count FROM users WHERE telegram_id = $1 FOR UPDATE',
+      `SELECT lucky_mode, pre_demo_balance, first_name, telegram_id,
+              cheap_upgrades_count, last_upgrade_date,
+              daily_welcome_upgrades_remaining
+       FROM users WHERE telegram_id = $1 FOR UPDATE`,
       [userId]
     );
     if (!userRow.rowCount) {
       await client.query('ROLLBACK');
       return { error: 'user_not_found' };
     }
-    const luckyMode = Number(userRow.rows[0].lucky_mode) === 1;
-    const demoActive = userRow.rows[0].pre_demo_balance != null || luckyMode;
-    const displayName = pickDisplayName(userRow.rows[0]);
-    const cheapUpgradesCount = Number(userRow.rows[0].cheap_upgrades_count) || 0;
+    const userRec = userRow.rows[0];
+    const luckyMode = Number(userRec.lucky_mode) === 1;
+    const demoActive = userRec.pre_demo_balance != null || luckyMode;
+    const displayName = pickDisplayName(userRec);
+    const cheapUpgradesCount = Number(userRec.cheap_upgrades_count) || 0;
 
-    // FOR UPDATE OF ui — защита от дабл-тапа:
-    // параллельный запрос на тот же inventoryItemId встанет в очередь
-    // и после первого коммита увидит 0 строк → item_not_owned
+    // ── Daily-welcome: только UTC-дата, ID из БД, всё внутри транзакции ──
+    const todayUtc = new Date().toISOString().slice(0, 10);
+    const lastUtc = userRec.last_upgrade_date
+      ? new Date(userRec.last_upgrade_date).toISOString().slice(0, 10)
+      : null;
+
+    let welcomeRemaining = Number(userRec.daily_welcome_upgrades_remaining) || 0;
+    let isDailyWelcome = false;
+    let welcomeJustOpened = false;
+
+    if (lastUtc !== todayUtc) {
+      const wcfg = UPGRADE.DAILY_WELCOME || {};
+      const min = Math.max(1, Number(wcfg.MIN_SUCCESS_COUNT) || 2);
+      const max = Math.max(min, Number(wcfg.MAX_SUCCESS_COUNT) || 3);
+      welcomeRemaining = min + Math.floor(Math.random() * (max - min + 1));
+      isDailyWelcome = true;
+      welcomeJustOpened = true;
+      await client.query(
+        `UPDATE users
+           SET last_upgrade_date = $1,
+               daily_welcome_upgrades_remaining = $2
+         WHERE telegram_id = $3`,
+        [todayUtc, welcomeRemaining, userId]
+      );
+    } else if (welcomeRemaining > 0) {
+      isDailyWelcome = true;
+    }
+
     const ownedRes = await client.query(`
       SELECT ui.id, ui.is_demo, i.id AS item_id, i.name, i.price_stars
       FROM user_inventory ui
@@ -941,12 +1003,13 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
       { id: sourceItem.item_id, name: sourceItem.name, price_stars: sourceItem.price_stars },
       targetItem,
       safeMultiplier,
-      { luckyMode, cheapUpgradesCount }
+      { luckyMode, cheapUpgradesCount, isDailyWelcome }
     );
 
-    console.log('[upgrade] u=%s lucky=%s cheap=%s base=%s final=%s roll=%s ok=%s disp=%s ang=%s',
-      userId, luckyMode, decision.cheapPhase || '-', decision._realBase, decision._realFinal,
-      decision._roll, decision.success, decision.chance, decision.landingAngle);
+    console.log('[upgrade] u=%s lucky=%s cheap=%s welcome=%s rem=%s base=%s final=%s roll=%s ok=%s disp=%s ang=%s',
+      userId, luckyMode, decision.cheapPhase || '-', isDailyWelcome, welcomeRemaining,
+      decision._realBase, decision._realFinal, decision._roll, decision.success,
+      decision.chance, decision.landingAngle);
 
     await client.query('DELETE FROM user_inventory WHERE id = $1', [inventoryItemId]);
 
@@ -959,6 +1022,15 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
           [userId]
         );
       }
+    }
+
+    // Счётчик welcome расходуется только на фактический успех.
+    if (decision.success && isDailyWelcome && welcomeRemaining > 0) {
+      welcomeRemaining -= 1;
+      await client.query(
+        'UPDATE users SET daily_welcome_upgrades_remaining = $1 WHERE telegram_id = $2',
+        [welcomeRemaining, userId]
+      );
     }
 
     let resultItem = null;
@@ -982,6 +1054,8 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
       chance: decision.chance,
       multiplier: decision.multiplier,
       landingAngle: decision.landingAngle,
+      dailyWelcomeRemaining: welcomeRemaining,
+      welcomeJustOpened,
     };
 
     if (operationId) {
@@ -995,7 +1069,6 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
 
     await client.query('COMMIT');
 
-    // Live-feed push — вне транзакции
     if (decision.success && resultItem && !luckyMode) {
       pushDrop({
         id: `d_${userId}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -1315,9 +1388,6 @@ async function createWithdrawRequest(userId, { method, amountStars, contactUsern
       return { error: 'missing_operation_id' };
     }
 
-    // Сначала проверяем уже созданную заявку по operation_id.
-    // Это делает повторный клик/сетевой retry безопасным и не зависит
-    // от отдельной таблицы operation_results.
     const existingRes = await client.query(
       `SELECT id, user_id, method, amount_stars, amount_rub, commission_rub, payout_rub,
               contact_username, roblox_username, robux_gross, robux_commission,
@@ -1381,11 +1451,6 @@ async function createWithdrawRequest(userId, { method, amountStars, contactUsern
       return { error: 'demo_active' };
     }
 
-    // Ограничение вывода: не более одной новой заявки за 24 часа.
-    // Если предыдущая заявка уже рассмотрена (completed/rejected), новую
-    // можно создать сразу — пользователь не должен ждать окончания 24 часов.
-    // Проверка выполняется внутри транзакции после блокировки строки пользователя,
-    // поэтому два параллельных запроса одного пользователя не смогут обойти лимит.
     const cooldownHours = Math.max(1, Number(WITHDRAWAL.WITHDRAWAL_COOLDOWN_HOURS || 24));
     const recentRes = await client.query(
       `SELECT id, status, created_at
@@ -1409,7 +1474,6 @@ async function createWithdrawRequest(userId, { method, amountStars, contactUsern
       }
     }
 
-    // Дополнительная защита от нескольких одновременно открытых заявок.
     const openRes = await client.query(
       `SELECT COUNT(*)::int AS cnt
        FROM withdraw_requests
@@ -1431,9 +1495,6 @@ async function createWithdrawRequest(userId, { method, amountStars, contactUsern
       return { error: 'insufficient_balance' };
     }
 
-    // Формула вывода:
-    // gross = звёзды * курс
-    // payout = gross * 0.75 (25% комиссии сервиса)
     const grossRobux = Math.floor(amountStars * Number(WITHDRAWAL.STARS_TO_ROBUX_RATE));
     const commissionRobux = Math.floor(grossRobux * Number(WITHDRAWAL.COMMISSION_PERCENT) / 100);
     const payoutRobux = Math.max(0, grossRobux - commissionRobux);
@@ -1660,10 +1721,6 @@ async function getBroadcastOptOut(userId) {
   return Boolean(Number(res.rows[0]?.broadcast_opt_out));
 }
 
-// Возвращает пачку юзеров, которым уместно отправить рассылку.
-// Фильтр: неактивность в окне [MIN_HOURS, MAX_HOURS] назад, не под opt-out,
-// есть хоть один апгрейд, не превышены лимиты по частоте.
-// items_count — количество не-demo предметов в инвентаре (для шаблона inventory_miss).
 async function fetchBroadcastTargets(limit = 200) {
   const cfg = require('./house-config').BROADCAST || {};
   const minH = Number(cfg.INACTIVE_HOURS_MIN) || 3;
@@ -1709,8 +1766,6 @@ async function markBroadcastSent(userId) {
   `, [userId]);
 }
 
-// Случайный успешный апгрейд за последние 30 минут — для шаблона live_drop.
-// Возвращает null, если свежих побед нет.
 async function getRandomActiveDrop() {
   const res = await pool.query(`
     SELECT o.user_id, u.first_name,
@@ -1730,7 +1785,7 @@ async function getRandomActiveDrop() {
 }
 
 module.exports = {
-  getFreeRouletteStatus, getFreeRouletteRewards, spinFreeRoulette,
+  getFreeRouletteStatus, getFreeRouletteRewards, getFreeRouletteRealRewards, spinFreeRoulette,
   registerUser, getUser, calculateTier, claimSubscriptionItem, getUserInventoryCount,
   getReferralProgress, setTutorialCompleted, getUserDemoItemCount, ensureUserExists,
   getCatalogItems, getItemById, getUserInventory, addInventoryItem,
@@ -1740,7 +1795,6 @@ module.exports = {
   getUserWithdrawRequests, addWithdrawAdminNote, getWithdrawRequest,
   grantDemo, revokeDemo, getDemoStatus,
   getRecentDrops,
-  // BROADCAST
   touchUserActive, setBroadcastOptOut, getBroadcastOptOut,
   fetchBroadcastTargets, markBroadcastSent, getRandomActiveDrop,
 };
