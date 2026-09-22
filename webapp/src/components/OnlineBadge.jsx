@@ -26,7 +26,7 @@ export default function OnlineBadge() {
     <div className="online-badge" title="Сейчас в игре">
       <span className="online-badge__dot" />
       <span className="online-badge__value">{online.toLocaleString('ru-RU')}</span>
-      <span className="online-badge__label">online</span>
+      <span className="online-badge__label">онлайн</span>
     </div>
   );
 }

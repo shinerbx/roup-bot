@@ -3,7 +3,8 @@ import { api } from '../api.js';
 
 const POLL_VISIBLE_MS = 4000;
 const POLL_HIDDEN_MS = 20000;
-const MAX_BUFFER = 30;
+const MAX_BUFFER = 30; // steady-state length; trimmed only at a seamless wrap point (see below)
+const HARD_CAP = 120; // absolute safety ceiling if the strip never completes a lap for a long time
 const SCROLL_SPEED = 46; // px/sec
 
 function clip(s, max) {
@@ -44,6 +45,7 @@ export default function LiveFeedStrip() {
   const offsetRef = useRef(0);
   const aliveRef = useRef(true);
   const preloadedRef = useRef(new Set());
+  const pendingTrimRef = useRef(false);
 
   useEffect(() => {
     aliveRef.current = true;
@@ -77,9 +79,17 @@ export default function LiveFeedStrip() {
         }
       }
 
-      // Кэпы: буфер и seen не растут бесконечно
-      if (bufferRef.current.length > MAX_BUFFER) {
+      // Обрезаем буфер СРАЗУ только если он разросся далеко за пределы разумного
+      // (аварийный потолок) — такой обрыв редкий и лучше, чем неограниченная память.
+      // В обычном случае (перешли MAX_BUFFER) просто отмечаем флагом: лишние карточки
+      // уберутся в rAF-цикле ровно в момент, когда лента завершит круг и вернётся
+      // к началу — тогда смена состава карточек происходит там, где её всё равно не видно,
+      // а не рывком посреди прокрутки одной из уже показанных карточек.
+      if (bufferRef.current.length > HARD_CAP) {
         bufferRef.current = bufferRef.current.slice(-MAX_BUFFER);
+        pendingTrimRef.current = false;
+      } else if (bufferRef.current.length > MAX_BUFFER) {
+        pendingTrimRef.current = true;
       }
       if (seenRef.current.size > 2000) {
         // чистим seen до последних 500 id из буфера — старые всё равно не вернутся
@@ -140,8 +150,20 @@ export default function LiveFeedStrip() {
         const half = el.scrollWidth / 2;
         if (half > 80) {
           offsetRef.current += SCROLL_SPEED * dt;
-          while (offsetRef.current >= half) offsetRef.current -= half;
+          let wrapped = false;
+          while (offsetRef.current >= half) {
+            offsetRef.current -= half;
+            wrapped = true;
+          }
           el.style.transform = `translate3d(${-offsetRef.current}px, 0, 0)`;
+
+          // Именно здесь, на стыке круга, а не в момент прихода новых данных —
+          // единственное место, где можно поменять состав карточек без видимого скачка.
+          if (wrapped && pendingTrimRef.current && bufferRef.current.length > MAX_BUFFER) {
+            pendingTrimRef.current = false;
+            bufferRef.current = bufferRef.current.slice(-MAX_BUFFER);
+            setItems(bufferRef.current.slice());
+          }
         }
       }
 

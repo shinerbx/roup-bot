@@ -1,33 +1,66 @@
+import { useMemo, useState } from 'react';
+import { getTelegramUser } from '../telegram.js';
+
+// Аватар Telegram (initDataUnsafe.user.photo_url) не всегда доступен — приходит не на
+// всех платформах/клиентах и не всегда успешно грузится. Поэтому всегда держим наготове
+// «фирменный» вариант — инициал на градиенте — и переключаемся на него при любой ошибке
+// загрузки, а не только когда URL отсутствует.
+function ProfileAvatar({ name, photoUrl }) {
+  const [failed, setFailed] = useState(false);
+  const initial = useMemo(() => (name || '').trim().charAt(0).toUpperCase() || '•', [name]);
+
+  return (
+    <span className="profile-avatar">
+      {photoUrl && !failed ? (
+        <img
+          className="profile-avatar__img"
+          src={photoUrl}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <span className="profile-avatar__fallback" aria-hidden="true">{initial}</span>
+      )}
+    </span>
+  );
+}
+
 export default function ProfileTab({ profile, loading, onOpenWithdrawRequests }) {
   if (loading || !profile) {
     return <div className="skeleton" style={{ height: 220 }} />;
   }
 
+  const tgUser = getTelegramUser();
+  const displayName = profile.first_name || tgUser?.first_name || 'Игрок';
+
   return (
     <>
-      <div className="balance-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
-        <p className="hero__subtitle" style={{ marginBottom: 10 }}>
-          {profile.first_name} {profile.username ? `· @${profile.username}` : ''}
-        </p>
-
-        <div className="stat-row">
-          <span className="stat-row__label">Уровень</span>
-          <span className="stat-row__value">{profile.tier}</span>
+      <div className="profile-header">
+        <ProfileAvatar name={displayName} photoUrl={tgUser?.photo_url} />
+        <div className="profile-header__info">
+          <strong className="profile-header__name">{displayName}</strong>
+          {profile.username && <span className="profile-header__username">@{profile.username}</span>}
         </div>
-        <div className="stat-row">
-          <span className="stat-row__label">Предметов в инвентаре</span>
-          <span className="stat-row__value">{profile.items_count}</span>
-        </div>
-        <div className="stat-row">
-          <span className="stat-row__label">Приглашено друзей</span>
-          <span className="stat-row__value">{profile.referrals_count}</span>
-        </div>
-        <div className="stat-row">
-          <span className="stat-row__label">Апгрейдов</span>
-          <span className="stat-row__value">{profile.upgrades_count}</span>
-        </div>
+        <span className="profile-tier-chip">{profile.tier}</span>
       </div>
 
+      <div className="profile-stats roulette-stats">
+        <div>
+          <span>Предметов</span>
+          <b>{profile.items_count}</b>
+        </div>
+        <div>
+          <span>Друзей</span>
+          <b>{profile.referrals_count}</b>
+        </div>
+        <div>
+          <span>Апгрейдов</span>
+          <b>{profile.upgrades_count}</b>
+        </div>
+      </div>
 
       <button
         type="button"

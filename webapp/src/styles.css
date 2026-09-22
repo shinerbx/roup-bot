@@ -4977,17 +4977,35 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .online-badge__label { color: var(--text-faint); letter-spacing: 0.06em; }
 
 /* Live strip: material only. The track's JS-driven transform + mask are untouched. */
+/* Amber glass, on purpose different from the crimson panels around it — this
+   is the one banner on the page meant to grab the eye first. */
 .live-strip {
+  position: relative;
+  isolation: isolate;
   border-radius: 20px;
-  background: var(--glass-sheen), var(--glass-fill);
-  border: 1px solid var(--glass-rim);
-  box-shadow: inset 0 1px 0 var(--glass-hi), 0 14px 28px -20px var(--glass-shadow);
+  background:
+    radial-gradient(120% 140% at 0% 0%, rgba(255, 200, 60, 0.16), transparent 60%),
+    var(--glass-sheen),
+    rgba(232, 184, 74, 0.10);
+  border: 1px solid rgba(232, 184, 74, 0.38);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 226, 150, 0.3),
+    0 0 0 1px rgba(232, 184, 74, 0.08),
+    0 14px 30px -18px rgba(232, 184, 74, 0.35);
 }
-.live-strip__label { letter-spacing: 0.08em; }
+.live-strip__dot {
+  background: var(--gold);
+  box-shadow: 0 0 10px var(--gold);
+}
+.live-strip__label {
+  letter-spacing: 0.08em;
+  color: var(--gold-ink);
+  font-weight: 900;
+}
 .live-strip__card {
   border-radius: 14px;
-  background: var(--glass-fill-2);
-  border: 1px solid var(--glass-rim);
+  background: rgba(232, 184, 74, 0.07);
+  border: 1px solid rgba(232, 184, 74, 0.16);
   box-shadow: inset 0 1px 0 var(--glass-hi);
 }
 .live-strip__img { filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.35)); }
@@ -5228,6 +5246,87 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 }
 .balance-card { border-radius: 26px; }
 
+/* ---------- Profile header: avatar + name + tier ---------- */
+
+.profile-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 26px;
+}
+
+.profile-avatar {
+  position: relative;
+  flex: none;
+  width: 60px;
+  height: 60px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  overflow: hidden;
+  isolation: isolate;
+  background: var(--grad-brand);
+  box-shadow:
+    0 0 0 2px var(--app-bg),
+    0 0 0 3.5px rgba(239, 59, 79, 0.45),
+    0 10px 22px -10px rgba(239, 59, 79, 0.55);
+  transform: translateZ(0);
+}
+.profile-avatar__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  background: transparent;
+}
+.profile-avatar__fallback {
+  font-family: 'Unbounded', sans-serif;
+  font-size: 22px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+.profile-header__info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.profile-header__name {
+  font-family: 'Unbounded', sans-serif;
+  font-size: 16px;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.profile-header__username {
+  font-size: 13px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-tier-chip {
+  flex: none;
+  padding: 6px 13px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  color: var(--gold-ink);
+  background: var(--glass-sheen), rgba(232, 184, 74, 0.16);
+  border: 1px solid rgba(232, 184, 74, 0.4);
+  box-shadow: inset 0 1px 0 var(--glass-hi);
+}
+
+.profile-stats.roulette-stats { margin-top: 2px; }
+
 .inventory-withdraw-btn {
   background: var(--glass-sheen), linear-gradient(135deg, rgba(232, 184, 74, 0.24), rgba(239, 59, 79, 0.16));
   border-color: rgba(232, 184, 74, 0.45);
@@ -5417,7 +5516,8 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .inventory-header { border-color: rgba(232, 184, 74, 0.3); }
 
 /* Crimson = identity / profile */
-.balance-card {
+.balance-card,
+.profile-header {
   background:
     radial-gradient(circle at 0% 0%, rgba(239, 59, 79, 0.22), transparent 62%),
     var(--glass-sheen),
