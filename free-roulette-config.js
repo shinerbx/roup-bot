@@ -25,26 +25,33 @@ module.exports = Object.freeze({
   }),
 
   // ── РЕАЛЬНЫЕ шансы (сервер) ────────────────────────────────────────
+  // Эти веса НЕ обязаны суммироваться в 100 — нормализуются на сервере.
+  // Дорогие предметы держим в районе 0.001–1%, чтобы они были почти
+  // недостижимы: 1 на 100 000 прокруток и реже.
+  // ── РЕАЛЬНЫЕ шансы (сервер) ────────────────────────────────────────
   // Именно эти вероятности используются при розыгрыше в spinFreeRoulette.
-  // На клиент они не отдаются.
+  // На клиент они не отдаются. Сумма не обязана быть 100 —
+  // нормализуется на сервере в validateFreeRouletteConfig.
   REWARDS: Object.freeze([
-    { item_name: 'Baseball Cap',    chance: 52 },
-    { item_name: 'Red Hair',        chance: 24 },
-    { item_name: 'Money Hat',       chance: 12 },
-    { item_name: 'Blue Coil',       chance: 7  },
-    { item_name: 'Doge Head',       chance: 4  },
-    { item_name: 'Blue Pumpkin',    chance: 1  },
+    { item_name: 'Baseball Cap',    chance: 50 },
+    { item_name: 'Red Hair',        chance: 30 },
+    { item_name: 'Black Wings',     chance: 1 },
+    { item_name: 'Blue Pumpkin',    chance: 0.003 },
+    { item_name: 'Red Head',        chance: 0.002 },
+    { item_name: 'Domino Hat',      chance: 0.001 },
   ]),
 
   // ── ВИЗУАЛЬНЫЕ шансы (клиент) ─────────────────────────────────────
-  // Уходят в /free-roulette/config и показываются игроку в таблице наград.
-  // Все сектора равные — создаётся видимость ~16.7% на каждый приз.
+  // Целые числа. Сумма ровно 100: 18 + 17 + 17 + 16 + 16 + 16 = 100.
+  // Узкий коридор 16–18%, без провалов — дешёвка не выделяется,
+  // дорогие не выглядят «выше остальных». Baseball Cap на пункт ниже
+  // Red Hair. Domino Hat — самый вероятный из дорогих, тихий топ колеса.
   VISUAL_REWARDS: Object.freeze([
-    { item_name: 'Baseball Cap',    chance: 16.67 },
-    { item_name: 'Red Hair',        chance: 16.67 },
-    { item_name: 'Money Hat',       chance: 16.67 },
-    { item_name: 'Blue Coil',       chance: 16.67 },
-    { item_name: 'Doge Head',       chance: 16.67 },
-    { item_name: 'Blue Pumpkin',    chance: 16.65 },
+    { item_name: 'Domino Hat',      chance: 18 },
+    { item_name: 'Red Hair',        chance: 17 },
+    { item_name: 'Black Wings',     chance: 17 },
+    { item_name: 'Blue Pumpkin',    chance: 16 },
+    { item_name: 'Red Head',        chance: 16 },
+    { item_name: 'Baseball Cap',    chance: 16 },
   ]),
 });
