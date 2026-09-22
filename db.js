@@ -726,6 +726,8 @@ function getVisualChanceMap() {
 }
 
 // ВИЗУАЛЬНЫЕ шансы — то, что отдаём клиенту в /free-roulette/config.
+// Сортируем по убыванию chance, чтобы таблица наград всегда шла
+// от самого вероятного к самому редкому.
 async function getFreeRouletteRewards(client = pool) {
   const configRewards = validateFreeRouletteConfig();
   const names = configRewards.map((r) => r.item_name);
@@ -738,12 +740,15 @@ async function getFreeRouletteRewards(client = pool) {
   const byName = new Map(res.rows.map((row) => [row.name, row]));
   const visualByName = getVisualChanceMap();
 
-  return configRewards.map((reward) => {
+  const out = configRewards.map((reward) => {
     const item = byName.get(reward.item_name);
     if (!item) throw new Error(`free_roulette_item_missing:${reward.item_name}`);
     const raw = visualByName ? (visualByName.get(reward.item_name) ?? Math.round(reward.chance)) : Math.round(reward.chance);
     return { ...item, chance: raw };
   });
+
+  out.sort((a, b) => b.chance - a.chance || a.id - b.id);
+  return out;
 }
 
 // РЕАЛЬНЫЕ шансы — только для серверного розыгрыша внутри spinFreeRoulette.
@@ -1813,7 +1818,7 @@ async function getRandomActiveDrop() {
     SELECT o.user_id, u.first_name,
            o.response->'item'->>'name' AS item_name,
            (o.response->'item'->>'price_stars')::int AS price,
-           (o.response->>'chance')::numeric AS chance
+           (o.response->>'>chance')::numeric AS chance
     FROM operation_results o
     JOIN users u ON u.telegram_id = o.user_id
     WHERE o.operation_type = 'upgrade'
