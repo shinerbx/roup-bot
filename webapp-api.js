@@ -80,19 +80,14 @@ setInterval(() => {
   if (removed > 0) console.log(`[online] cleanup removed ${removed}, left ${onlineMap.size}`);
 }, 60000).unref?.();
 
-// ── Симуляция онлайна: пик днём 70–90, вечер 40–60, ночь 10–25 ───────
-// Опорные точки кривой в часах суток; между ними — косинусная интерполяция.
-// Медленные волны дают живые колебания без рывков на 15-сек поллинге.
-// Жёсткий потолок 100.
-
 function _cosineInterp(t) { return 0.5 - 0.5 * Math.cos(Math.PI * t); }
 
 const _ONLINE_ANCHORS = [
-  { h: 3,  v: 0.00 },  // глубокая ночь
-  { h: 13, v: 1.00 },  // пик дня
-  { h: 19, v: 0.50 },  // вечер
-  { h: 23, v: 0.15 },  // поздний вечер → ночь
-  { h: 27, v: 0.00 },  // следующая ночь (wrap 3:00)
+  { h: 3,  v: 0.00 },
+  { h: 13, v: 1.00 },
+  { h: 19, v: 0.50 },
+  { h: 23, v: 0.15 },
+  { h: 27, v: 0.00 },
 ];
 
 function _levelAtHour(hour) {
@@ -110,7 +105,6 @@ function _levelAtHour(hour) {
 }
 
 function _rangeFromLevel(level) {
-  // 0.0 → [10,25]  ·  0.5 → [40,60]  ·  1.0 → [70,90]
   if (level <= 0.5) {
     const t = Math.max(0, Math.min(1, level / 0.5));
     return [10 + 30 * t, 25 + 35 * t];
@@ -167,6 +161,45 @@ setInterval(() => {
 }, 30000).unref?.();
 
 // ═══════════════════════════════════════════════════════════════════════
+// UPGRADE LOCK — per-user, защита от дабл-тапов и параллельных запросов
+// ═══════════════════════════════════════════════════════════════════════
+
+const upgradeLocks = new Set();
+const lastUpgradeAt = new Map();
+
+function upgradeLockMiddleware(req, res, next) {
+  const userId = req.tgUser?.id;
+  if (!userId) return next();
+
+  const now = Date.now();
+  const minInterval = Number(UPGRADE.MIN_INTERVAL_MS) || 800;
+  const last = lastUpgradeAt.get(userId) || 0;
+
+  if (upgradeLocks.has(userId)) {
+    return res.status(429).json({ error: 'upgrade_in_progress' });
+  }
+  if (now - last < minInterval) {
+    return res.status(429).json({ error: 'too_fast' });
+  }
+
+  upgradeLocks.add(userId);
+  lastUpgradeAt.set(userId, now);
+
+  const release = () => upgradeLocks.delete(userId);
+  res.on('finish', release);
+  res.on('close', release);
+
+  next();
+}
+
+setInterval(() => {
+  const cutoff = Date.now() - 60000;
+  for (const [id, ts] of lastUpgradeAt.entries()) {
+    if (ts < cutoff) lastUpgradeAt.delete(id);
+  }
+}, 60000).unref?.();
+
+// ═══════════════════════════════════════════════════════════════════════
 // FAKE DROPS — генератор имён + пул без повторов, перегенерация раз в минуту
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -213,8 +246,6 @@ let fakePoolCatalogVersion = '';
 
 function _pick(arr) { return arr[(Math.random() * arr.length) | 0]; }
 
-// Микс реальных имён (с фамилией/инициалом), латинских ников,
-// ников с цифрами — разный регистр, разные стили.
 function generateDisplayName() {
   const roll = Math.random();
 
@@ -469,7 +500,6 @@ function createWebappRouter(bot, botToken) {
     });
   });
 
-  // ── Live-feed: 2-секундный кэш, ETag 304, дедуп по user_id ────────
   router.get('/upgrade/feed', async (req, res) => {
     try {
       const now = Date.now();
@@ -486,7 +516,6 @@ function createWebappRouter(bot, botToken) {
           ...fake,
         ].sort((a, b) => (b.ts || 0) - (a.ts || 0));
 
-        // Дедуп: два подряд идущих не могут быть от одного userId
         const unique = [];
         let lastKey = null;
         for (const d of mixed) {
@@ -523,7 +552,7 @@ function createWebappRouter(bot, botToken) {
     res.json({ online });
   });
 
-  router.post('/upgrade', async (req, res) => {
+  router.post('/upgrade', upgradeLockMiddleware, async (req, res) => {
     try {
       const inventoryItemId = Number(req.body?.inventoryItemId);
       const targetItemId = Number(req.body?.targetItemId);
@@ -555,6 +584,8 @@ function createWebappRouter(bot, botToken) {
         expectedChance: result.expectedChance,
         multiplier: result.multiplier,
         landingAngle: result.landingAngle,
+        dailyWelcomeRemaining: result.dailyWelcomeRemaining,
+        welcomeJustOpened: result.welcomeJustOpened,
       });
     } catch (err) {
       console.error('Ошибка /api/upgrade:', err.message);
@@ -728,8 +759,6 @@ function createWebappRouter(bot, botToken) {
         try {
           await attachAdminMessage(result.requestId, adminMsgId);
         } catch (attachErr) {
-          // Заявка уже создана и баланс списан. Ошибка привязки Telegram-сообщения
-          // не должна превращать успешный вывод в HTTP 500.
           console.error('Не удалось сохранить admin_message_id:', {
             requestId: result.requestId,
             message: attachErr?.message,
