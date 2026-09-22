@@ -16,14 +16,14 @@ function shuffle(list) {
   return copy;
 }
 
-function buildReel(rewards, resultName, minCards = MIN_CARDS, targetIndex = TARGET_INDEX) {
+function buildReel(rewards, resultId, minCards = MIN_CARDS, targetIndex = TARGET_INDEX) {
   if (!rewards.length) return { items: [], targetIndex: 0 };
   const length = Math.max(minCards, targetIndex + 5);
   const pool = [];
   while (pool.length < length) pool.push(...shuffle(rewards));
   const items = pool.slice(0, length);
   const safeTarget = Math.min(targetIndex, items.length - 1);
-  const fallback = rewards.find((item) => item.name === resultName) || rewards[0];
+  const fallback = rewards.find((item) => item.id === resultId) || rewards[0];
   items[safeTarget] = fallback;
   return { items, targetIndex: safeTarget };
 }
@@ -65,7 +65,7 @@ export default function RouletteTab({ profile, onSpinSuccess, onSell, onToast })
     if (!rewards.length || reelItems.length) return;
     const built = buildReel(
       rewards,
-      rewards[0].name,
+      rewards[0].id,
       Number(config?.spin?.MIN_CARDS) || MIN_CARDS,
       Number(config?.spin?.TARGET_INDEX) || TARGET_INDEX
     );
@@ -94,7 +94,7 @@ export default function RouletteTab({ profile, onSpinSuccess, onSell, onToast })
 
       const built = buildReel(
         rewards,
-        response.reward.name,
+        response.reward.id,
         Number(config?.spin?.MIN_CARDS) || MIN_CARDS,
         Number(config?.spin?.TARGET_INDEX) || TARGET_INDEX
       );
@@ -126,7 +126,6 @@ export default function RouletteTab({ profile, onSpinSuccess, onSell, onToast })
     }
   }, [spinning, loading, rewards, spins, config, duration, onSpinSuccess, onToast]);
 
-  // «Выигрыш → баланс»: продаём выпавший предмет по обычной цене продажи через основной поток приложения.
   const sellPrize = useCallback(async () => {
     if (!result || selling || !onSell) return;
     setSelling(true);
