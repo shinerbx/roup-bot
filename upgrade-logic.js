@@ -46,8 +46,6 @@ function calculateRealChance(sourceItem, targetItem, multiplier = 1) {
   return applyRollNoise(base);
 }
 
-// Клиентский дисплей-шанс = честный ценовой ratio (s/t) без множителя.
-// Множитель влияет только на реальный (серверный) шанс, не на отображение.
 function calculateDisplayChance(sourceItem, targetItem) {
   if (!canUpgradeTo(sourceItem, targetItem)) return 0;
   const s = Number(sourceItem.price_stars);
@@ -58,7 +56,6 @@ function calculateDisplayChance(sourceItem, targetItem) {
   return clampChance(withEdge);
 }
 
-// Оставлено для обратной совместимости; не используется в новом resolver.
 function calculateExpectedChance(multiplier = 1) {
   const safeMult = Math.max(1, Number(multiplier) || 1);
   return Math.min(100, Math.max(MIN_CHANCE, 100 / safeMult));
@@ -72,16 +69,6 @@ function applyLucky(realChance, luckyMode) {
   return Math.min(cap, Number(realChance) * mult + flat);
 }
 
-/**
- * Угол приземления стрелки (0–360°), по часовой от верха.
- * Визуальный сектор выигрыша = displayChance × 3.6°.
- *
- * Проигрыш:
- *   1) С шансом BAIT_CHANCE — «байт-зона»: 2–9° от границы выигрышного сектора.
- *      Стрелка визуально почти попала, но не дотянула.
- *   2) Иначе — сглаженное распределение по всей зоне проигрыша.
- *      BIAS_POW > 1 слегка подтягивает остановки к границе, но без клина.
- */
 function pickLandingAngle(success, displayChance) {
   const zone = Math.max(0.5, clampChance(displayChance) * 3.6);
 
@@ -107,11 +94,9 @@ function pickLandingAngle(success, displayChance) {
   const biasPow = Number(cfg.BIAS_POW) || 1.4;
 
   if (baitChance > 0 && Math.random() < baitChance && baitMax > minGap) {
-    // Байт-зона: 2–9° от границы. Ощущение «чуть-чуть не дотянуло».
     gap = minGap + Math.random() * (baitMax - minGap);
     if (gap > maxGap) gap = maxGap;
   } else {
-    // Обычное распределение — по всей зоне проигрыша.
     const u = Math.random();
     const t = Math.pow(u, biasPow);
     gap = minGap + t * (maxGap - minGap);
@@ -138,10 +123,10 @@ function resolveUpgrade(sourceItem, targetItem, multiplier = 1, opts = {}) {
 
   const luckyMode = Boolean(opts?.luckyMode);
   const cheapCount = Number(opts?.cheapUpgradesCount) || 0;
+  const isDailyWelcome = Boolean(opts?.isDailyWelcome);
 
   let realBase = calculateRealChance(sourceItem, targetItem, safeMultiplier);
 
-  // ── Динамика дешёвых апгрейдов ────────────────────────────────────
   const cheap = UPGRADE.CHEAP || null;
   const sourcePrice = Number(sourceItem.price_stars);
   const isCheap = cheap
@@ -163,11 +148,33 @@ function resolveUpgrade(sourceItem, targetItem, multiplier = 1, opts = {}) {
     }
   }
 
+  // ── Daily-welcome override (первый апгрейд за сутки, UTC) ──────────
+  const welcome = UPGRADE.DAILY_WELCOME;
+  if (isDailyWelcome && welcome?.ENABLED && !luckyMode) {
+    const maxPrice = Number(welcome.MAX_PRICE_STARS) || 500;
+    if (Number.isFinite(sourcePrice) && sourcePrice < maxPrice) {
+      const lo = Number(welcome.WELCOME_SUCCESS_MIN) || 88;
+      const hi = Number(welcome.WELCOME_SUCCESS_MAX) || 98;
+      realBase = lo + Math.random() * (hi - lo);
+      cheapPhase = 'daily_welcome';
+    }
+  }
+
+  // ── CHEAP_BOOST — лёгкий буст для апгрейдов до 300–400 звёзд ───────
+  const boost = welcome?.CHEAP_BOOST;
+  if (!luckyMode && !isDailyWelcome && boost && isCheap) {
+    const maxPrice = Number(boost.MAX_PRICE_STARS) || 400;
+    if (sourcePrice <= maxPrice) {
+      const mult = Number(boost.MULTIPLIER) || 1.25;
+      const cap = Number(boost.MAX_CHANCE) || 65;
+      realBase = Math.min(cap, realBase * mult);
+    }
+  }
+
   const realFinal = applyLucky(realBase, luckyMode);
   const roll = crypto.randomInt(0, 1_000_000) / 10_000;
   const success = roll < realFinal;
 
-  // Единый источник для UI: честный ценовой ratio пары.
   const displayChance = calculateDisplayChance(sourceItem, targetItem);
   const landingAngle = pickLandingAngle(success, displayChance);
 
