@@ -659,6 +659,38 @@ async function getReferralProgress(userId) {
 // FREE REFERRAL ROULETTE
 // ═══════════════════════════════════════════════════════════════════════
 
+// Нормализует произвольные веса в проценты с суммой ровно 100.
+// Целые — по методу наибольших остатков, чтобы сумма никогда не «уползала».
+function normalizeChancesToIntegerPercent(list) {
+  if (!Array.isArray(list) || !list.length) return [];
+  const clean = [];
+  for (const r of list) {
+    const name = String(r?.item_name || '').trim();
+    const chance = Number(r?.chance);
+    if (!name || !Number.isFinite(chance) || chance <= 0) continue;
+    clean.push({ item_name: name, chance });
+  }
+  const total = clean.reduce((s, r) => s + r.chance, 0);
+  if (!(total > 0)) return [];
+  const exact = clean.map((r) => ({ item_name: r.item_name, value: (r.chance / total) * 100 }));
+  const floors = exact.map((e, i) => ({
+    idx: i,
+    item_name: e.item_name,
+    floor: Math.floor(e.value),
+    rem: e.value - Math.floor(e.value),
+  }));
+  let remaining = 100 - floors.reduce((s, f) => s + f.floor, 0);
+  const order = [...floors].sort((a, b) => b.rem - a.rem || a.idx - b.idx);
+  for (let i = 0; i < order.length && remaining > 0; i++) {
+    order[i].floor += 1;
+    remaining -= 1;
+  }
+  const byIdx = new Map(order.map((o) => [o.idx, o.floor]));
+  return exact.map((e, i) => ({ item_name: e.item_name, chance: byIdx.get(i) }));
+}
+
+// РЕАЛЬНЫЕ веса — нормализуются к 100, чтобы cursor в розыгрыше был корректным.
+// В конфиге можно писать любые числа, в т.ч. 0.001% — сумма не обязана быть 100.
 function validateFreeRouletteConfig() {
   const rewards = Array.isArray(FREE_ROULETTE.REWARDS) ? FREE_ROULETTE.REWARDS : [];
   if (!rewards.length) throw new Error('free_roulette_config_empty');
@@ -673,9 +705,24 @@ function validateFreeRouletteConfig() {
     names.add(name);
     sum += chance;
   }
+  if (!(sum > 0)) throw new Error('free_roulette_config_sum');
 
-  if (Math.abs(sum - 100) > 0.0001) throw new Error('free_roulette_config_sum');
-  return rewards.map((r) => ({ item_name: String(r.item_name).trim(), chance: Number(r.chance) }));
+  return rewards.map((r) => ({
+    item_name: String(r.item_name).trim(),
+    chance: (Number(r.chance) / sum) * 100,
+  }));
+}
+
+// ВИЗУАЛЬНЫЕ шансы — целые, сумма ровно 100.
+// В конфиге уже заданы как целые с суммой 100, но хелпер защищает от правок.
+function getVisualChanceMap() {
+  const visual = Array.isArray(FREE_ROULETTE.VISUAL_REWARDS) ? FREE_ROULETTE.VISUAL_REWARDS : null;
+  if (!visual || !visual.length) return null;
+  const normalized = normalizeChancesToIntegerPercent(visual);
+  if (!normalized.length) return null;
+  const map = new Map();
+  for (const r of normalized) map.set(r.item_name, r.chance);
+  return map;
 }
 
 // ВИЗУАЛЬНЫЕ шансы — то, что отдаём клиенту в /free-roulette/config.
@@ -689,14 +736,13 @@ async function getFreeRouletteRewards(client = pool) {
     [names]
   );
   const byName = new Map(res.rows.map((row) => [row.name, row]));
-  const visual = Array.isArray(FREE_ROULETTE.VISUAL_REWARDS) ? FREE_ROULETTE.VISUAL_REWARDS : null;
-  const visualByName = visual ? new Map(visual.map((r) => [r.item_name, Number(r.chance)])) : null;
+  const visualByName = getVisualChanceMap();
 
   return configRewards.map((reward) => {
     const item = byName.get(reward.item_name);
     if (!item) throw new Error(`free_roulette_item_missing:${reward.item_name}`);
-    const chance = visualByName ? (visualByName.get(reward.item_name) ?? reward.chance) : reward.chance;
-    return { ...item, chance };
+    const raw = visualByName ? (visualByName.get(reward.item_name) ?? Math.round(reward.chance)) : Math.round(reward.chance);
+    return { ...item, chance: raw };
   });
 }
 
@@ -741,19 +787,18 @@ function pickFreeRouletteReward(rewards) {
   return { reward: rewards[rewards.length - 1], roll: 0.999999 };
 }
 
-// Публичная (клиентская) версия награды: chance подменяется на визуальный.
+// Публичная (клиентская) версия награды: chance подменяется на визуальный (целый).
 function publicReward(row) {
-  const visual = Array.isArray(FREE_ROULETTE.VISUAL_REWARDS) ? FREE_ROULETTE.VISUAL_REWARDS : null;
-  const visualByName = visual ? new Map(visual.map((r) => [r.item_name, Number(r.chance)])) : null;
+  const visualByName = getVisualChanceMap();
   const realChance = Number(row.reward_chance ?? row.chance ?? 0);
-  const chance = visualByName ? (visualByName.get(row.name) ?? realChance) : realChance;
+  const raw = visualByName ? (visualByName.get(row.name) ?? Math.round(realChance)) : Math.round(realChance);
   return {
     id: row.item_id ?? row.id,
     name: row.name,
     category: row.category,
     price_stars: row.price_stars,
     image_url: row.image_url,
-    chance,
+    chance: raw,
   };
 }
 
@@ -905,8 +950,6 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
       }
     }
 
-    // Блокируем строку пользователя: FOR UPDATE сериализует параллельные
-    // апгрейды одного игрока, что исключает гонки по welcome-счётчику.
     const userRow = await client.query(
       `SELECT lucky_mode, pre_demo_balance, first_name, telegram_id,
               cheap_upgrades_count, last_upgrade_date,
@@ -1024,7 +1067,6 @@ async function upgradeItem(userId, inventoryItemId, targetItemId, multiplier = 1
       }
     }
 
-    // Счётчик welcome расходуется только на фактический успех.
     if (decision.success && isDailyWelcome && welcomeRemaining > 0) {
       welcomeRemaining -= 1;
       await client.query(
