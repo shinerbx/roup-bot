@@ -16,14 +16,10 @@ const HOUSE_CONFIG = Object.freeze({
     MAX_MULTIPLIER: 100,
     DEFAULT_MULTIPLIER: 1,
 
-    // Lucky — только для server-side demo-режима; клиент не задаёт эти значения.
     LUCKY_CHANCE_MULTIPLIER: 10,
     LUCKY_FLAT_BOOST: 50,
     LUCKY_MAX_CHANCE: 92,
 
-    // Динамика дешёвых апгрейдов (price_stars <= THRESHOLD).
-    // Первые HONEYMOON_COUNT успешных — почти гарантированы.
-    // После — резкое срезание шанса с потолком AFTER_MAX.
     CHEAP: {
       THRESHOLD: 500,
       HONEYMOON_COUNT: 2,
@@ -33,7 +29,23 @@ const HOUSE_CONFIG = Object.freeze({
       AFTER_MAX: 30,
     },
 
-    // Anti-flood
+    // Первый апгрейд за сутки (UTC) даёт серию из 2–3 почти гарантированных
+    // успехов на дешёвых предметах. Плюс лёгкий буст для всех апгрейдов
+    // с ценой источника ≤ CHEAP_BOOST.MAX_PRICE_STARS.
+    DAILY_WELCOME: {
+      ENABLED: true,
+      MIN_SUCCESS_COUNT: 2,
+      MAX_SUCCESS_COUNT: 3,
+      MAX_PRICE_STARS: 500,
+      WELCOME_SUCCESS_MIN: 88,
+      WELCOME_SUCCESS_MAX: 98,
+      CHEAP_BOOST: {
+        MAX_PRICE_STARS: 400,
+        MULTIPLIER: 1.25,
+        MAX_CHANCE: 65,
+      },
+    },
+
     PENDING_WINDOW_SEC: 15,
     MIN_INTERVAL_MS: 800,
   },
@@ -51,9 +63,6 @@ const HOUSE_CONFIG = Object.freeze({
       DURATION_MAX: 1.20,
       EXTRA_TURNS_MAX: 1,
     },
-    // Визуальный near-miss: проигрыш всегда за пределами зелёного сектора.
-    // BAIT_CHANCE — доля проигрышей, которые падают в байт-зону 2–9° от границы.
-    // Остальные раскиданы по всей зоне проигрыша с лёгким смещением к границе.
     NEAR_MISS: {
       MIN_GAP_DEG: 2,
       BAIT_CHANCE: 0.25,
@@ -62,12 +71,11 @@ const HOUSE_CONFIG = Object.freeze({
     },
   },
 
-  // Live-лента
   LIVE_FEED: {
     CACHE_SIZE: 50,
     FAKE_PER_REQUEST: [6, 14],
     ONLINE_WINDOW_SEC: 300,
-    ONLINE_MULTIPLIER: 100, // legacy, не используется — онлайн теперь симулируется
+    ONLINE_MULTIPLIER: 100,
   },
 
   USER_LIMITS: {
