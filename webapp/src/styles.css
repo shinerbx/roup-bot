@@ -5312,6 +5312,24 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   white-space: nowrap;
 }
 
+.profile-header__id {
+  align-self: flex-start;
+  margin-top: 1px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+  background: var(--ink-06);
+  border: 1px solid var(--ink-10);
+  transition: color 0.2s ease, background-color 0.2s ease, border-color 0.2s ease, transform 0.3s var(--ease-spring);
+}
+.profile-header__id:active { transform: scale(0.96); color: var(--gold-ink); }
+@media (hover: hover) and (pointer: fine) {
+  .profile-header__id:hover { color: var(--gold-ink); background: rgba(232, 184, 74, 0.1); border-color: rgba(232, 184, 74, 0.3); }
+}
+
 .profile-tier-chip {
   flex: none;
   padding: 6px 13px;
@@ -5966,7 +5984,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
    second "creep" segment (that stall + restart was the visible jerk). */
 @keyframes sp-needle-spin {
   from { transform: rotate(0deg); }
-  to { transform: rotate(1577deg); } /* 4 turns + 137° = centre of the 0.01% zone */
+  to { transform: rotate(1217deg); } /* 3 turns + 137° = centre of the 0.01% zone */
 }
 .sp-needle::after { /* pointer */
   content: '';
@@ -6706,4 +6724,91 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .roulette-reward-grid > .roulette-reward-card {
   content-visibility: auto;
   contain-intrinsic-size: 68px;
+}
+
+/* ==========================================================================
+   22. UPGRADE ARENA — polish pass (visual only)
+   Pure additions, appended last on purpose so they win the cascade without
+   touching a single existing rule above. Nothing here changes layout, sizes,
+   class names, JSX or timing — only material/depth on the idle/most-seen
+   state. No new elements, no JS, no extra paint work: everything is a static
+   gradient/shadow (the app's existing "faux glass" approach), so there is
+   zero added animation cost.
+   ========================================================================== */
+
+/* Arena card: bring it in line with the rest of the app's glass material
+   (the shared top sheen highlight) and give it a touch more depth. */
+.upgrade-stage-modern {
+  --glass-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0) 46%);
+  background:
+    var(--glass-sheen),
+    linear-gradient(160deg, rgba(40, 27, 34, 0.9), rgba(13, 8, 12, 0.84));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 0 70px rgba(239, 59, 79, 0.07),
+    inset 0 -46px 60px -48px rgba(239, 59, 79, 0.16),
+    0 30px 58px -26px rgba(0, 0, 0, 0.6);
+}
+
+/* Wheel: a soft glass bezel behind the ring, so the gauge reads as an
+   object sitting on the card rather than flat lines drawn on it. */
+.upgrade-gauge { position: relative; }
+.upgrade-gauge::before {
+  content: '';
+  position: absolute;
+  inset: -10px;
+  z-index: -1;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 38%, rgba(255, 255, 255, 0.07), transparent 60%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    inset 0 -10px 20px -12px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+/* Slots: the same shared sheen for material consistency, plus a touch more
+   lift so the artwork feels raised rather than pasted on. */
+.upgrade-slot {
+  background:
+    var(--glass-sheen),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.02));
+  box-shadow: inset 0 1px 0 var(--glass-hi), 0 10px 20px -16px rgba(0, 0, 0, 0.5);
+}
+.upgrade-slot__image-wrap {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06), 0 10px 18px -12px rgba(0, 0, 0, 0.5);
+}
+
+/* "+" tile: a deliberate dashed add-affordance instead of a plain filled
+   square, with a faint pulse-free glow so it doesn't look inert. */
+.upgrade-slot__plus {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border-style: dashed;
+  border-width: 1.5px;
+  background: radial-gradient(circle, rgba(232, 184, 74, 0.14), rgba(232, 184, 74, 0.04) 70%);
+  box-shadow: 0 0 0 4px rgba(232, 184, 74, 0.05);
+}
+
+/* Action button: a subtle glass highlight across the top third, matching
+   the sheen used on every other primary surface in the app. */
+.upgrade-action-button {
+  position: relative;
+  isolation: isolate;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0) 55%),
+    linear-gradient(180deg, #ffdb52, #ffbd00);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.65),
+    inset 0 -2px 0 rgba(160, 100, 0, 0.28),
+    0 14px 26px -10px rgba(255, 190, 0, 0.5);
+}
+.upgrade-action-button:disabled {
+  background: var(--ink-10);
+  box-shadow: inset 0 1px 0 var(--ink-10);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .upgrade-action-button:not(:disabled):hover { filter: brightness(1.05); }
+  .upgrade-slot-container:not(:disabled):hover .upgrade-slot__plus { border-color: rgba(232, 184, 74, 0.5); }
 }
