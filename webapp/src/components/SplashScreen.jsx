@@ -17,11 +17,11 @@ const SEQ = {
   wheelIn: 0.05, // wheel scales/fades in
   chance: 0.3, // "Шанс: 0.01%" types in
   spinStart: 0.35, // needle starts
-  spin: 1.9, // one continuous deceleration; visually settled ~0.3s before this ends
-  win: 2.2, // burst, ring, "Апгрейд зашел!" (just after the needle settles)
-  out: 3.0, // wheel fades out / scales down
-  logo: 3.12, // logo rises in
-  exit: 4.3, // splash starts to fade away
+  spin: 1.5, // one continuous deceleration; visually settled ~0.3s before this ends
+  win: 1.8, // burst, ring, "Апгрейд зашел!" (just after the needle settles)
+  out: 2.6, // wheel fades out / scales down
+  logo: 2.72, // logo rises in
+  exit: 3.9, // splash starts to fade away
   exitDur: 0.45
 };
 

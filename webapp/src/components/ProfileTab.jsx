@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { getTelegramUser } from '../telegram.js';
 
 // Аватар Telegram (initDataUnsafe.user.photo_url) не всегда доступен — приходит не на
@@ -28,6 +28,38 @@ function ProfileAvatar({ name, photoUrl }) {
   );
 }
 
+// Отдельная строка ID: полезна, когда игроку нужно продиктовать/скопировать её
+// в поддержку. Клик копирует в буфер; если Clipboard API недоступен (нет разрешения
+// или небезопасный контекст) — просто тихо игнорируем, ID и так виден на экране.
+function ProfileId({ id }) {
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef(null);
+
+  useEffect(() => () => clearTimeout(timerRef.current), []);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard?.writeText(String(id));
+    } catch (_) {
+      /* буфер обмена недоступен — молча игнорируем */
+    }
+    setCopied(true);
+    clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => setCopied(false), 1200);
+  };
+
+  return (
+    <button
+      type="button"
+      className="profile-header__id"
+      onClick={handleCopy}
+      title="Нажмите, чтобы скопировать ID"
+    >
+      {copied ? 'Скопировано ✓' : `ID: ${id}`}
+    </button>
+  );
+}
+
 export default function ProfileTab({ profile, loading, onOpenWithdrawRequests }) {
   if (loading || !profile) {
     return <div className="skeleton" style={{ height: 220 }} />;
@@ -43,6 +75,7 @@ export default function ProfileTab({ profile, loading, onOpenWithdrawRequests })
         <div className="profile-header__info">
           <strong className="profile-header__name">{displayName}</strong>
           {profile.username && <span className="profile-header__username">@{profile.username}</span>}
+          {profile.telegram_id && <ProfileId id={profile.telegram_id} />}
         </div>
         <span className="profile-tier-chip">{profile.tier}</span>
       </div>
